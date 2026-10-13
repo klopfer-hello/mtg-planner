@@ -1,0 +1,25 @@
+# mtg-planner: canonical compose file (pulls the published GHCR image).
+#
+# There is no authentication: keep it on a trusted network or put an
+# authenticating reverse proxy in front (see README "Security").
+#
+# Host-specific additions (local build, reverse-proxy labels/networks) belong in
+# a gitignored docker-compose.override.yml, see docker-compose.override.yml.example.
+
+services:
+  mtg-planner:
+    image: ghcr.io/klopfer-hello/mtg-planner:latest
+    container_name: mtg-planner
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${MTG_PLANNER_PORT:-8080}:8080"
+    volumes:
+      - mtg-planner-data:/data       # SQLite database
+      - mtg-planner-claude:/claude   # Claude Code config + chat sessions (--resume)
+
+volumes:
+  mtg-planner-data:
+  mtg-planner-claude:

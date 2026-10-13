@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+docker-compose.override.yml
+*.local.*
+node_modules/
+/data/
+*.db
+*.db-*
+.DS_Store
+
+# Local agent context (may describe the private host setup)
+CLAUDE.md
+.claude/

@@ -1,0 +1,149 @@
+// End-to-end check of the "collection" MCP server over stdio (JSON-RPC 2.0,
+// newline-delimited) against a seeded temp database. No network: the only
+// write exercised (save_deck) uses owned cards, which resolve locally.
+
+import { after, before, describe, test } from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+import { ID, seedCards, seedCollection, tempDb } from "./fixtures.js";
+
+const SERVER = fileURLToPath(new URL("../mcp-collection.js", import.meta.url));
+
+function startServer(dbFile) {
+  const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", SERVER], {
+    env: { ...process.env, DB_FILE: dbFile },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const waiting = new Map();
+  let nextId = 1;
+  let stderr = "";
+  child.stderr.on("data", (d) => { stderr += d; });
+  createInterface({ input: child.stdout }).on("line", (line) => {
+    const msg = JSON.parse(line); // anything that is not JSON-RPC on stdout fails the test
+    waiting.get(msg.id)?.(msg);
+    waiting.delete(msg.id);
+  });
+  const request = (method, params) => new Promise((resolve, reject) => {
+    const id = nextId++;
+    const timer = setTimeout(() => reject(new Error(`timeout waiting for ${method}; stderr:\n${stderr}`)), 10000);
+    waiting.set(id, (msg) => { clearTimeout(timer); resolve(msg); });
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+  });
+  const call = async (name, args = {}) => {
+    const msg = await request("tools/call", { name, arguments: args });
+    assert.equal(msg.error, undefined, `tools/call ${name} failed: ${JSON.stringify(msg.error)}`);
+    return { text: msg.result.content.map((c) => c.text).join("\n"), isError: Boolean(msg.result.isError) };
+  };
+  const stop = () => new Promise((resolve) => {
+    child.once("exit", resolve);
+    child.stdin.end();
+    setTimeout(() => child.kill("SIGKILL"), 5000).unref();
+  });
+  return { request, call, stop };
+}
+
+describe("mcp-collection.js", () => {
+  let ctx;
+  let mcp;
+  before(async () => {
+    ctx = tempDb();
+    seedCards(ctx.db);
+    seedCollection(ctx.db, [
+      [ID.sol, 2],
+      [ID.lightning, 3],
+      [ID.lightning, 1, { finish: "foil" }],
+      [ID.counterspell, 1],
+      [ID.counterspell7ed, 2, { language: "de" }],
+      [ID.delver, 1],
+      [ID.atraxa, 1],
+    ]);
+    mcp = startServer(ctx.file);
+    const init = await mcp.request("initialize", {
+      protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" },
+    });
+    assert.equal(init.result.protocolVersion, "2025-06-18");
+    assert.ok(init.result.capabilities.tools);
+  });
+  after(async () => {
+    await mcp?.stop();
+    ctx?.cleanup();
+  });
+
+  test("lists exactly the documented, non-destructive tools", async () => {
+    const { result } = await mcp.request("tools/list", {});
+    const names = result.tools.map((t) => t.name).sort();
+    assert.deepEqual(names, ["check_owned", "collection_overview", "get_card", "get_deck", "list_decks", "save_deck", "search_collection"]);
+    for (const t of result.tools) {
+      assert.equal(typeof t.description, "string");
+      assert.equal(t.inputSchema?.type, "object", `${t.name} needs an object inputSchema`);
+    }
+  });
+
+  test("unknown method and unknown tool are JSON-RPC errors", async () => {
+    assert.equal((await mcp.request("nope/nothing", {})).error.code, -32601);
+    assert.ok((await mcp.request("tools/call", { name: "delete_everything", arguments: {} })).error);
+  });
+
+  test("collection_overview", async () => {
+    const { text, isError } = await mcp.call("collection_overview");
+    assert.equal(isError, false);
+    assert.match(text, /Atraxa/);
+    assert.match(text, /11/, "total copies");
+  });
+
+  test("search_collection", async () => {
+    const { text } = await mcp.call("search_collection", { query: "t:instant", sort: "name" });
+    assert.match(text, /^2 matches/m);
+    assert.match(text, /3x Counterspell/);
+    assert.match(text, /4x Lightning Bolt/);
+    const withText = await mcp.call("search_collection", { query: "bolt", include_text: true });
+    assert.match(withText.text, /3 damage to any target/);
+    const bad = await mcp.call("search_collection", { query: "foo:bar" });
+    assert.equal(bad.isError, true);
+    assert.match(bad.text, /Unknown search key/);
+  });
+
+  test("check_owned: case-insensitive, DFC front faces, not owned", async () => {
+    const { text } = await mcp.call("check_owned", { names: ["sol ring", "Delver of Secrets", "Serra Angel"] });
+    const lines = text.split("\n");
+    assert.ok(lines.some((l) => /sol ring/i.test(l) && /2/.test(l)), text);
+    assert.ok(lines.some((l) => /Delver of Secrets/.test(l) && !/NOT OWNED/.test(l)), text);
+    assert.ok(lines.some((l) => /Serra Angel/.test(l) && /NOT OWNED/.test(l)), text);
+  });
+
+  test("get_card", async () => {
+    const { text } = await mcp.call("get_card", { name: "Counterspell" });
+    assert.match(text, /Counter target spell/);
+    assert.match(text, /mh2|MH2/);
+    assert.match(text, /7ed|7ED/);
+  });
+
+  test("save_deck → list_decks → get_deck", async () => {
+    const saved = await mcp.call("save_deck", {
+      name: "Izzet Test", format: "modern",
+      cards: [
+        { name: "Lightning Bolt", quantity: 4 },
+        { name: "Counterspell", quantity: 4 },
+        { name: "Delver of Secrets", quantity: 4, board: "main" },
+        { name: "Sol Ring", quantity: 1, board: "side" },
+      ],
+    });
+    assert.equal(saved.isError, false, saved.text);
+    assert.match(saved.text, /Izzet Test/);
+    const id = Number(saved.text.match(/#(\d+)/)?.[1]);
+    assert.ok(id > 0, saved.text);
+
+    const deck = ctx.db.prepare("SELECT * FROM decks WHERE id = ?").get(id);
+    assert.equal(deck.source, "claude");
+    assert.equal(deck.format, "modern");
+
+    const list = await mcp.call("list_decks");
+    assert.match(list.text, /Izzet Test/);
+    const got = await mcp.call("get_deck", { deck: "izzet test" });
+    assert.match(got.text, /4x Counterspell .*owned 3|4x Counterspell .*MISSING 1/);
+    const byId = await mcp.call("get_deck", { deck: id });
+    assert.match(byId.text, /Izzet Test/);
+  });
+});

@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm test
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA="$(git rev-parse --short=12 HEAD)"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build=${VERSION}+${SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.build }}
+          tags: |
+            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:v${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build changelog
+        run: |
+          PREV_TAG="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$PREV_TAG" ]; then RANGE="${PREV_TAG}..${GITHUB_REF_NAME}"; else RANGE="${GITHUB_REF_NAME}"; fi
+          LOG="$(git log --no-merges --pretty=format:'%s (%h)' "$RANGE")"
+          section() {
+            local title="$1" pattern="$2" lines
+            lines="$(printf '%s\n' "$LOG" | grep -E "^${pattern}(\([^)]*\))?!?: " | sed -E 's/^[a-z]+(\([^)]*\))?!?: /- /' || true)"
+            if [ -n "$lines" ]; then printf '### %s\n\n%s\n\n' "$title" "$lines"; fi
+          }
+          {
+            section "Features" "feat"
+            section "Fixes" "fix"
+            section "Refactoring" "refactor"
+            section "Documentation" "docs"
+            OTHER="$(printf '%s\n' "$LOG" | grep -vE '^(feat|fix|refactor|docs)(\([^)]*\))?!?: ' | sed '/^$/d; s/^/- /' || true)"
+            if [ -n "$OTHER" ]; then printf '### Other\n\n%s\n\n' "$OTHER"; fi
+            IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+            printf '**Image:** `%s:%s`\n' "$IMAGE" "$GITHUB_REF_NAME"
+            if [ -n "$PREV_TAG" ]; then
+              printf '\n**Full changelog:** https://github.com/%s/compare/%s...%s\n' "$GITHUB_REPOSITORY" "$PREV_TAG" "$GITHUB_REF_NAME"
+            fi
+          } > CHANGELOG.md
+          cat CHANGELOG.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: CHANGELOG.md

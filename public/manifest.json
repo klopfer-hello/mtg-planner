@@ -1,0 +1,16 @@
+{
+  "name": "MTG Planner",
+  "short_name": "MTG Planner",
+  "description": "Magic: The Gathering collection and deck planner with a Claude-powered assistant.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#121214",
+  "theme_color": "#3b2a8f",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

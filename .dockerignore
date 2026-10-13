@@ -1,0 +1,16 @@
+# Only server.js, mcp-collection.js, package.json, lib/ and public/ are needed
+# at runtime (see Dockerfile COPY lines).
+.git
+.github
+.env
+.env.*
+data
+test
+scripts
+node_modules
+docker-compose*.yml
+docker-compose*.example
+*.md
+*.db
+*.db-*
+.DS_Store

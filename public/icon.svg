@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- MTG Planner: an original glyph — a card-shaped planner sheet with a
+       checklist, ringed by five coloured dots. Full-bleed background so it
+       also works as a maskable icon (content stays inside the safe zone). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b2a8f"/>
+      <stop offset="1" stop-color="#1a1440"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <circle cx="256" cy="108" r="22" fill="#f4ecd0"/>
+  <circle cx="397" cy="210" r="22" fill="#5ab0f0"/>
+  <circle cx="343" cy="376" r="22" fill="#8f8a99"/>
+  <circle cx="169" cy="376" r="22" fill="#f06a4f"/>
+  <circle cx="115" cy="210" r="22" fill="#4fbf7a"/>
+  <rect x="196" y="164" width="120" height="168" rx="14" fill="#fbfaff"/>
+  <rect x="196" y="164" width="120" height="168" rx="14" fill="none" stroke="#c9bdff" stroke-width="6"/>
+  <path d="M214 204l10 10 18-20" fill="none" stroke="#5b3fd1" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="252" y="198" width="46" height="10" rx="5" fill="#5b3fd1"/>
+  <path d="M214 246l10 10 18-20" fill="none" stroke="#5b3fd1" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="252" y="240" width="46" height="10" rx="5" fill="#5b3fd1"/>
+  <circle cx="228" cy="292" r="9" fill="none" stroke="#a79ae0" stroke-width="6"/>
+  <rect x="252" y="282" width="34" height="10" rx="5" fill="#a79ae0"/>
+</svg>

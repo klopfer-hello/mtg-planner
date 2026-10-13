@@ -1,0 +1,22 @@
+{
+  "name": "mtg-planner",
+  "version": "0.1.0",
+  "description": "Self-hosted Magic: The Gathering collection + deck planner with a Claude-powered assistant",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "author": "Klopfer Hello <forkent@icloud.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/klopfer-hello/mtg-planner.git"
+  },
+  "homepage": "https://github.com/klopfer-hello/mtg-planner",
+  "bugs": "https://github.com/klopfer-hello/mtg-planner/issues",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\""
+  }
+}

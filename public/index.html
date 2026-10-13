@@ -1,0 +1,2329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121214" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Magic: The Gathering collection and deck planner with a Claude-powered assistant.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="MTG Planner">
+<title>MTG Planner</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<style>
+/* ==========================================================================
+   Theme tokens (light default, dark via prefers-color-scheme)
+   ========================================================================== */
+:root {
+  color-scheme: light dark;
+  --bg: #f6f5f2;
+  --surface: #ffffff;
+  --surface-2: #efede8;
+  --surface-3: #e4e1da;
+  --text: #1d1b18;
+  --muted: #6b665e;
+  --border: #dcd8d0;
+  --accent: #5b3fd1;
+  --accent-hover: #4a30b8;
+  --accent-ink: #ffffff;
+  --accent-soft: #ece8fb;
+  --ok: #1f7a3d;
+  --ok-soft: #e1f2e6;
+  --bad: #b42318;
+  --bad-soft: #fdeceb;
+  --warn: #8a5a00;
+  --warn-soft: #fcf1d8;
+  --overlay: rgba(20, 18, 15, 0.45);
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 14px rgba(0,0,0,.06);
+  --shadow-lg: 0 10px 40px rgba(0,0,0,.22);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --tabbar-h: 64px;
+  --header-h: 52px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121214;
+    --surface: #1c1c20;
+    --surface-2: #26262c;
+    --surface-3: #313139;
+    --text: #ececef;
+    --muted: #a09fa8;
+    --border: #36363e;
+    --accent: #a38bff;
+    --accent-hover: #b8a5ff;
+    --accent-ink: #15102a;
+    --accent-soft: #2a2444;
+    --ok: #62d18d;
+    --ok-soft: #16301f;
+    --bad: #ff8274;
+    --bad-soft: #3a1b18;
+    --warn: #f0c062;
+    --warn-soft: #3a2d10;
+    --overlay: rgba(0, 0, 0, 0.6);
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3);
+    --shadow-lg: 0 10px 40px rgba(0,0,0,.6);
+  }
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 var(--font);
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+img { max-width: 100%; }
+a { color: var(--accent); }
+h1, h2, h3, h4 { line-height: 1.2; margin: 0; }
+h2 { font-size: 1.25rem; }
+h3 { font-size: 1.05rem; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.muted { color: var(--muted); }
+.small { font-size: .85rem; }
+.nowrap { white-space: nowrap; }
+.mono { font-family: var(--mono); font-size: .9em; }
+code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); padding: .1em .35em; border-radius: 5px; }
+
+/* ==========================================================================
+   Layout: header, navigation (bottom tab bar on mobile, top nav on desktop)
+   ========================================================================== */
+.app-header {
+  position: sticky; top: 0; z-index: 30;
+  height: calc(var(--header-h) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 16px 0;
+  display: flex; align-items: center; gap: 16px;
+  /* Solid on mobile: a backdrop-filter would become the containing block of
+     the position:fixed tab bar inside the header and pin it to the top. */
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.05rem; white-space: nowrap; }
+.brand img { width: 28px; height: 28px; border-radius: 7px; }
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.tab {
+  appearance: none; border: 0; background: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  min-height: 44px; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .01em;
+}
+.tab svg { width: 24px; height: 24px; }
+.tab[aria-selected="true"] { color: var(--accent); }
+.tab[aria-selected="true"] svg { transform: translateY(-1px); }
+main {
+  max-width: 1200px; margin: 0 auto;
+  padding: 16px 16px calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 24px);
+}
+@media (min-width: 768px) {
+  .tabbar {
+    position: static; display: flex; gap: 4px; height: auto; padding: 0;
+    background: none; border: 0; margin-left: auto;
+  }
+  .tab { flex-direction: row; gap: 8px; padding: 0 14px; border-radius: 10px; font-size: .92rem; }
+  .tab svg { width: 20px; height: 20px; }
+  .tab:hover { background: var(--surface-2); color: var(--text); }
+  .tab[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
+  .tab[aria-selected="true"] svg { transform: none; }
+  main { padding: 24px 24px 48px; }
+  :root { --header-h: 60px; --tabbar-h: 0px; }
+  .app-header {
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(1.4) blur(10px);
+    -webkit-backdrop-filter: saturate(1.4) blur(10px);
+  }
+}
+
+/* ==========================================================================
+   Controls
+   ========================================================================== */
+.btn {
+  appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 44px; padding: 0 16px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font-weight: 600; cursor: pointer; text-decoration: none; white-space: nowrap;
+  transition: background .12s, border-color .12s;
+}
+.btn:hover { background: var(--surface-2); }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.danger { color: var(--bad); }
+.btn.danger:hover { background: var(--bad-soft); }
+.btn.ghost { border-color: transparent; background: none; }
+.btn.ghost:hover { background: var(--surface-2); }
+.btn.icon { padding: 0; width: 44px; }
+label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.btn.sm { min-height: 36px; padding: 0 12px; font-size: .88rem; }
+.btn svg { width: 20px; height: 20px; flex: none; }
+.input, .select, .textarea {
+  width: 100%; min-height: 44px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+}
+.input:focus, .select:focus, .textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.select { padding-right: 32px; }
+.textarea { min-height: 160px; resize: vertical; font-family: var(--mono); font-size: .88rem; line-height: 1.5; }
+.field { display: grid; gap: 6px; }
+.field > label, .label { font-weight: 600; font-size: .88rem; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row.between { justify-content: space-between; }
+.grow { flex: 1 1 auto; min-width: 0; }
+.stack { display: grid; gap: 12px; }
+.stack-lg { display: grid; gap: 20px; }
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.segmented button {
+  appearance: none; border: 0; background: none; min-height: 42px; padding: 0 12px; cursor: pointer;
+  font-weight: 600; font-size: .88rem; color: var(--muted); display: inline-flex; align-items: center; gap: 6px;
+}
+.segmented button + button { border-left: 1px solid var(--border); }
+.segmented button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.segmented svg { width: 18px; height: 18px; }
+.chip {
+  appearance: none; display: inline-flex; align-items: center; gap: 6px;
+  min-height: 36px; padding: 0 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); font-size: .85rem; font-weight: 600;
+}
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.badge {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px;
+  font-size: .74rem; font-weight: 700; line-height: 1.6; background: var(--surface-2); color: var(--muted);
+  white-space: nowrap;
+}
+.badge.ok { background: var(--ok-soft); color: var(--ok); }
+.badge.bad { background: var(--bad-soft); color: var(--bad); }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.badge.accent { background: var(--accent-soft); color: var(--accent); }
+.radio-card {
+  display: flex; gap: 10px; align-items: flex-start; padding: 12px; min-height: 44px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer;
+}
+.radio-card:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.radio-card input { margin: 3px 0 0; width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+
+/* ==========================================================================
+   Surfaces, notices, states
+   ========================================================================== */
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; box-shadow: var(--shadow);
+}
+.notice {
+  display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px;
+  border-radius: var(--radius-sm); background: var(--surface-2); font-size: .92rem;
+}
+.notice.error { background: var(--bad-soft); color: var(--bad); }
+.notice.warn { background: var(--warn-soft); color: var(--warn); }
+.notice.ok { background: var(--ok-soft); color: var(--ok); }
+.notice .grow { overflow-wrap: anywhere; }
+.notice .btn { min-height: 32px; padding: 0 10px; color: inherit; }
+.empty { text-align: center; padding: 40px 16px; color: var(--muted); display: grid; gap: 12px; justify-items: center; }
+.empty h3 { color: var(--text); }
+.spinner {
+  width: 20px; height: 20px; border-radius: 50%; flex: none;
+  border: 3px solid var(--surface-3); border-top-color: var(--accent);
+  animation: spin .8s linear infinite;
+}
+.spinner.lg { width: 32px; height: 32px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 32px; color: var(--muted); }
+.progress { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; position: relative; }
+.progress::after {
+  content: ""; position: absolute; inset: 0; width: 35%; border-radius: 3px; background: var(--accent);
+  animation: indeterminate 1.3s ease-in-out infinite;
+}
+@keyframes indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(290%); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner, .progress::after, .typing span { animation-duration: 3s; }
+}
+details > summary { cursor: pointer; list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+.disclosure > summary { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; font-weight: 600; font-size: .88rem; color: var(--muted); }
+.disclosure > summary::before { content: "▸"; transition: transform .15s; }
+.disclosure[open] > summary::before { transform: rotate(90deg); }
+
+/* Mana / card symbols */
+.sym { width: 1.05em; height: 1.05em; vertical-align: -0.16em; margin: 0 1px; display: inline-block; }
+.mana { white-space: nowrap; display: inline-flex; align-items: center; flex-wrap: wrap; }
+.mana .sym { width: 16px; height: 16px; }
+
+/* ==========================================================================
+   Collection
+   ========================================================================== */
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; min-width: 0; }
+.stat .v { font-size: 1.2rem; font-weight: 750; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.stat .k { font-size: .76rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+@media (min-width: 640px) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.search { position: relative; }
+.search svg { position: absolute; left: 12px; top: 50%; width: 20px; height: 20px; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.search .input { padding-left: 40px; padding-right: 44px; font-size: 16px; }
+.search .clear { position: absolute; right: 0; top: 0; }
+.help-list { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 2px; font-size: .88rem; }
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.toolbar .select { width: auto; min-width: 0; }
+.result-count { font-size: .88rem; color: var(--muted); }
+.grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+}
+@media (min-width: 640px) { .grid { grid-template-columns: repeat(auto-fill, minmax(146px, 1fr)); gap: 14px; } }
+.tile {
+  appearance: none; border: 0; padding: 0; background: none; cursor: pointer; text-align: left;
+  display: grid; gap: 4px; min-width: 0; border-radius: 10px;
+}
+.tile .img {
+  position: relative; aspect-ratio: 488 / 680; border-radius: 6% / 4.3%; overflow: hidden;
+  background: var(--surface-2); box-shadow: var(--shadow);
+}
+.tile .img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tile .img .ph { position: absolute; inset: 0; display: grid; place-items: center; padding: 8px; text-align: center; font-size: .8rem; font-weight: 600; color: var(--muted); }
+.tile .qty {
+  position: absolute; right: 5px; bottom: 5px; min-width: 26px; height: 22px; padding: 0 6px;
+  display: grid; place-items: center; border-radius: 11px; font-size: .78rem; font-weight: 800;
+  background: rgba(15, 12, 30, .82); color: #fff;
+}
+.tile .foil {
+  position: absolute; left: 5px; bottom: 5px; height: 22px; padding: 0 6px; border-radius: 11px;
+  display: grid; place-items: center; font-size: .7rem; font-weight: 800;
+  background: linear-gradient(120deg, #f9d976, #b4f1ff, #e2b6ff); color: #222;
+}
+.tile .cap { display: flex; justify-content: space-between; gap: 6px; font-size: .78rem; min-width: 0; padding: 0 2px; }
+.tile .cap .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.tile .cap .p { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tile:hover .img { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+.list { display: grid; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.list-row {
+  appearance: none; border: 0; background: none; text-align: left; cursor: pointer; width: 100%;
+  display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 4px 10px; align-items: center;
+  min-height: 52px; padding: 8px 12px; border-top: 1px solid var(--border);
+}
+.list-row:first-child { border-top: 0; }
+.list-row:hover { background: var(--surface-2); }
+.list-row .q { font-weight: 800; font-variant-numeric: tabular-nums; color: var(--muted); }
+.list-row .main { min-width: 0; display: grid; gap: 1px; }
+.list-row .nm { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.list-row .nm b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.list-row .sub { font-size: .8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-row .end { text-align: right; display: grid; gap: 2px; justify-items: end; font-size: .85rem; font-variant-numeric: tabular-nums; }
+
+/* ==========================================================================
+   Sheet / dialog (bottom sheet on mobile, centered modal on desktop)
+   ========================================================================== */
+.overlay { position: fixed; inset: 0; z-index: 100; background: var(--overlay); display: flex; align-items: flex-end; justify-content: center; animation: fade .15s; }
+.sheet {
+  position: relative; width: 100%; max-height: 92vh; max-height: 92dvh; overflow: auto; overscroll-behavior: contain;
+  background: var(--surface); border-radius: 18px 18px 0 0; box-shadow: var(--shadow-lg);
+  padding: 8px 16px calc(24px + env(safe-area-inset-bottom)); animation: slideup .2s ease-out;
+}
+.sheet-head {
+  position: sticky; top: -8px; z-index: 2; display: flex; align-items: center; gap: 8px;
+  margin: -8px -16px 8px; padding: 8px 8px 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.sheet-head h2 { flex: 1; min-width: 0; font-size: 1.1rem; overflow-wrap: anywhere; }
+@keyframes fade { from { opacity: 0; } }
+@keyframes slideup { from { transform: translateY(30px); opacity: .5; } }
+@media (min-width: 768px) {
+  .overlay { align-items: center; padding: 24px; }
+  .sheet { max-width: 920px; border-radius: 18px; max-height: 88vh; padding-bottom: 24px; }
+}
+.card-detail { display: grid; gap: 16px; }
+.card-detail .big { width: 100%; max-width: 340px; margin: 0 auto; border-radius: 4.75% / 3.5%; box-shadow: var(--shadow); display: block; aspect-ratio: 488 / 680; background: var(--surface-2); }
+@media (min-width: 768px) {
+  .card-detail { grid-template-columns: 320px minmax(0, 1fr); align-items: start; }
+  .card-detail .big { position: sticky; top: 64px; }
+}
+.oracle { background: var(--surface-2); border-radius: var(--radius-sm); padding: 12px 14px; display: grid; gap: 8px; }
+.oracle p { margin: 0; }
+.oracle hr { border: 0; border-top: 1px dashed var(--border); margin: 2px 0; width: 100%; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: .9rem; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.legal { display: flex; flex-wrap: wrap; gap: 6px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+table.t { width: 100%; border-collapse: collapse; font-size: .86rem; }
+table.t th, table.t td { padding: 8px 10px; text-align: left; border-top: 1px solid var(--border); white-space: nowrap; }
+table.t thead th { border-top: 0; background: var(--surface-2); font-size: .76rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.linkbtn { appearance: none; border: 0; background: none; padding: 0; color: var(--accent); font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; min-height: 32px; text-align: left; }
+
+/* ==========================================================================
+   Decks
+   ========================================================================== */
+.deck-list { display: grid; gap: 10px; }
+@media (min-width: 768px) { .deck-list { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); } }
+.deck-item {
+  appearance: none; text-align: left; cursor: pointer; width: 100%;
+  display: grid; gap: 6px; padding: 14px 16px; min-height: 44px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.deck-item:hover { border-color: var(--accent); }
+.deck-item .t { font-weight: 700; font-size: 1.02rem; overflow-wrap: anywhere; }
+.deck-head { display: grid; gap: 10px; }
+.deck-head h2 { font-size: 1.4rem; overflow-wrap: anywhere; }
+.board { display: grid; gap: 10px; }
+.board > h3 { display: flex; align-items: baseline; gap: 8px; padding-top: 8px; }
+.type-group { display: grid; gap: 4px; }
+.type-group > h4 { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 4px 2px; }
+.deck-row {
+  appearance: none; border: 0; background: none; width: 100%; text-align: left; cursor: pointer;
+  display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center;
+  min-height: 48px; padding: 6px 10px; border-radius: var(--radius-sm);
+}
+.deck-row:hover { background: var(--surface-2); }
+.deck-row:disabled { cursor: default; }
+.deck-row:disabled:hover { background: none; }
+.deck-row .q { font-weight: 800; color: var(--muted); font-variant-numeric: tabular-nums; }
+.deck-row .nm { min-width: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.deck-row .nm b { font-weight: 600; overflow-wrap: anywhere; }
+.deck-row .end { display: flex; align-items: center; gap: 8px; font-size: .85rem; font-variant-numeric: tabular-nums; }
+.deck-row .end .price { color: var(--muted); min-width: 52px; text-align: right; }
+.deck-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; display: grid; gap: 6px; }
+.peek { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; padding: 8px 10px 12px 48px; }
+.peek img { width: 92px; border-radius: 5px; box-shadow: var(--shadow); }
+
+/* ==========================================================================
+   Planner (chat)
+   ========================================================================== */
+.planner { display: grid; gap: 16px; }
+@media (min-width: 960px) {
+  .planner { grid-template-columns: 280px minmax(0, 1fr); align-items: start; }
+  .planner .drawer-toggle { display: none; }
+}
+.chat-side {
+  display: grid; gap: 8px; align-content: start;
+}
+@media (min-width: 960px) {
+  .chat-side { position: sticky; top: calc(var(--header-h) + 24px); max-height: calc(100vh - var(--header-h) - 48px); overflow: auto; }
+}
+@media (max-width: 959px) {
+  .chat-side {
+    position: fixed; z-index: 90; top: 0; bottom: 0; left: 0; width: min(86vw, 340px);
+    background: var(--surface); box-shadow: var(--shadow-lg); padding: calc(16px + env(safe-area-inset-top)) 12px 16px;
+    overflow: auto; transform: translateX(-105%); transition: transform .2s ease-out; visibility: hidden;
+  }
+  .chat-side.open { transform: none; visibility: visible; }
+  .drawer-backdrop { position: fixed; inset: 0; z-index: 85; background: var(--overlay); }
+}
+.chat-link {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: 10px;
+}
+.chat-link > button:first-child {
+  appearance: none; border: 0; background: none; text-align: left; cursor: pointer; min-height: 48px;
+  padding: 6px 10px; border-radius: 10px; display: grid; gap: 1px; min-width: 0;
+}
+.chat-link > button:first-child span:first-child { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-link:hover { background: var(--surface-2); }
+.chat-link[aria-current="true"] { background: var(--accent-soft); }
+.chat-link[aria-current="true"] > button:first-child span:first-child { color: var(--accent); }
+.chat-main { display: grid; gap: 14px; min-width: 0; }
+.chat-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chat-title h2 { flex: 1; min-width: 0; font-size: 1.1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.messages { display: grid; gap: 14px; }
+.msg { display: grid; gap: 6px; min-width: 0; }
+.msg.user { justify-items: end; }
+.bubble { max-width: min(100%, 720px); padding: 10px 14px; border-radius: 16px; overflow-wrap: anywhere; min-width: 0; }
+.msg.user .bubble { background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 4px; white-space: pre-wrap; }
+.msg.assistant .bubble { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; width: 100%; max-width: 100%; }
+.msg .meta { font-size: .74rem; color: var(--muted); padding: 0 4px; display: flex; gap: 8px; flex-wrap: wrap; }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.tool-chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  padding: 3px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border);
+  font-size: .76rem; color: var(--muted);
+}
+.tool-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tool-chip b { color: var(--text); font-weight: 600; }
+.typing { display: inline-flex; gap: 4px; padding: 6px 2px; }
+.typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite both; }
+.typing span:nth-child(2) { animation-delay: .2s; }
+.typing span:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+.composer {
+  position: sticky; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); z-index: 20;
+  padding: 10px 0 12px; background: linear-gradient(to bottom, transparent, var(--bg) 14px);
+}
+@media (min-width: 768px) { .composer { bottom: 0; padding-bottom: 20px; } }
+.composer form {
+  display: flex; gap: 8px; align-items: flex-end; padding: 6px 6px 6px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 22px; box-shadow: var(--shadow);
+}
+.composer form:focus-within { border-color: var(--accent); }
+.composer textarea {
+  flex: 1; min-width: 0; border: 0; outline: none; background: none; resize: none;
+  font-size: 16px; line-height: 1.4; padding: 9px 0; max-height: 40vh; min-height: 40px;
+}
+.composer .btn { border-radius: 50%; width: 44px; padding: 0; }
+.suggestions { display: grid; gap: 8px; }
+@media (min-width: 640px) { .suggestions { grid-template-columns: 1fr 1fr; } }
+.suggestion {
+  appearance: none; text-align: left; cursor: pointer; padding: 12px 14px; min-height: 44px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); font-size: .92rem;
+}
+.suggestion:hover { border-color: var(--accent); }
+
+/* Markdown from Claude */
+.md { overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin: .6em 0; }
+.md ul, .md ol { padding-left: 1.4em; }
+.md li + li { margin-top: .2em; }
+.md h1, .md h2, .md h3, .md h4 { margin: 1em 0 .4em; font-size: 1.05rem; }
+.md h1 { font-size: 1.2rem; }
+.md pre { background: var(--surface-2); padding: 10px 12px; border-radius: var(--radius-sm); overflow-x: auto; }
+.md pre code { background: none; padding: 0; }
+.md blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--muted); margin-left: 0; }
+.md table { display: block; overflow-x: auto; border-collapse: collapse; font-size: .88rem; max-width: 100%; }
+.md th, .md td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
+.md th { background: var(--surface-2); }
+.md img { max-width: 240px; border-radius: 8px; }
+.md hr { border: 0; border-top: 1px solid var(--border); }
+
+/* ==========================================================================
+   Import
+   ========================================================================== */
+.file-drop {
+  position: relative; display: grid; gap: 6px; justify-items: center; text-align: center; padding: 22px 16px; cursor: pointer;
+  border: 2px dashed var(--border); border-radius: var(--radius); background: var(--surface-2);
+}
+.file-drop:hover, .file-drop:focus-within { border-color: var(--accent); }
+.file-drop.has-file { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+.file-drop svg { width: 32px; height: 32px; color: var(--accent); }
+.file-drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+@media (min-width: 640px) { .summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
+.history-item { display: grid; gap: 4px; padding: 12px 0; border-top: 1px solid var(--border); }
+.history-item:first-child { border-top: 0; padding-top: 0; }
+.page-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.page-title h1 { font-size: 1.45rem; }
+.footer-note { text-align: center; font-size: .78rem; color: var(--muted); padding-top: 8px; }
+</style>
+</head>
+<body>
+<div id="root">
+  <noscript>MTG Planner needs JavaScript.</noscript>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js" crossorigin="anonymous"></script>
+
+<!-- data-presets="react" only: the "env" preset would rewrite async/await to
+     regenerator calls that need a runtime we don't load. -->
+<script type="text/babel" data-presets="react">
+"use strict";
+const { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useReducer } = React;
+
+// ===========================================================================
+// Utilities
+// ===========================================================================
+
+/** localStorage that never throws (private mode, blocked storage, ...). */
+const store = {
+  get(key, fallback) {
+    try {
+      const v = localStorage.getItem(key);
+      return v == null ? fallback : JSON.parse(v);
+    } catch { return fallback; }
+  },
+  set(key, value) {
+    try {
+      if (value == null) localStorage.removeItem(key);
+      else localStorage.setItem(key, JSON.stringify(value));
+    } catch { /* ignore */ }
+  },
+};
+
+class ApiError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/**
+ * fetch() wrapper: JSON in/out, every failure becomes an ApiError with a
+ * human-readable message ({error} from the server when present).
+ */
+async function api(path, { method = "GET", json, body, headers = {}, signal } = {}) {
+  const opts = { method, headers: { ...headers }, signal };
+  if (json !== undefined) {
+    opts.body = JSON.stringify(json);
+    opts.headers["Content-Type"] = "application/json";
+  } else if (body !== undefined) {
+    opts.body = body;
+  }
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch (err) {
+    if (err.name === "AbortError") throw err;
+    throw new ApiError(0, `Network error: ${err.message}. Is the server reachable?`);
+  }
+  if (res.status === 204) return null;
+  const type = res.headers.get("content-type") || "";
+  let data = null;
+  if (type.includes("application/json")) {
+    try { data = await res.json(); } catch { data = null; }
+  } else {
+    data = await res.text().catch(() => "");
+  }
+  if (!res.ok) {
+    let message = data && typeof data === "object" && data.error;
+    if (!message && typeof data === "string" && data.trim() && !data.trim().startsWith("<")) message = data.trim().slice(0, 300);
+    throw new ApiError(res.status, message || `Request failed: HTTP ${res.status} ${res.statusText}`.trim());
+  }
+  return data;
+}
+
+/** Parse a Server-Sent Events body into JSON events ("data: <json>" lines). */
+async function* readSse(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const data = block.split("\n")
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).replace(/^ /, ""))
+          .join("\n");
+        if (!data) continue; // ": ping" keep-alive comments
+        let ev;
+        try { ev = JSON.parse(data); } catch { continue; }
+        yield ev;
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
+
+function useDebounced(value, ms) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+/** SQLite datetime('now') is "YYYY-MM-DD HH:MM:SS" in UTC without a zone. */
+function parseTs(s) {
+  if (!s) return null;
+  const iso = /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s.replace(" ", "T") + "Z";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function fmtDate(s) {
+  const d = parseTs(s);
+  return d ? d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—";
+}
+const RTF = typeof Intl !== "undefined" && Intl.RelativeTimeFormat ? new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }) : null;
+function fmtAgo(s) {
+  const d = parseTs(s);
+  if (!d) return "—";
+  const sec = (d.getTime() - Date.now()) / 1000;
+  if (!RTF) return fmtDate(s);
+  const abs = Math.abs(sec);
+  if (abs < 60) return RTF.format(Math.round(sec), "second");
+  if (abs < 3600) return RTF.format(Math.round(sec / 60), "minute");
+  if (abs < 86400) return RTF.format(Math.round(sec / 3600), "hour");
+  if (abs < 86400 * 30) return RTF.format(Math.round(sec / 86400), "day");
+  return d.toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+const fmtInt = (n) => (n == null ? "—" : Number(n).toLocaleString());
+const fmtEur = (n) => (n == null ? "—" : `€${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+const fmtPrice = (p) => (p && p.value != null ? `${p.currency}${Number(p.value).toFixed(2)}` : "—");
+const plural = (n, one, many = one + "s") => `${fmtInt(n)} ${n === 1 ? one : many}`;
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
+const conditionLabel = (s) => (s || "").split("_").map(cap).join(" ");
+
+// ---------------------------------------------------------------------------
+// Card symbols: {W/U} -> WU.svg, {2} -> 2.svg, {T} -> T.svg
+
+const SYMBOL_RE = /\{([^{}\s]{1,8})\}/g;
+function symbolUrl(sym) {
+  let code = sym.toUpperCase().replace(/\//g, "");
+  if (code === "½") code = "HALF";
+  if (code === "∞") code = "INFINITY";
+  return `https://svgs.scryfall.io/card-symbols/${encodeURIComponent(code)}.svg`;
+}
+
+/** Text with {X} symbols replaced by inline Scryfall SVGs. */
+function SymbolText({ text }) {
+  if (!text) return null;
+  const parts = String(text).split(/(\{[^{}\s]{1,8}\})/g);
+  return (
+    <>
+      {parts.map((p, i) => (/^\{[^{}\s]{1,8}\}$/.test(p)
+        ? <img key={i} className="sym" src={symbolUrl(p.slice(1, -1))} alt={p} title={p} loading="lazy" decoding="async" />
+        : p ? <React.Fragment key={i}>{p}</React.Fragment> : null))}
+    </>
+  );
+}
+
+function ManaCost({ cost }) {
+  if (!cost) return null;
+  return <span className="mana" aria-label={`Mana cost ${cost}`}><SymbolText text={cost} /></span>;
+}
+
+/** Oracle text: paragraphs, "//" face separators, italic reminder text. */
+function OracleText({ text }) {
+  if (!text) return <p className="muted">No rules text.</p>;
+  return (
+    <>
+      {String(text).split("\n").map((line, i) => {
+        if (line.trim() === "//") return <hr key={i} />;
+        const parts = line.split(/(\([^)]*\))/g);
+        return (
+          <p key={i}>
+            {parts.map((p, j) => (/^\(.*\)$/.test(p)
+              ? <i key={j} className="muted"><SymbolText text={p} /></i>
+              : <SymbolText key={j} text={p} />))}
+          </p>
+        );
+      })}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Markdown (Claude answers): marked -> mana symbols -> DOMPurify
+
+if (window.DOMPurify) {
+  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    if (node.tagName === "A" && node.getAttribute("href")) {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer");
+    }
+  });
+}
+const MD_SYMBOL_RE = /\{((?:[WUBRGCSXYZTQEP0-9]|HALF|½|∞)(?:\/[WUBRGCP0-9])?)\}/g;
+
+function renderMarkdown(text) {
+  const src = text || "";
+  try {
+    let html = window.marked ? marked.parse(src, { gfm: true, breaks: true }) : escapeHtml(src).replace(/\n/g, "<br>");
+    html = html.replace(MD_SYMBOL_RE, (m, sym) => `<img class="sym" src="${symbolUrl(sym)}" alt="${m}" title="${m}">`);
+    return window.DOMPurify ? DOMPurify.sanitize(html) : escapeHtml(src);
+  } catch {
+    return escapeHtml(src).replace(/\n/g, "<br>");
+  }
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function Markdown({ text }) {
+  const html = useMemo(() => renderMarkdown(text), [text]);
+  return <div className="md" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+// ---------------------------------------------------------------------------
+// Card type classification for deck grouping
+
+const TYPE_ORDER = ["Creature", "Planeswalker", "Battle", "Instant", "Sorcery", "Artifact", "Enchantment", "Land", "Other"];
+const DISPLAY_TYPES = ["Creature", "Instant", "Sorcery", "Artifact", "Enchantment", "Planeswalker", "Battle", "Land", "Other"];
+function mainType(typeLine) {
+  if (!typeLine) return "Other";
+  const front = typeLine.split(" // ")[0].split(/\s+[—-]\s+/)[0];
+  for (const t of TYPE_ORDER) if (t !== "Other" && new RegExp(`\\b${t}\\b`).test(front)) return t;
+  return "Other";
+}
+
+// ===========================================================================
+// Icons (inline SVG, currentColor)
+// ===========================================================================
+
+const Svg = ({ children, ...p }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" {...p}>{children}</svg>
+);
+const Icon = {
+  collection: () => <Svg><rect x="3" y="3" width="7.5" height="9" rx="1.5" /><rect x="13.5" y="3" width="7.5" height="9" rx="1.5" /><rect x="3" y="15" width="7.5" height="6" rx="1.5" /><rect x="13.5" y="15" width="7.5" height="6" rx="1.5" /></Svg>,
+  decks: () => <Svg><rect x="7" y="3" width="12" height="16" rx="2" /><path d="M4 7v12a2 2 0 0 0 2 2h9" /></Svg>,
+  planner: () => <Svg><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" /><path d="M12 8.5l1 2.5 2.5 1-2.5 1-1 2.5-1-2.5-2.5-1 2.5-1z" /></Svg>,
+  import: () => <Svg><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></Svg>,
+  search: () => <Svg><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></Svg>,
+  close: () => <Svg><path d="M6 6l12 12M18 6L6 18" /></Svg>,
+  back: () => <Svg><path d="M15 18l-6-6 6-6" /></Svg>,
+  grid: () => <Svg><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></Svg>,
+  list: () => <Svg><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" /></Svg>,
+  up: () => <Svg><path d="M12 19V5M6 11l6-6 6 6" /></Svg>,
+  down: () => <Svg><path d="M12 5v14M6 13l6 6 6-6" /></Svg>,
+  send: () => <Svg><path d="M5 12h14M13 6l6 6-6 6" /></Svg>,
+  plus: () => <Svg><path d="M12 5v14M5 12h14" /></Svg>,
+  menu: () => <Svg><path d="M4 6h16M4 12h16M4 18h16" /></Svg>,
+  trash: () => <Svg><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></Svg>,
+  download: () => <Svg><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></Svg>,
+  edit: () => <Svg><path d="M4 20h4L19 9l-4-4L4 16v4z" /></Svg>,
+  external: () => <Svg><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></Svg>,
+  refresh: () => <Svg><path d="M20 11a8 8 0 0 0-14.8-4M4 4v4h4M4 13a8 8 0 0 0 14.8 4M20 20v-4h-4" /></Svg>,
+  file: () => <Svg><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h6" /></Svg>,
+  sparkle: () => <Svg><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="M19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z" /></Svg>,
+};
+
+// ===========================================================================
+// Shared UI pieces
+// ===========================================================================
+
+function Spinner({ label = "Loading…", large }) {
+  return (
+    <div className="loading" role="status" aria-live="polite">
+      <span className={`spinner${large ? " lg" : ""}`} aria-hidden="true" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function ErrorNotice({ error, onRetry, onDismiss }) {
+  if (!error) return null;
+  const message = typeof error === "string" ? error : error.message;
+  return (
+    <div className="notice error" role="alert">
+      <span aria-hidden="true">⚠️</span>
+      <div className="grow">{message}</div>
+      {onRetry && <button type="button" className="btn ghost sm" onClick={onRetry}>Retry</button>}
+      {onDismiss && <button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={onDismiss}><Icon.close /></button>}
+    </div>
+  );
+}
+
+const SOURCE_BADGE = { manabox: "warn", claude: "accent", manual: "" };
+function SourceBadge({ source }) {
+  return <span className={`badge ${SOURCE_BADGE[source] ?? ""}`}>{source === "claude" ? "✦ claude" : source}</span>;
+}
+
+/**
+ * Modal sheet: bottom sheet on phones, centered dialog on desktop.
+ * Handles Escape, focus trap, focus restore and background scroll lock.
+ */
+function Sheet({ title, onClose, children, actions }) {
+  const ref = useRef(null);
+  const titleId = useMemo(() => `sheet-${Math.random().toString(36).slice(2)}`, []);
+  useEffect(() => {
+    const prevFocus = document.activeElement;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    ref.current?.focus();
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); onClose(); }
+      if (e.key === "Tab" && ref.current) {
+        const f = ref.current.querySelectorAll('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        if (!f.length) return;
+        const first = f[0], last = f[f.length - 1];
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+      if (prevFocus && prevFocus.focus) prevFocus.focus({ preventScroll: true });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} ref={ref}>
+        <div className="sheet-head">
+          <h2 id={titleId}>{title}</h2>
+          {actions}
+          <button type="button" className="btn ghost icon" aria-label="Close" onClick={onClose}><Icon.close /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ===========================================================================
+// Card detail sheet
+// ===========================================================================
+
+const LEGAL_FORMATS = [
+  ["commander", "Commander"], ["standard", "Standard"], ["pioneer", "Pioneer"], ["modern", "Modern"],
+  ["legacy", "Legacy"], ["vintage", "Vintage"], ["pauper", "Pauper"], ["brawl", "Brawl"],
+];
+const PRICE_KEYS = [
+  ["eur", "EUR", "€"], ["eur_foil", "EUR foil", "€"], ["eur_etched", "EUR etched", "€"],
+  ["usd", "USD", "$"], ["usd_foil", "USD foil", "$"], ["usd_etched", "USD etched", "$"],
+];
+
+function CardSheet({ id, onClose, onOpenCard, onOpenDeck }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    setError(null);
+    api(`/api/cards/${encodeURIComponent(id)}`)
+      .then((d) => { if (alive) setData(d); })
+      .catch((e) => { if (alive) setError(e.message); });
+    return () => { alive = false; };
+  }, [id, attempt]);
+
+  const card = data?.card;
+  const loadingOther = Boolean(data && data.card.scryfall_id !== id && !error);
+  const totalOwned = data ? data.owned.reduce((a, r) => a + r.quantity, 0) : 0;
+
+  return (
+    <Sheet title={card ? card.name : error ? "Card" : "Loading…"} onClose={onClose}
+      actions={card?.scryfall_uri && (
+        <a className="btn ghost icon" href={card.scryfall_uri} target="_blank" rel="noopener noreferrer" aria-label="Open on Scryfall" title="Open on Scryfall"><Icon.external /></a>
+      )}>
+      {error && <ErrorNotice error={error} onRetry={() => setAttempt((a) => a + 1)} />}
+      {!data && !error && <Spinner />}
+      {card && (
+        <div className="card-detail" aria-busy={loadingOther || undefined}>
+          <div>
+            {card.image_normal
+              ? <img className="big" src={card.image_normal} alt={card.name} />
+              : <div className="big" role="img" aria-label="No image available" />}
+          </div>
+          <div className="stack-lg">
+            <div className="stack">
+              <div className="row between">
+                <ManaCost cost={card.mana_cost} />
+                <span className="row">
+                  {card.rarity && <span className="badge">{card.rarity}</span>}
+                  <span className={`badge ${totalOwned ? "ok" : "bad"}`}>{totalOwned ? `✓ own ${totalOwned}` : "✗ not owned"}</span>
+                </span>
+              </div>
+              <div><b>{card.type_line}</b></div>
+              <div className="oracle"><OracleText text={card.oracle_text} /></div>
+              <dl className="kv">
+                <dt>Printing</dt>
+                <dd>{card.set_name} <span className="muted">({(card.set_code || "").toUpperCase()} #{card.collector_number})</span></dd>
+                <dt>Mana value</dt><dd>{card.cmc ?? "—"}</dd>
+                {card.keywords?.length > 0 && (<><dt>Keywords</dt><dd>{card.keywords.join(", ")}</dd></>)}
+              </dl>
+            </div>
+
+            <section className="stack" aria-label="Prices">
+              <h3>Prices</h3>
+              <div className="row">
+                {PRICE_KEYS.filter(([k]) => card.prices?.[k] != null).map(([k, label, sym]) => (
+                  <span key={k} className="badge accent">{label} {sym}{Number(card.prices[k]).toFixed(2)}</span>
+                ))}
+                {!PRICE_KEYS.some(([k]) => card.prices?.[k] != null) && <span className="muted">No price data.</span>}
+              </div>
+            </section>
+
+            <section className="stack" aria-label="Format legality">
+              <h3>Legality</h3>
+              <div className="legal">
+                {LEGAL_FORMATS.map(([k, label]) => {
+                  const s = card.legalities?.[k];
+                  const ok = s === "legal" || s === "restricted";
+                  return <span key={k} className={`badge ${ok ? "ok" : ""}`} title={s || "unknown"}>{ok ? "✓" : "✗"} {label}{s === "restricted" ? " (R)" : ""}</span>;
+                })}
+              </div>
+            </section>
+
+            <section className="stack">
+              <h3>Owned printings <span className="muted small">({plural(totalOwned, "copy", "copies")})</span></h3>
+              {data.owned.length === 0
+                ? <p className="muted" style={{ margin: 0 }}>You don't own any printing of this card.</p>
+                : (
+                  <div className="table-wrap">
+                    <table className="t">
+                      <thead><tr><th>Set</th><th>Finish</th><th>Lang</th><th>Condition</th><th>Binder</th><th className="num">Qty</th></tr></thead>
+                      <tbody>
+                        {data.owned.map((r, i) => (
+                          <tr key={i} aria-current={r.scryfall_id === id || undefined}>
+                            <td>
+                              {r.scryfall_id === id
+                                ? <b title={r.set_name}>{(r.set_code || "").toUpperCase()} #{r.collector_number}</b>
+                                : <button type="button" className="linkbtn" title={`Show ${r.set_name}`} onClick={() => onOpenCard(r.scryfall_id)}>{(r.set_code || "").toUpperCase()} #{r.collector_number}</button>}
+                            </td>
+                            <td>{r.finish === "normal" ? "—" : r.finish}</td>
+                            <td>{(r.language || "").toUpperCase()}</td>
+                            <td>{conditionLabel(r.condition)}</td>
+                            <td>{r.binder || <span className="muted">—</span>}</td>
+                            <td className="num"><b>{r.quantity}</b></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+            </section>
+
+            <section className="stack">
+              <h3>In decks</h3>
+              {data.decks.length === 0
+                ? <p className="muted" style={{ margin: 0 }}>Not in any deck.</p>
+                : (
+                  <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 2 }}>
+                    {data.decks.map((d) => (
+                      <li key={`${d.id}-${d.board}`}>
+                        <button type="button" className="linkbtn" onClick={() => onOpenDeck(d.id)}>{d.name}</button>
+                        <span className="muted"> · {d.quantity}× {d.board}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+            </section>
+
+            {card.scryfall_uri && (
+              <a className="btn" href={card.scryfall_uri} target="_blank" rel="noopener noreferrer"><Icon.external /> View on Scryfall</a>
+            )}
+          </div>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+// ===========================================================================
+// Collection tab
+// ===========================================================================
+
+const PAGE_SIZE = 60;
+const QUICK_FILTERS = [
+  ["Commanders", "is:commander"],
+  ["Creatures", "t:creature"],
+  ["Lands", "t:land"],
+  ["Foils", "is:foil"],
+  ["Valuable", "eur>5"],
+  ["Mythics", "r:mythic"],
+];
+const SORTS = [
+  ["name", "Name", "asc"], ["price", "Price", "desc"], ["cmc", "Mana value", "asc"],
+  ["qty", "Quantity", "desc"], ["set", "Set", "asc"], ["rarity", "Rarity", "desc"],
+];
+const tokenize = (q) => q.match(/-?[a-z]*(?:[:<>=!]+)?(?:"[^"]*"|\S+)/gi) || [];
+
+function StatsBar({ dataVersion }) {
+  const [stats, setStats] = useState(null);
+  const [error, setError] = useState(null);
+  const load = useCallback(() => {
+    setError(null);
+    api("/api/stats").then(setStats).catch((e) => setError(`Could not load stats: ${e.message}`));
+  }, []);
+  useEffect(load, [load, dataVersion]);
+  if (error) return <ErrorNotice error={error} onRetry={load} />;
+  const s = stats || {};
+  return (
+    <div className="stats" aria-busy={!stats}>
+      <div className="stat"><div className="v">{stats ? fmtInt(s.unique_cards) : "…"}</div><div className="k">Unique cards</div></div>
+      <div className="stat"><div className="v">{stats ? fmtInt(s.total_cards) : "…"}</div><div className="k">Total copies</div></div>
+      <div className="stat"><div className="v">{stats ? fmtEur(s.value_eur) : "…"}</div><div className="k">Est. value</div></div>
+      <div className="stat"><div className="v" style={{ fontSize: "1rem" }} title={stats?.last_import ? fmtDate(s.last_import) : undefined}>{stats ? (s.last_import ? fmtAgo(s.last_import) : "never") : "…"}</div><div className="k">Last import</div></div>
+    </div>
+  );
+}
+
+function QueryHelp() {
+  const [help, setHelp] = useState(null);
+  const [error, setError] = useState(null);
+  const load = () => {
+    if (help) return;
+    setError(null);
+    api("/api/query-help").then((d) => setHelp(d.help)).catch((e) => setError(e.message));
+  };
+  return (
+    <details className="disclosure" onToggle={(e) => { if (e.currentTarget.open) load(); }}>
+      <summary>Search syntax</summary>
+      {error && <ErrorNotice error={error} onRetry={load} />}
+      {!help && !error && <p className="muted small">Loading…</p>}
+      {help && (
+        <>
+          <ul className="help-list">
+            {help.split(/;\s*/).map((h) => <li key={h}><code>{h}</code></li>)}
+          </ul>
+          <p className="muted small" style={{ marginBottom: 0 }}>
+            Terms are combined with AND. Example: <code>t:creature c:g cmc&lt;=3 -r:common</code>
+          </p>
+        </>
+      )}
+    </details>
+  );
+}
+
+function CardTile({ row, group, onOpen }) {
+  // Badge text names the special finish(es) owned: "foil", "etched" or both.
+  const foil = (row.finishes || "").split(",").filter((f) => f === "foil" || f === "etched").join(" · ");
+  const label = `${row.name}, ${row.qty} owned${row.price ? `, ${fmtPrice(row.price)}` : ""}`;
+  return (
+    <button type="button" className="tile" onClick={() => onOpen(row.scryfall_id)} aria-label={label}>
+      <div className="img">
+        {row.image_small
+          ? <img src={row.image_small} alt="" loading="lazy" decoding="async" width="146" height="204" />
+          : <div className="ph">{row.name}</div>}
+        {foil && <span className="foil" aria-hidden="true">✦ {foil}</span>}
+        <span className="qty" aria-hidden="true">×{row.qty}</span>
+      </div>
+      <div className="cap" aria-hidden="true">
+        <span className="n">{group === "printing" ? `${(row.set_code || "").toUpperCase()} #${row.collector_number}` : row.name}</span>
+        <span className="p">{fmtPrice(row.price)}</span>
+      </div>
+    </button>
+  );
+}
+
+function CardListRow({ row, group, onOpen }) {
+  const where = group === "printing" || row.printing_count === 1
+    ? `${(row.set_code || "").toUpperCase()} #${row.collector_number}`
+    : `${row.printing_count} printings`;
+  return (
+    <button type="button" className="list-row" onClick={() => onOpen(row.scryfall_id)}>
+      <span className="q">{row.qty}×</span>
+      <span className="main">
+        <span className="nm"><b>{row.name}</b> <ManaCost cost={row.mana_cost} /></span>
+        <span className="sub">{row.type_line} · {where}</span>
+      </span>
+      <span className="end">
+        <span>{fmtPrice(row.price)}</span>
+        {/foil|etched/.test(row.finishes || "") && <span className="badge accent">✦ {row.finishes.split(",").filter((f) => f !== "normal").join(", ")}</span>}
+      </span>
+    </button>
+  );
+}
+
+function CollectionTab({ dataVersion, onOpenCard, onGoImport }) {
+  const [q, setQ] = useState(() => store.get("mtg.q", ""));
+  const dq = useDebounced(q.trim(), 300);
+  const [group, setGroup] = useState(() => store.get("mtg.group", "card"));
+  const [sort, setSort] = useState(() => store.get("mtg.sort", "name"));
+  const [dir, setDir] = useState(() => store.get("mtg.dir", "asc"));
+  const [view, setView] = useState(() => store.get("mtg.view", "grid"));
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const reqId = useRef(0);
+  const loadingRef = useRef(false);
+  const sentinel = useRef(null);
+
+  useEffect(() => { store.set("mtg.q", q); }, [q]);
+  useEffect(() => { store.set("mtg.group", group); store.set("mtg.sort", sort); store.set("mtg.dir", dir); store.set("mtg.view", view); }, [group, sort, dir, view]);
+
+  const load = useCallback(async (offset) => {
+    const id = ++reqId.current;
+    loadingRef.current = true;
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ q: dq, group, sort, dir, limit: String(PAGE_SIZE), offset: String(offset) });
+      const data = await api(`/api/collection?${params}`);
+      if (id !== reqId.current) return;
+      setTotal(data.total);
+      setRows((prev) => (offset === 0 ? data.rows : [...prev, ...data.rows]));
+    } catch (e) {
+      if (id !== reqId.current) return;
+      setError(e.status === 400 ? `Search error: ${e.message}` : e.message);
+      if (offset === 0) { setRows([]); setTotal(null); }
+    } finally {
+      if (id === reqId.current) { loadingRef.current = false; setLoading(false); }
+    }
+  }, [dq, group, sort, dir]);
+
+  useEffect(() => { load(0); }, [load, dataVersion]);
+
+  const hasMore = total != null && rows.length < total;
+  // Infinite scroll: auto-load when the sentinel nears the viewport.
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || !hasMore || error || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting) && !loadingRef.current) load(rows.length);
+    }, { rootMargin: "600px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, rows.length, load, error]);
+
+  const tokens = tokenize(q);
+  const toggleFilter = (term) => {
+    const lower = term.toLowerCase();
+    const has = tokens.some((t) => t.toLowerCase() === lower);
+    setQ(has ? tokens.filter((t) => t.toLowerCase() !== lower).join(" ") : [q.trim(), term].filter(Boolean).join(" "));
+  };
+  const changeSort = (s) => {
+    setSort(s);
+    setDir(SORTS.find(([k]) => k === s)?.[2] || "asc");
+  };
+
+  const emptyCollection = total === 0 && !dq;
+
+  return (
+    <div className="stack-lg">
+      <StatsBar dataVersion={dataVersion} />
+
+      <div className="stack">
+        <form className="search" role="search" onSubmit={(e) => { e.preventDefault(); e.currentTarget.querySelector("input")?.blur(); }}>
+          <Icon.search />
+          <label htmlFor="collection-q" className="sr-only">Search your collection</label>
+          <input id="collection-q" className="input" type="search" inputMode="search" enterKeyHint="search"
+            autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false"
+            placeholder='Search… e.g. t:creature c:g cmc<=3' value={q} onChange={(e) => setQ(e.target.value)} />
+          {q && <button type="button" className="btn ghost icon clear" aria-label="Clear search" onClick={() => setQ("")}><Icon.close /></button>}
+        </form>
+        <div className="chips" role="group" aria-label="Quick filters">
+          {QUICK_FILTERS.map(([label, term]) => (
+            <button key={term} type="button" className="chip" aria-pressed={tokens.some((t) => t.toLowerCase() === term.toLowerCase())}
+              onClick={() => toggleFilter(term)}>{label}</button>
+          ))}
+        </div>
+        <QueryHelp />
+        <div className="toolbar">
+          <div className="segmented" role="group" aria-label="Group by">
+            <button type="button" aria-pressed={group === "card"} onClick={() => setGroup("card")}>Cards</button>
+            <button type="button" aria-pressed={group === "printing"} onClick={() => setGroup("printing")}>Printings</button>
+          </div>
+          <label htmlFor="collection-sort" className="sr-only">Sort by</label>
+          <select id="collection-sort" className="select grow" style={{ maxWidth: 170 }} value={sort} onChange={(e) => changeSort(e.target.value)}>
+            {SORTS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+          <button type="button" className="btn icon" onClick={() => setDir(dir === "asc" ? "desc" : "asc")}
+            aria-label={dir === "asc" ? "Ascending, switch to descending" : "Descending, switch to ascending"} title={dir === "asc" ? "Ascending" : "Descending"}>
+            {dir === "asc" ? <Icon.up /> : <Icon.down />}
+          </button>
+          <div className="segmented" role="group" aria-label="View" style={{ marginLeft: "auto" }}>
+            <button type="button" aria-pressed={view === "grid"} aria-label="Grid view" onClick={() => setView("grid")}><Icon.grid /></button>
+            <button type="button" aria-pressed={view === "list"} aria-label="List view" onClick={() => setView("list")}><Icon.list /></button>
+          </div>
+        </div>
+      </div>
+
+      <div className="stack">
+        <div className="result-count" aria-live="polite">
+          {total != null && !emptyCollection && `${plural(total, group === "card" ? "card" : "printing")}${dq ? " match" + (total === 1 ? "es" : "") : ""}`}
+        </div>
+
+        {error && <ErrorNotice error={error} onRetry={() => load(rows.length && hasMore ? rows.length : 0)} />}
+
+        {emptyCollection && (
+          <div className="empty card">
+            <h3>Your collection is empty</h3>
+            <p style={{ margin: 0 }}>Export your collection from ManaBox as CSV and import it here.</p>
+            <button type="button" className="btn primary" onClick={onGoImport}><Icon.import /> Import from ManaBox</button>
+          </div>
+        )}
+        {total === 0 && dq && !error && (
+          <div className="empty"><h3>No matches</h3><p style={{ margin: 0 }}>Nothing in your collection matches <code>{dq}</code>.</p></div>
+        )}
+
+        {rows.length > 0 && (view === "grid"
+          ? <div className="grid">{rows.map((r) => <CardTile key={r.scryfall_id} row={r} group={group} onOpen={onOpenCard} />)}</div>
+          : <div className="list">{rows.map((r) => <CardListRow key={r.scryfall_id} row={r} group={group} onOpen={onOpenCard} />)}</div>)}
+
+        {loading && <Spinner label={rows.length ? "Loading more…" : "Searching…"} />}
+        <div ref={sentinel} aria-hidden="true" />
+        {hasMore && !loading && !error && (
+          <button type="button" className="btn" onClick={() => load(rows.length)}>
+            Load more ({fmtInt(total - rows.length)} left)
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ===========================================================================
+// Decks tab
+// ===========================================================================
+
+const FORMATS = ["commander", "standard", "modern", "pioneer", "pauper", "legacy", "vintage", "brawl", "other"];
+const BOARD_LABEL = { commander: "Commander", main: "Main deck", side: "Sideboard", maybe: "Maybeboard" };
+
+function DeckImportForm({ onCreated, onCancel }) {
+  const [name, setName] = useState("");
+  const [format, setFormat] = useState("commander");
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const pickFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setText(await file.text());
+      if (!name) setName(file.name.replace(/\.[^.]+$/, ""));
+    } catch (err) {
+      setError(`Could not read the file: ${err.message}`);
+    }
+    e.target.value = "";
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim() || !text.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api("/api/decks", { method: "POST", json: { name: name.trim(), format, text } });
+      onCreated(res);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="card stack" onSubmit={submit} aria-labelledby="deck-import-title">
+      <div className="row between">
+        <h2 id="deck-import-title">Import decklist</h2>
+        <button type="button" className="btn ghost icon" aria-label="Close import form" onClick={onCancel}><Icon.close /></button>
+      </div>
+      <div className="row" style={{ alignItems: "flex-end" }}>
+        <div className="field grow" style={{ flexBasis: 200 }}>
+          <label htmlFor="deck-name">Name</label>
+          <input id="deck-name" className="input" required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Elves tribal" />
+        </div>
+        <div className="field" style={{ flexBasis: 150, flexGrow: 1 }}>
+          <label htmlFor="deck-format">Format</label>
+          <select id="deck-format" className="select" value={format} onChange={(e) => setFormat(e.target.value)}>
+            {FORMATS.map((f) => <option key={f} value={f}>{cap(f)}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="field">
+        <div className="row between">
+          <label htmlFor="deck-text">Decklist</label>
+          <label className="btn sm">
+            <Icon.file /> Load .txt
+            <input type="file" accept=".txt,.dec,.dek,text/plain" className="sr-only" onChange={pickFile} />
+          </label>
+        </div>
+        <textarea id="deck-text" className="textarea" required value={text} onChange={(e) => setText(e.target.value)}
+          placeholder={"Commander\n1 Lathril, Blade of the Elves\n\nDeck\n1 Sol Ring\n1x Llanowar Elves (M19) 314\n36 Forest"} />
+        <span className="muted small">One card per line: <code>1 Sol Ring</code>, <code>1x Name (SET) 123</code>. Section headers like Commander / Deck / Sideboard / Maybeboard are recognised. Cards you own are matched to your printings.</span>
+      </div>
+      <ErrorNotice error={error} />
+      <div className="row">
+        <button type="submit" className="btn primary" disabled={busy || !name.trim() || !text.trim()}>
+          {busy ? <><span className="spinner" aria-hidden="true" /> Importing…</> : "Import deck"}
+        </button>
+        <button type="button" className="btn ghost" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+function DeckList({ dataVersion, onOpen, refreshKey }) {
+  const [decks, setDecks] = useState(null);
+  const [error, setError] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const load = useCallback(() => {
+    setError(null);
+    api("/api/decks").then(setDecks).catch((e) => setError(`Could not load decks: ${e.message}`));
+  }, []);
+  useEffect(load, [load, dataVersion, refreshKey]);
+
+  return (
+    <div className="stack-lg">
+      <div className="page-title">
+        <h1>Decks</h1>
+        {!showForm && <button type="button" className="btn primary" onClick={() => setShowForm(true)}><Icon.plus /> Import decklist</button>}
+      </div>
+      {showForm && (
+        <DeckImportForm onCancel={() => setShowForm(false)}
+          onCreated={(res) => {
+            setShowForm(false);
+            const issues = [];
+            if (res.unresolved?.length) issues.push(`Not found on Scryfall: ${res.unresolved.join(", ")}`);
+            if (res.parse_errors?.length) issues.push(`Skipped lines: ${res.parse_errors.join(" | ")}`);
+            onOpen(res.id, issues.length ? issues.join(" — ") : null);
+          }} />
+      )}
+      <ErrorNotice error={error} onRetry={load} />
+      {!decks && !error && <Spinner label="Loading decks…" />}
+      {decks && decks.length === 0 && !showForm && (
+        <div className="empty card">
+          <h3>No decks yet</h3>
+          <p style={{ margin: 0, maxWidth: 460 }}>Paste a decklist, import ManaBox deck binders with your collection CSV, or ask the planner to build one from your cards.</p>
+          <button type="button" className="btn primary" onClick={() => setShowForm(true)}><Icon.plus /> Import decklist</button>
+        </div>
+      )}
+      {decks && decks.length > 0 && (
+        <div className="deck-list">
+          {decks.map((d) => (
+            <button key={d.id} type="button" className="deck-item" onClick={() => onOpen(d.id)}>
+              <span className="t">{d.name}</span>
+              <span className="row small">
+                {d.format && <span className="badge">{d.format}</span>}
+                <SourceBadge source={d.source} />
+                <span className="muted">{plural(d.card_count, "card")}</span>
+                <span className="muted">· updated {fmtAgo(d.updated_at)}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeckCardRow({ card, onOpenCard }) {
+  const [peek, setPeek] = useState(false);
+  let badge;
+  if (card.basic) badge = <span className="badge" title="Basic land">basic</span>;
+  else if (!card.missing) badge = <span className="badge ok" aria-label={`Owned (${card.owned})`} title={`You own ${card.owned}`}>✓</span>;
+  else badge = <span className="badge bad" aria-label={`Missing ${card.missing}, own ${card.owned}`} title={`Missing ${card.missing} (you own ${card.owned})`}>✗ {card.missing}</span>;
+  const unresolved = !card.scryfall_id;
+  return (
+    <>
+      <button type="button" className="deck-row" disabled={unresolved} aria-expanded={unresolved ? undefined : peek}
+        onClick={() => setPeek((p) => !p)} title={unresolved ? "Not found on Scryfall" : undefined}>
+        <span className="q">{card.quantity}</span>
+        <span className="nm">
+          <b>{card.name}</b>
+          <ManaCost cost={card.mana_cost} />
+          {unresolved && <span className="badge warn">unresolved</span>}
+        </span>
+        <span className="end">
+          <span className="price">{fmtPrice(card.price)}</span>
+          {badge}
+        </span>
+      </button>
+      {peek && !unresolved && (
+        <div className="peek">
+          {card.image_small ? <img src={card.image_small} alt={card.name} loading="lazy" /> : <span />}
+          <div className="stack small" style={{ gap: 6, alignContent: "start" }}>
+            <span>{card.type_line}</span>
+            <span className="muted">{(card.set_code || "").toUpperCase()} #{card.collector_number} · own {card.owned}</span>
+            <button type="button" className="btn sm" style={{ justifySelf: "start" }} onClick={() => onOpenCard(card.scryfall_id)}>Card details</button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk, onChanged }) {
+  const [deck, setDeck] = useState(null);
+  const [error, setError] = useState(null);
+  const [actionError, setActionError] = useState(null);
+  const [notice, setNotice] = useState(initialNotice);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ name: "", format: "", description: "" });
+  const [saving, setSaving] = useState(false);
+  const [onlyMissing, setOnlyMissing] = useState(false);
+
+  const load = useCallback(() => {
+    setError(null);
+    api(`/api/decks/${id}`).then(setDeck).catch((e) => setError(e.status === 404 ? "This deck no longer exists." : e.message));
+  }, [id]);
+  useEffect(load, [load, dataVersion]); // also after the planner saved this deck
+
+  const startEdit = () => {
+    setForm({ name: deck.name, format: deck.format || "", description: deck.description || "" });
+    setEditing(true);
+  };
+  const saveEdit = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) return;
+    setSaving(true);
+    setActionError(null);
+    try {
+      const updated = await api(`/api/decks/${id}`, { method: "PATCH", json: { name: form.name.trim(), format: form.format || "", description: form.description } });
+      setDeck((d) => ({ ...d, ...updated }));
+      setEditing(false);
+      onChanged();
+    } catch (err) {
+      setActionError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const remove = async () => {
+    if (!window.confirm(`Delete the deck "${deck.name}"? This cannot be undone. Your collection is not affected.`)) return;
+    setActionError(null);
+    try {
+      await api(`/api/decks/${id}`, { method: "DELETE" });
+      onChanged();
+      onBack();
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
+  const grouped = useMemo(() => {
+    if (!deck) return [];
+    return ["commander", "main", "side", "maybe"].map((board) => {
+      const cards = deck.cards.filter((c) => c.board === board && (!onlyMissing || c.missing > 0));
+      const byType = DISPLAY_TYPES.map((t) => ({ type: t, cards: cards.filter((c) => mainType(c.type_line) === t) }))
+        .filter((g) => g.cards.length);
+      return { board, count: deck.counts?.[board] ?? 0, cards, byType };
+    }).filter((b) => b.cards.length);
+  }, [deck, onlyMissing]);
+
+  const exportHref = `/api/decks/${id}/export`;
+
+  return (
+    <div className="stack-lg">
+      <div>
+        <button type="button" className="btn ghost" onClick={onBack} style={{ marginLeft: -8 }}><Icon.back /> All decks</button>
+      </div>
+      {error && <ErrorNotice error={error} onRetry={load} />}
+      {!deck && !error && <Spinner label="Loading deck…" />}
+      {deck && (
+        <>
+          <header className="deck-head">
+            {!editing ? (
+              <>
+                <h2>{deck.name}</h2>
+                <div className="row small">
+                  {deck.format && <span className="badge">{deck.format}</span>}
+                  <SourceBadge source={deck.source} />
+                  <span className="muted">updated {fmtAgo(deck.updated_at)}</span>
+                </div>
+                {deck.description && <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{deck.description}</p>}
+              </>
+            ) : (
+              <form className="card stack" onSubmit={saveEdit} aria-label="Edit deck">
+                <div className="field">
+                  <label htmlFor="edit-name">Name</label>
+                  <input id="edit-name" className="input" required maxLength={200} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} autoFocus />
+                </div>
+                <div className="field">
+                  <label htmlFor="edit-format">Format</label>
+                  <select id="edit-format" className="select" value={form.format} onChange={(e) => setForm({ ...form, format: e.target.value })}>
+                    <option value="">—</option>
+                    {[...new Set([...FORMATS, form.format].filter(Boolean))].map((f) => <option key={f} value={f}>{cap(f)}</option>)}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="edit-desc">Description</label>
+                  <textarea id="edit-desc" className="input" rows={3} maxLength={5000} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                </div>
+                <div className="row">
+                  <button type="submit" className="btn primary" disabled={saving || !form.name.trim()}>{saving ? "Saving…" : "Save"}</button>
+                  <button type="button" className="btn ghost" onClick={() => setEditing(false)}>Cancel</button>
+                </div>
+              </form>
+            )}
+            <div className="stats">
+              {["commander", "main", "side", "maybe"].filter((b) => b === "main" || deck.counts?.[b]).map((b) => (
+                <div className="stat" key={b}><div className="v">{deck.counts?.[b] ?? 0}</div><div className="k">{BOARD_LABEL[b]}</div></div>
+              ))}
+            </div>
+            {deck.missing_count > 0
+              ? <div className="notice warn"><span aria-hidden="true">✗</span><div className="grow"><b>Missing: {plural(deck.missing_count, "card")} (~{fmtEur(deck.missing_cost_eur)})</b> <span className="small">— maybeboard not counted</span></div></div>
+              : <div className="notice ok"><span aria-hidden="true">✓</span><div className="grow"><b>You own every card in this deck.</b></div></div>}
+            <div className="row">
+              <button type="button" className="btn primary" onClick={() => onAsk(deck)}><Icon.sparkle /> Ask the planner</button>
+              <a className="btn" href={exportHref} download><Icon.download /> Export</a>
+              {!editing && <button type="button" className="btn" onClick={startEdit}><Icon.edit /> Rename</button>}
+              <button type="button" className="btn danger" onClick={remove}><Icon.trash /> Delete</button>
+            </div>
+            <ErrorNotice error={actionError} onDismiss={() => setActionError(null)} />
+            {notice && <div className="notice warn" role="status"><div className="grow">{notice}</div><button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setNotice(null)}><Icon.close /></button></div>}
+          </header>
+
+          {deck.cards.length > 0 && deck.missing_count > 0 && (
+            <label className="row" style={{ minHeight: 44, cursor: "pointer" }}>
+              <input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} style={{ width: 20, height: 20, accentColor: "var(--accent)" }} />
+              Only show missing cards
+            </label>
+          )}
+
+          {deck.cards.length === 0 && <div className="empty"><h3>This deck is empty</h3></div>}
+
+          {grouped.map((b) => (
+            <section key={b.board} className="board" aria-label={BOARD_LABEL[b.board]}>
+              <h3>{BOARD_LABEL[b.board]} <span className="muted small">{b.count}</span></h3>
+              <div className="deck-section">
+                {b.byType.map((g) => (
+                  <div key={g.type} className="type-group">
+                    <h4>{g.type} ({g.cards.reduce((a, c) => a + c.quantity, 0)})</h4>
+                    {g.cards.map((c) => <DeckCardRow key={`${c.board}|${c.name}`} card={c} onOpenCard={onOpenCard} />)}
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function DecksTab({ dataVersion, deckId, deckNotice, onOpenDeck, onOpenCard, onAsk, onChanged }) {
+  const [listKey, bumpList] = useReducer((x) => x + 1, 0);
+  if (deckId) {
+    return (
+      <DeckDetail key={deckId} id={deckId} dataVersion={dataVersion} initialNotice={deckNotice} onBack={() => { onOpenDeck(null); bumpList(); }}
+        onOpenCard={onOpenCard} onAsk={onAsk} onChanged={onChanged} />
+    );
+  }
+  return <DeckList dataVersion={dataVersion} refreshKey={listKey} onOpen={onOpenDeck} />;
+}
+
+// ===========================================================================
+// Planner (chat) tab
+// ===========================================================================
+
+const SUGGESTIONS = [
+  "Build a Commander deck from cards I own around my best legendary creature",
+  "Which of my cards are worth more than €10?",
+  "Suggest 10 upgrades under €2 for my deck …",
+  "Find me all blue counterspells I own",
+];
+
+function toolIcon(name = "") {
+  if (/search|find|check_owned|alternatives|staples|synerg/.test(name)) return "🔍";
+  if (/deck|mana_base|brawl/.test(name)) return "🃏";
+  if (/price/.test(name)) return "💶";
+  if (/rules/.test(name)) return "📖";
+  if (/overview|get_card|batch|random|sets/.test(name)) return "📋";
+  return "🔧";
+}
+function ToolChip({ tool }) {
+  const label = `${tool.name}${tool.input ? `: ${tool.input}` : ""}`;
+  return (
+    <span className="tool-chip" title={label}>
+      <span aria-hidden="true">{toolIcon(tool.name)}</span>
+      <span><b>{tool.name}</b>{tool.input ? `: ${tool.input}` : ""}</span>
+    </span>
+  );
+}
+
+function Message({ msg }) {
+  if (msg.role === "user") {
+    return <div className="msg user"><div className="bubble">{msg.content}</div></div>;
+  }
+  const tools = msg.tools || [];
+  return (
+    <div className="msg assistant">
+      {tools.length > 0 && (
+        <details className="disclosure">
+          <summary>Used {plural(tools.length, "tool")}</summary>
+          <div className="tools" style={{ marginTop: 6 }}>{tools.map((t, i) => <ToolChip key={i} tool={t} />)}</div>
+        </details>
+      )}
+      <div className="bubble"><Markdown text={msg.content || "_(no answer)_"} /></div>
+      <div className="meta">
+        {msg.created_at && <span>{fmtDate(msg.created_at)}</span>}
+        {msg.cost_usd != null && <span title="Equivalent API cost reported by Claude Code">≈ ${Number(msg.cost_usd).toFixed(3)}</span>}
+      </div>
+    </div>
+  );
+}
+
+function SetupHint() {
+  return (
+    <div className="notice warn" role="alert">
+      <span aria-hidden="true">🔑</span>
+      <div className="grow">
+        <b>Claude is not configured on the server.</b> On a machine with Claude Code, run <code>claude setup-token</code>,
+        put the token into the app's <code>.env</code> as <code>CLAUDE_CODE_OAUTH_TOKEN=…</code>, then recreate the container.
+      </div>
+    </div>
+  );
+}
+
+function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
+  const [chats, setChats] = useState(null);
+  const [chatsError, setChatsError] = useState(null);
+  const [chatId, setChatId] = useState(() => store.get("mtg.chat", null));
+  const chatIdRef = useRef(chatId);
+  const [messages, setMessages] = useState([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [serverBusy, setServerBusy] = useState(false);
+  const [stream, setStream] = useState(null); // {text, tools} while this tab streams an answer
+  const streamCtl = useRef(null);
+  const sending = useRef(false); // set synchronously: blocks a double submit while the chat is created
+  const [error, setError] = useState(null); // {message, status}
+  const [input, setInput] = useState("");
+  const [drawer, setDrawer] = useState(false);
+  const drawerRef = useRef(null);
+  const inputRef = useRef(null);
+  const atBottom = useRef(true);
+
+  const loadChats = useCallback(async () => {
+    try {
+      setChats(await api("/api/chats"));
+      setChatsError(null);
+    } catch (e) {
+      setChatsError(`Could not load chats: ${e.message}`);
+    }
+  }, []);
+
+  // Plain functions on purpose: they only touch refs and state setters.
+  async function loadChat(id, { quiet = false } = {}) {
+    if (!quiet) setChatLoading(true);
+    try {
+      const d = await api(`/api/chats/${id}`);
+      if (chatIdRef.current !== id) return;
+      setMessages(d.messages);
+      setServerBusy(d.busy);
+    } catch (e) {
+      if (chatIdRef.current !== id) return;
+      if (e.status === 404) selectChat(null);
+      else setError({ message: `Could not load the chat: ${e.message}` });
+    } finally {
+      if (!quiet && chatIdRef.current === id) setChatLoading(false);
+    }
+  }
+
+  function selectChat(id, { load = true } = {}) {
+    // Leaving a streaming chat only detaches this browser: the server keeps
+    // running the turn and stores the answer.
+    if (streamCtl.current) { streamCtl.current.abort(); streamCtl.current = null; }
+    chatIdRef.current = id;
+    setChatId(id);
+    store.set("mtg.chat", id);
+    setMessages([]);
+    setStream(null);
+    setServerBusy(false);
+    setError(null);
+    setChatLoading(false);
+    setDrawer(false);
+    atBottom.current = true;
+    if (id && load) loadChat(id);
+  }
+
+  useEffect(() => {
+    loadChats();
+    if (chatIdRef.current) loadChat(chatIdRef.current);
+    return () => streamCtl.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Another tab/device (or a detached stream) is still answering: poll.
+  useEffect(() => {
+    if (!serverBusy || stream || !chatId) return;
+    const t = setInterval(() => loadChat(chatId, { quiet: true }), 3000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverBusy, stream, chatId]);
+  // ...and refresh the list once it finishes (title/updated_at). The turn may
+  // have saved a deck (save_deck), so the Decks tab refetches too.
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (wasBusy.current && !serverBusy) { loadChats(); onChanged?.(); }
+    wasBusy.current = serverBusy;
+  }, [serverBusy, loadChats, onChanged]);
+
+  async function send(textArg, targetId) {
+    const fromInput = textArg == null;
+    const text = (fromInput ? input : textArg).trim();
+    // An explicit target chat (deck prompt) was just created, so a stale busy flag doesn't apply.
+    if (!text || sending.current || streamCtl.current || (serverBusy && targetId == null)) return;
+    sending.current = true;
+    try {
+      await sendTurn(text, fromInput, targetId);
+    } finally {
+      sending.current = false;
+    }
+  }
+
+  async function sendTurn(text, fromInput, targetId) {
+    setError(null);
+    let id = targetId ?? chatIdRef.current;
+    if (!id) {
+      try {
+        const chat = await api("/api/chats", { method: "POST", json: {} });
+        setChats((cs) => [chat, ...(cs || [])]);
+        id = chat.id;
+        selectChat(id, { load: false });
+      } catch (e) {
+        setError({ message: `Could not create a chat: ${e.message}` });
+        return;
+      }
+    }
+    const ctl = new AbortController();
+    streamCtl.current = ctl;
+    const tmpId = `tmp-${Date.now()}`;
+    setMessages((m) => [...m, { id: tmpId, role: "user", content: text, tools: [], created_at: null }]);
+    setStream({ text: "", tools: [] });
+    if (fromInput) setInput("");
+    atBottom.current = true;
+
+    const undo = (message, status) => {
+      if (streamCtl.current === ctl) streamCtl.current = null;
+      if (chatIdRef.current !== id) return;
+      setStream(null);
+      setMessages((m) => m.filter((x) => x.id !== tmpId));
+      setInput((cur) => cur || text); // keep the prompt so it can be re-sent
+      setError({ message, status });
+    };
+
+    let res;
+    try {
+      res = await fetch(`/api/chats/${id}/messages`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }), signal: ctl.signal,
+      });
+    } catch (e) {
+      if (!ctl.signal.aborted) undo(`Network error: ${e.message}`);
+      return;
+    }
+    if (!res.ok) {
+      let message = `Request failed: HTTP ${res.status}`;
+      try { const d = await res.json(); if (d?.error) message = d.error; } catch { /* not JSON */ }
+      undo(message, res.status);
+      if (res.status === 409) loadChat(id, { quiet: true }); // shows the running answer as busy
+      return;
+    }
+
+    try {
+      for await (const ev of readSse(res.body)) {
+        if (chatIdRef.current !== id || ctl.signal.aborted) break;
+        if (ev.type === "text") setStream((s) => s && { ...s, text: s.text + ev.text });
+        else if (ev.type === "tool") setStream((s) => s && { ...s, tools: [...s.tools, { name: ev.name, input: ev.input }] });
+        else if (ev.type === "done") { setMessages((m) => [...m, ev.message]); setStream(null); onChanged?.(); }
+        else if (ev.type === "error") setError({ message: ev.error });
+      }
+    } catch (e) {
+      if (!ctl.signal.aborted && chatIdRef.current === id) setError({ message: `Connection lost: ${e.message}. The answer may still arrive — reopen the chat in a moment.` });
+    }
+    if (streamCtl.current === ctl) streamCtl.current = null;
+    if (chatIdRef.current === id) {
+      setStream(null);
+      loadChat(id, { quiet: true }); // sync stored ids, stored error text, busy flag
+    }
+    loadChats();
+  }
+
+  // "Ask the planner about this deck": start a fresh chat and send the prompt.
+  useEffect(() => {
+    if (!request) return;
+    onRequestHandled();
+    (async () => {
+      if (streamCtl.current) { setError({ message: "Wait for the current answer to finish first." }); setInput(request.prompt); return; }
+      try {
+        const chat = await api("/api/chats", { method: "POST", json: { title: request.title } });
+        setChats((cs) => [chat, ...(cs || [])]);
+        selectChat(chat.id, { load: false });
+        send(request.prompt, chat.id);
+      } catch (e) {
+        setError({ message: `Could not create a chat: ${e.message}` });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request]);
+
+  async function deleteChat(id) {
+    const chat = chats?.find((c) => c.id === id);
+    if (!window.confirm(`Delete the chat "${chat?.title || "this chat"}"?`)) return;
+    try {
+      await api(`/api/chats/${id}`, { method: "DELETE" });
+      setChats((cs) => (cs || []).filter((c) => c.id !== id));
+      if (chatIdRef.current === id) selectChat(null);
+    } catch (e) {
+      setChatsError(`Could not delete the chat: ${e.message}`);
+    }
+  }
+
+  // Stick to the bottom while an answer streams, unless the user scrolled up.
+  useEffect(() => {
+    if (!active) return;
+    const onScroll = () => {
+      const el = document.documentElement;
+      atBottom.current = window.innerHeight + window.scrollY >= el.scrollHeight - 160;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [active]);
+  useLayoutEffect(() => {
+    if (active && atBottom.current) window.scrollTo(0, document.documentElement.scrollHeight);
+  }, [messages, stream, serverBusy, active]);
+
+  // Auto-grow composer.
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.4)}px`;
+  }, [input]);
+
+  const coarse = useMemo(() => window.matchMedia?.("(pointer: coarse)").matches, []);
+  // Mobile chat drawer behaves like a modal: focus moves in, Tab is trapped,
+  // Escape closes it and focus returns to the toggle (as in Sheet).
+  useEffect(() => {
+    if (!drawer) return;
+    const prevFocus = document.activeElement;
+    const focusables = () => drawerRef.current
+      ? [...drawerRef.current.querySelectorAll('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      : [];
+    focusables()[0]?.focus();
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); setDrawer(false); }
+      if (e.key === "Tab") {
+        const f = focusables();
+        if (!f.length) return;
+        const first = f[0], last = f[f.length - 1];
+        const inside = drawerRef.current.contains(document.activeElement);
+        if (e.shiftKey && (!inside || document.activeElement === first)) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && (!inside || document.activeElement === last)) { e.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (prevFocus && prevFocus.focus && document.contains(prevFocus)) prevFocus.focus({ preventScroll: true });
+    };
+  }, [drawer]);
+
+  const busy = Boolean(stream) || serverBusy;
+  const chat = chats?.find((c) => c.id === chatId);
+  const notConfigured = health && !health.claude_configured;
+
+  const sidebar = (
+    <>
+      {drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} aria-hidden="true" />}
+      <aside ref={drawerRef} className={`chat-side${drawer ? " open" : ""}`} aria-label="Chats"
+        role={drawer ? "dialog" : undefined} aria-modal={drawer ? "true" : undefined}>
+        <div className="row between">
+          <h2 style={{ fontSize: "1.05rem" }}>Chats</h2>
+          <button type="button" className="btn ghost icon drawer-toggle" aria-label="Close chat list" onClick={() => setDrawer(false)}><Icon.close /></button>
+        </div>
+        <button type="button" className="btn primary" onClick={() => { selectChat(null); setTimeout(() => inputRef.current?.focus(), 0); }}><Icon.plus /> New chat</button>
+        <ErrorNotice error={chatsError} onRetry={loadChats} />
+        {!chats && !chatsError && <Spinner />}
+        {chats && chats.length === 0 && <p className="muted small">No chats yet.</p>}
+        {chats?.map((c) => (
+          <div key={c.id} className="chat-link" aria-current={c.id === chatId ? "true" : undefined}>
+            <button type="button" onClick={() => selectChat(c.id)}>
+              <span>{c.title}</span>
+              <span className="muted small">{fmtAgo(c.updated_at)}</span>
+            </button>
+            <button type="button" className="btn ghost icon" aria-label={`Delete chat ${c.title}`} onClick={() => deleteChat(c.id)}><Icon.trash /></button>
+          </div>
+        ))}
+      </aside>
+    </>
+  );
+
+  return (
+    <div className="planner">
+      {sidebar}
+      <section className="chat-main" aria-label="Conversation">
+        <div className="chat-title">
+          <button type="button" className="btn icon drawer-toggle" aria-label="Show chats" aria-expanded={drawer} onClick={() => setDrawer(true)}><Icon.menu /></button>
+          <h2>{chatId ? chat?.title || "Chat" : "New chat"}</h2>
+          {chatId && <button type="button" className="btn sm" onClick={() => selectChat(null)}><Icon.plus /> New</button>}
+        </div>
+
+        {notConfigured && <SetupHint />}
+
+        {chatLoading && <Spinner label="Loading chat…" />}
+
+        {!chatId && messages.length === 0 && !stream && (
+          <div className="stack">
+            <div className="empty" style={{ paddingBottom: 8 }}>
+              <h3>Ask the planner</h3>
+              <p style={{ margin: 0, maxWidth: 520 }}>Claude can search your collection, look cards up on Scryfall, check rules and prices, and save decks you'll find in the Decks tab.</p>
+            </div>
+            <div className="suggestions">
+              {SUGGESTIONS.map((s) => (
+                <button key={s} type="button" className="suggestion" onClick={() => { setInput(s); setTimeout(() => { const el = inputRef.current; if (el) { el.focus(); el.setSelectionRange(s.length, s.length); } }, 0); }}>{s}</button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {chatId && !chatLoading && messages.length === 0 && !stream && !serverBusy && (
+          <p className="muted">No messages yet — say hello.</p>
+        )}
+
+        <div className="messages" aria-live="off">
+          {messages.map((m) => <Message key={m.id} msg={m} />)}
+          {stream && (
+            <div className="msg assistant" aria-busy="true">
+              {stream.tools.length > 0 && <div className="tools">{stream.tools.map((t, i) => <ToolChip key={i} tool={t} />)}</div>}
+              <div className="bubble">
+                {stream.text ? <Markdown text={stream.text} /> : null}
+                <span className="typing" role="status" aria-label="Claude is working"><span /><span /><span /></span>
+              </div>
+            </div>
+          )}
+          {!stream && serverBusy && (
+            <div className="notice" role="status"><span className="spinner" aria-hidden="true" /><div className="grow">Claude is still working on an answer in this chat. It will appear here when it's done.</div></div>
+          )}
+        </div>
+
+        {error && (error.status === 503
+          ? (!notConfigured && <SetupHint />)
+          : <ErrorNotice error={error.message} onDismiss={() => setError(null)} />)}
+
+        <div className="composer">
+          <form onSubmit={(e) => { e.preventDefault(); send(); }}>
+            <label htmlFor="chat-input" className="sr-only">Message</label>
+            <textarea id="chat-input" ref={inputRef} rows={1} value={input} maxLength={20000}
+              placeholder={busy ? "Claude is answering…" : "Ask the planner…"}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !coarse && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
+              }} />
+            <button type="submit" className="btn primary" aria-label="Send" disabled={busy || !input.trim()}>
+              {busy ? <span className="spinner" aria-hidden="true" style={{ borderTopColor: "var(--accent-ink)" }} /> : <Icon.send />}
+            </button>
+          </form>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ===========================================================================
+// Import tab
+// ===========================================================================
+
+function Collapsible({ label, children }) {
+  return (
+    <details className="disclosure">
+      <summary>{label}</summary>
+      <div style={{ marginTop: 6 }}>{children}</div>
+    </details>
+  );
+}
+
+function ImportSummary({ s }) {
+  if (!s) return null;
+  const delta = (s.total_cards_after ?? 0) - (s.total_cards_before ?? 0);
+  return (
+    <div className="stack">
+      <div className="summary-grid">
+        <div className="stat"><div className="v">{fmtInt(s.total_cards_before)} → {fmtInt(s.total_cards_after)}</div><div className="k">Copies ({delta >= 0 ? "+" : ""}{fmtInt(delta)})</div></div>
+        <div className="stat"><div className="v">+{fmtInt(s.printings_added)}</div><div className="k">Printings added</div></div>
+        <div className="stat"><div className="v">−{fmtInt(s.printings_removed)}</div><div className="k">Printings removed</div></div>
+        <div className="stat"><div className="v">{fmtInt(s.printings_changed)}</div><div className="k">Qty changed</div></div>
+      </div>
+      <dl className="kv">
+        <dt>Mode</dt><dd>{s.mode === "add" ? "Add (merge)" : "Replace (sync)"}</dd>
+        <dt>Rows</dt><dd>{fmtInt(s.imported_rows)} imported of {fmtInt(s.rows)}</dd>
+        <dt>Printings</dt><dd>{fmtInt(s.printings)} owned</dd>
+        {s.decks_from_binders?.length > 0 && (<><dt>Decks</dt><dd>{s.decks_from_binders.join(", ")}</dd></>)}
+        {s.skipped_wishlist_rows > 0 && (<><dt>Skipped</dt><dd>{plural(s.skipped_wishlist_rows, "wish-list row")}</dd></>)}
+      </dl>
+      {s.unresolved?.length > 0 && (
+        <Collapsible label={`${plural(s.unresolved.length, "row")} could not be matched on Scryfall`}>
+          <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>
+            {s.unresolved.map((u, i) => <li key={i}>{u}</li>)}
+          </ul>
+        </Collapsible>
+      )}
+    </div>
+  );
+}
+
+function ImportTab({ dataVersion, health, onImported }) {
+  const [file, setFile] = useState(null);
+  const [mode, setMode] = useState("replace");
+  const [busy, setBusy] = useState(false);
+  const [started, setStarted] = useState(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [refresh, setRefresh] = useState({ busy: false, result: null, error: null });
+  const [history, setHistory] = useState(null);
+  const [historyError, setHistoryError] = useState(null);
+  const fileInput = useRef(null);
+
+  const loadHistory = useCallback(() => {
+    setHistoryError(null);
+    api("/api/imports").then(setHistory).catch((e) => setHistoryError(`Could not load import history: ${e.message}`));
+  }, []);
+  useEffect(loadHistory, [loadHistory, dataVersion]);
+
+  // Elapsed-time counter while a request runs.
+  useEffect(() => {
+    if (!started) return;
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [started]);
+  // Warn before closing the page mid-import.
+  useEffect(() => {
+    if (!busy) return;
+    const h = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", h);
+    return () => window.removeEventListener("beforeunload", h);
+  }, [busy]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!file || busy) return;
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    setElapsed(0);
+    setStarted(Date.now());
+    try {
+      const text = await file.text();
+      const params = new URLSearchParams({ mode, filename: file.name });
+      const summary = await api(`/api/import/manabox?${params}`, { method: "POST", body: text, headers: { "Content-Type": "text/csv" } });
+      setResult(summary);
+      setFile(null);
+      if (fileInput.current) fileInput.current.value = "";
+      onImported();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+      setStarted(null);
+    }
+  };
+
+  const refreshPrices = async () => {
+    setRefresh({ busy: true, result: null, error: null });
+    try {
+      const r = await api("/api/refresh-prices", { method: "POST" });
+      setRefresh({ busy: false, result: r, error: null });
+      onImported();
+    } catch (err) {
+      setRefresh({ busy: false, result: null, error: err.message });
+    }
+  };
+
+  return (
+    <div className="stack-lg" style={{ maxWidth: 760 }}>
+      <div className="page-title"><h1>Import</h1></div>
+
+      <form className="card stack" onSubmit={submit} aria-labelledby="import-title" aria-busy={busy}>
+        <h2 id="import-title">ManaBox collection CSV</h2>
+        <Collapsible label="How to export from ManaBox">
+          <ol className="steps small">
+            <li>In ManaBox open <b>Collection</b>, tap <b>⋯</b> → <b>Export</b> → <b>CSV</b>.</li>
+            <li>Share or save the file (e.g. to Files / Downloads).</li>
+            <li>Pick it below and tap <b>Import</b>.</li>
+          </ol>
+          <p className="small muted" style={{ marginBottom: 0 }}>Deck binders become decks; wish-list binders are skipped.</p>
+        </Collapsible>
+
+        <label className={`file-drop${file ? " has-file" : ""}`}>
+          <Icon.file />
+          <b>{file ? file.name : "Choose CSV file"}</b>
+          <span className="muted small">{file ? `${(file.size / 1024).toFixed(0)} KB · tap to change` : "ManaBox export (.csv)"}</span>
+          <input ref={fileInput} type="file" accept=".csv,text/csv" disabled={busy}
+            onChange={(e) => { setFile(e.target.files?.[0] || null); setError(null); }} />
+        </label>
+
+        <fieldset style={{ border: 0, padding: 0, margin: 0 }} className="stack" disabled={busy}>
+          <legend className="label" style={{ marginBottom: 8 }}>Mode</legend>
+          <label className="radio-card">
+            <input type="radio" name="mode" value="replace" checked={mode === "replace"} onChange={() => setMode("replace")} />
+            <span><b>Replace (sync)</b><br /><span className="small muted">Your collection becomes exactly what's in the file. ManaBox is the source of truth.</span></span>
+          </label>
+          <label className="radio-card">
+            <input type="radio" name="mode" value="add" checked={mode === "add"} onChange={() => setMode("add")} />
+            <span><b>Add</b><br /><span className="small muted">Add the file's quantities on top of what's already here.</span></span>
+          </label>
+        </fieldset>
+
+        <button type="submit" className="btn primary" disabled={!file || busy}>
+          {busy ? <><span className="spinner" aria-hidden="true" style={{ borderTopColor: "var(--accent-ink)" }} /> Importing…</> : <><Icon.import /> Import</>}
+        </button>
+
+        {busy && (
+          <div className="stack" role="status" aria-live="polite">
+            <div className="progress" aria-hidden="true" />
+            <span className="small muted">Matching cards on Scryfall and fetching prices… {elapsed}s. Large collections can take a minute — keep this page open.</span>
+          </div>
+        )}
+        <ErrorNotice error={error} />
+        {result && (
+          <div className="stack" role="status">
+            <div className="notice ok"><span aria-hidden="true">✓</span><div className="grow"><b>Import complete.</b></div></div>
+            <ImportSummary s={result} />
+          </div>
+        )}
+      </form>
+
+      <section className="card stack" aria-labelledby="prices-title">
+        <h2 id="prices-title">Prices</h2>
+        <p className="small muted" style={{ margin: 0 }}>Imports already fetch current prices. Refresh in between to update prices and card data for everything you own and every deck card.</p>
+        <div className="row">
+          <button type="button" className="btn" onClick={refreshPrices} disabled={refresh.busy || busy}>
+            {refresh.busy ? <><span className="spinner" aria-hidden="true" /> Refreshing…</> : <><Icon.refresh /> Refresh prices</>}
+          </button>
+          {refresh.result && <span className="small" role="status">Refreshed {fmtInt(refresh.result.refreshed)} cards{refresh.result.not_found ? `, ${fmtInt(refresh.result.not_found)} not found` : ""}.</span>}
+        </div>
+        <ErrorNotice error={refresh.error} />
+      </section>
+
+      <section className="card stack" aria-labelledby="history-title">
+        <h2 id="history-title">Import history</h2>
+        <ErrorNotice error={historyError} onRetry={loadHistory} />
+        {!history && !historyError && <Spinner />}
+        {history && history.length === 0 && <p className="muted" style={{ margin: 0 }}>No imports yet.</p>}
+        {history && history.length > 0 && (
+          <div>
+            {history.map((h) => {
+              const s = h.summary || {};
+              return (
+                <div key={h.id} className="history-item">
+                  <div className="row between">
+                    <b style={{ overflowWrap: "anywhere" }}>{h.filename || "ManaBox CSV"}</b>
+                    <span className="muted small nowrap">{fmtDate(h.created_at)}</span>
+                  </div>
+                  <div className="row small">
+                    <span className={`badge ${h.mode === "add" ? "accent" : ""}`}>{h.mode || h.kind}</span>
+                    <span className="muted">{fmtInt(s.total_cards_before)} → {fmtInt(s.total_cards_after)} copies · +{fmtInt(s.printings_added)} / −{fmtInt(s.printings_removed)} / ~{fmtInt(s.printings_changed)} printings</span>
+                    {s.unresolved?.length > 0 && <span className="badge warn">{s.unresolved.length} unresolved</span>}
+                  </div>
+                  <Collapsible label="Details"><ImportSummary s={s} /></Collapsible>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <p className="footer-note">mtg-planner {health ? health.version : ""} · card data and images © Scryfall / Wizards of the Coast · unofficial fan tool</p>
+    </div>
+  );
+}
+
+// ===========================================================================
+// App shell
+// ===========================================================================
+
+const TABS = [
+  { id: "collection", label: "Collection", icon: Icon.collection },
+  { id: "decks", label: "Decks", icon: Icon.decks },
+  { id: "planner", label: "Planner", icon: Icon.planner },
+  { id: "import", label: "Import", icon: Icon.import },
+];
+const isTab = (t) => TABS.some((x) => x.id === t);
+
+function App() {
+  const [tab, setTab] = useState(() => {
+    const h = location.hash.slice(1);
+    return isTab(h) ? h : store.get("mtg.tab", "collection");
+  });
+  const [visited, setVisited] = useState(() => new Set([isTab(tab) ? tab : "collection"]));
+  // Collection data (imports, prices) and deck data (deck edits, planner
+  // save_deck) are versioned separately so a deck rename doesn't reset the
+  // collection list. An import changes both.
+  const [dataVersion, bumpData] = useReducer((x) => x + 1, 0);
+  const [deckVersion, bumpDecks] = useReducer((x) => x + 1, 0);
+  const onImported = useCallback(() => { bumpData(); bumpDecks(); }, []);
+  const [cardId, setCardId] = useState(null);
+  const [deck, setDeck] = useState({ id: null, notice: null });
+  const [plannerRequest, setPlannerRequest] = useState(null);
+  const [health, setHealth] = useState(null);
+  const scrollPos = useRef({});
+  const tabRefs = useRef({});
+
+  useEffect(() => {
+    api("/healthz").then(setHealth).catch(() => setHealth(null));
+  }, []);
+
+  const switchTab = useCallback((next) => {
+    if (!isTab(next)) return;
+    setTab((cur) => {
+      if (cur !== next) scrollPos.current[cur] = window.scrollY;
+      return next;
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    store.set("mtg.tab", tab);
+    if (location.hash.slice(1) !== tab) history.replaceState(null, "", `#${tab}`);
+    setVisited((v) => (v.has(tab) ? v : new Set([...v, tab])));
+    window.scrollTo(0, scrollPos.current[tab] || 0);
+  }, [tab]);
+
+  useEffect(() => {
+    const onHash = () => { const h = location.hash.slice(1); if (isTab(h)) switchTab(h); };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [switchTab]);
+
+  const openDeck = useCallback((id, notice = null) => {
+    setDeck({ id, notice });
+    setCardId(null);
+    scrollPos.current.decks = 0;
+    if (id) switchTab("decks");
+    window.scrollTo(0, 0);
+  }, [switchTab]);
+
+  const askAboutDeck = useCallback((d) => {
+    const prompt = `Let's work on my deck #${d.id} "${d.name}"${d.format ? ` (${d.format})` : ""}. `
+      + `Load it with get_deck and give me a short analysis: mana curve, card-type balance, key synergies, weak spots, `
+      + `and which of the missing cards matter most. Suggest improvements, preferring cards I already own.`;
+    setPlannerRequest({ prompt, title: `Deck: ${d.name}`.slice(0, 60), nonce: Date.now() });
+    switchTab("planner");
+  }, [switchTab]);
+
+  const onTabKey = (e) => {
+    const i = TABS.findIndex((t) => t.id === tab);
+    let j = null;
+    if (e.key === "ArrowRight") j = (i + 1) % TABS.length;
+    else if (e.key === "ArrowLeft") j = (i - 1 + TABS.length) % TABS.length;
+    else if (e.key === "Home") j = 0;
+    else if (e.key === "End") j = TABS.length - 1;
+    if (j == null) return;
+    e.preventDefault();
+    switchTab(TABS[j].id);
+    tabRefs.current[TABS[j].id]?.focus();
+  };
+
+  const panel = (id, content) => (
+    <section key={id} id={`panel-${id}`} role="tabpanel" aria-labelledby={`tab-${id}`} hidden={tab !== id}>
+      {visited.has(id) && content}
+    </section>
+  );
+
+  return (
+    <>
+      <header className="app-header">
+        <div className="brand"><img src="icon.svg" alt="" width="28" height="28" /> MTG Planner</div>
+        <nav className="tabbar" role="tablist" aria-label="Sections" onKeyDown={onTabKey}>
+          {TABS.map((t) => (
+            <button key={t.id} id={`tab-${t.id}`} ref={(el) => { tabRefs.current[t.id] = el; }} type="button" role="tab" className="tab"
+              aria-selected={tab === t.id} aria-controls={`panel-${t.id}`} tabIndex={tab === t.id ? 0 : -1}
+              onClick={() => {
+                if (t.id === "decks" && tab === "decks" && deck.id) openDeck(null);
+                switchTab(t.id);
+              }}>
+              <t.icon />
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </nav>
+      </header>
+      <main>
+        {panel("collection", <CollectionTab dataVersion={dataVersion} onOpenCard={setCardId} onGoImport={() => switchTab("import")} />)}
+        {panel("decks", <DecksTab dataVersion={deckVersion} deckId={deck.id} deckNotice={deck.notice} onOpenDeck={openDeck}
+          onOpenCard={setCardId} onAsk={askAboutDeck} onChanged={bumpDecks} />)}
+        {panel("planner", <PlannerTab active={tab === "planner"} health={health} request={plannerRequest}
+          onRequestHandled={() => setPlannerRequest(null)} onChanged={bumpDecks} />)}
+        {panel("import", <ImportTab dataVersion={dataVersion} health={health} onImported={onImported} />)}
+      </main>
+      {cardId && <CardSheet id={cardId} onClose={() => setCardId(null)} onOpenCard={setCardId} onOpenDeck={(id) => openDeck(id)} />}
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
