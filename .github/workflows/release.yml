@@ -45,7 +45,28 @@ jobs:
         id: image
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/build-push-action@v6
+      # Build and inspect locally first: nothing is pushed unless the image
+      # passes the license check below.
+      - name: Build image (not pushed yet)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.build }}
+          tags: mtg-planner:release
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The Claude Code CLI is proprietary: it is installed at runtime into the
+      # /claude volume and must never end up in the published image.
+      - name: Image contains no Claude Code CLI
+        run: |
+          found=$(docker run --rm --user root --entrypoint sh mtg-planner:release -c 'find / \( -path /proc -o -path /sys \) -prune -o -iname "*claude-code*" -print')
+          if [ -n "$found" ]; then echo "$found"; exit 1; fi
+
+      - name: Push image
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
@@ -55,7 +76,6 @@ jobs:
             ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:v${{ steps.version.outputs.version }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
   release:
     needs: docker

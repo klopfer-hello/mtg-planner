@@ -119,7 +119,7 @@ code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); 
 .brand img { width: 28px; height: 28px; border-radius: 7px; }
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface);
@@ -134,9 +134,11 @@ code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); 
 .tab[aria-selected="true"] { color: var(--accent); }
 .tab[aria-selected="true"] svg { transform: translateY(-1px); }
 main {
-  max-width: 1200px; margin: 0 auto;
+  max-width: 1200px; margin: 0 auto; min-width: 0;
   padding: 16px 16px calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 24px);
 }
+/* Tab panels are plain blocks; keep them from growing to a child's min-content width. */
+main > [role="tabpanel"] { min-width: 0; max-width: 100%; }
 @media (min-width: 768px) {
   .tabbar {
     position: static; display: flex; gap: 4px; height: auto; padding: 0;
@@ -342,6 +344,8 @@ details > summary::-webkit-details-marker { display: none; }
   position: sticky; top: -8px; z-index: 2; display: flex; align-items: center; gap: 8px;
   margin: -8px -16px 8px; padding: 8px 8px 8px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
 }
+.sheet-head.has-pin { flex-wrap: wrap; }
+.sheet-pin { flex: 1 0 100%; min-width: 0; padding: 0 8px 8px 0; }
 .sheet-head h2 { flex: 1; min-width: 0; font-size: 1.1rem; overflow-wrap: anywhere; }
 @keyframes fade { from { opacity: 0; } }
 @keyframes slideup { from { transform: translateY(30px); opacity: .5; } }
@@ -401,13 +405,25 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 .deck-row .end { display: flex; align-items: center; gap: 8px; font-size: .85rem; font-variant-numeric: tabular-nums; }
 .deck-row .end .price { color: var(--muted); min-width: 52px; text-align: right; }
 .deck-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; display: grid; gap: 6px; }
+.deck-line { display: grid; grid-template-columns: minmax(0, 1fr) 44px; align-items: center; min-width: 0; }
+.deck-line .row-more { color: var(--muted); }
+.value-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+@media (min-width: 640px) { .value-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.value-grid .stat.total .v { color: var(--accent); }
+.cmd-suggest .chip svg, .chip svg { width: 18px; height: 18px; flex: none; }
+@media (max-width: 359px) { .deck-row { padding: 6px 4px; gap: 2px 8px; } .deck-row .end .price { min-width: 0; } }
+.cmd-suggest .chip { max-width: 100%; text-align: left; overflow-wrap: anywhere; height: auto; min-height: 40px; padding: 6px 12px; }
+.action-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+.action-grid .btn { white-space: normal; text-align: center; line-height: 1.2; }
+.card-actions-head { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; align-items: start; }
+.card-actions-head img, .card-actions-head .ph { width: 72px; aspect-ratio: 488 / 680; border-radius: 5px; background: var(--surface-2); display: block; }
 .peek { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; padding: 8px 10px 12px 48px; }
 .peek img { width: 92px; border-radius: 5px; box-shadow: var(--shadow); }
 
 /* ==========================================================================
    Planner (chat)
    ========================================================================== */
-.planner { display: grid; gap: 16px; }
+.planner { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
 @media (min-width: 960px) {
   .planner { grid-template-columns: 280px minmax(0, 1fr); align-items: start; }
   .planner .drawer-toggle { display: none; }
@@ -438,17 +454,22 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 .chat-link:hover { background: var(--surface-2); }
 .chat-link[aria-current="true"] { background: var(--accent-soft); }
 .chat-link[aria-current="true"] > button:first-child span:first-child { color: var(--accent); }
-.chat-main { display: grid; gap: 14px; min-width: 0; }
+/* Every grid on the way from the page to a bubble gets an explicit minmax(0, 1fr)
+   track: an implicit `auto` track sizes to the content's min-content width, so one
+   long URL, code line or table would widen the whole column past the phone screen. */
+.chat-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
 .chat-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .chat-title h2 { flex: 1; min-width: 0; font-size: 1.1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.messages { display: grid; gap: 14px; }
-.msg { display: grid; gap: 6px; min-width: 0; }
+.messages { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
+.msg { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+.msg > * { min-width: 0; max-width: 100%; }
 .msg.user { justify-items: end; }
-.bubble { max-width: min(100%, 720px); padding: 10px 14px; border-radius: 16px; overflow-wrap: anywhere; min-width: 0; }
+/* word-break: break-word is the fallback for Safari < 15.4 (no overflow-wrap: anywhere). */
+.bubble { max-width: min(100%, 720px); padding: 10px 14px; border-radius: 16px; word-break: break-word; overflow-wrap: anywhere; min-width: 0; }
 .msg.user .bubble { background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 4px; white-space: pre-wrap; }
 .msg.assistant .bubble { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; width: 100%; max-width: 100%; }
 .msg .meta { font-size: .74rem; color: var(--muted); padding: 0 4px; display: flex; gap: 8px; flex-wrap: wrap; }
-.tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .tool-chip {
   display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
   padding: 3px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border);
@@ -485,7 +506,8 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 .suggestion:hover { border-color: var(--accent); }
 
 /* Markdown from Claude */
-.md { overflow-wrap: anywhere; }
+.md { overflow-wrap: anywhere; word-break: break-word; min-width: 0; max-width: 100%; }
+.md a { word-break: break-all; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p, .md ul, .md ol, .md pre, .md blockquote, .md table { margin: .6em 0; }
@@ -493,13 +515,24 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 .md li + li { margin-top: .2em; }
 .md h1, .md h2, .md h3, .md h4 { margin: 1em 0 .4em; font-size: 1.05rem; }
 .md h1 { font-size: 1.2rem; }
-.md pre { background: var(--surface-2); padding: 10px 12px; border-radius: var(--radius-sm); overflow-x: auto; }
-.md pre code { background: none; padding: 0; }
+.md pre {
+  background: var(--surface-2); padding: 10px 12px; border-radius: var(--radius-sm);
+  max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: pre; word-break: normal; overflow-wrap: normal;
+}
+.md pre code { background: none; padding: 0; white-space: inherit; }
 .md blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--muted); margin-left: 0; }
-.md table { display: block; overflow-x: auto; border-collapse: collapse; font-size: .88rem; max-width: 100%; }
-.md th, .md td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; }
+/* Tables scroll inside the bubble (renderMarkdown wraps them in .md-table).
+   Cells wrap at spaces only; short cells (.nw) stay on one line, longer ones
+   (.wide) keep a readable width instead of one-letter columns. */
+.md .md-table { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; margin: .6em 0; }
+.md .md-table table { margin: 0; }
+.md table { border-collapse: collapse; font-size: .88rem; }
+.md th, .md td { border: 1px solid var(--border); padding: 5px 9px; text-align: left; vertical-align: top; overflow-wrap: normal; word-break: normal; }
+.md th.nw, .md td.nw { white-space: nowrap; }
+.md th.wide, .md td.wide { min-width: 8.5em; }
+.md li, .md p, .md blockquote, .md h1, .md h2, .md h3, .md h4 { min-width: 0; }
 .md th { background: var(--surface-2); }
-.md img { max-width: 240px; border-radius: 8px; }
+.md img:not(.sym) { max-width: min(240px, 100%); height: auto; border-radius: 8px; }
 .md hr { border: 0; border-top: 1px solid var(--border); }
 
 /* ==========================================================================
@@ -521,6 +554,171 @@ ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
 .page-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .page-title h1 { font-size: 1.45rem; }
 .footer-note { text-align: center; font-size: .78rem; color: var(--muted); padding-top: 8px; }
+
+/* ==========================================================================
+   Scanner
+   ========================================================================== */
+.scan { display: grid; gap: 16px; }
+@media (min-width: 960px) {
+  .scan { grid-template-columns: minmax(0, 1fr) minmax(380px, 460px); align-items: start; }
+  .scan-side { position: sticky; top: calc(var(--header-h) + 24px); }
+}
+.scan-main, .scan-side { display: grid; gap: 12px; min-width: 0; align-content: start; }
+.cam {
+  position: relative; width: 100%; margin: 0 auto; overflow: hidden; border-radius: var(--radius);
+  background: #0b0b0d; color: #fff; aspect-ratio: 3 / 4; max-height: 72vh; max-height: 72dvh;
+  touch-action: manipulation; user-select: none; -webkit-user-select: none;
+}
+.cam video, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.cam canvas { pointer-events: none; }
+.cam-start { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 12px; padding: 20px; text-align: center; }
+.cam-start p { margin: 0; max-width: 340px; color: #d7d6dd; font-size: .92rem; }
+.cam-hud { position: absolute; left: 8px; right: 8px; display: flex; align-items: center; gap: 8px; }
+.cam-hud.top { top: 8px; justify-content: space-between; }
+.cam-hud.bottom { bottom: 14px; justify-content: center; gap: 28px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 30px; padding: 4px 12px;
+  border-radius: 999px; background: rgba(0, 0, 0, .62); color: #fff; font-size: .82rem; font-weight: 650;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pill .dot { width: 9px; height: 9px; border-radius: 50%; background: #bbb; flex: none; }
+.pill.s-tracking .dot { background: #a38bff; }
+.pill.s-stable .dot, .pill.s-capture .dot { background: #62d18d; }
+.pill.s-cooldown .dot { background: #f0c062; }
+.pill.s-busy .dot { background: #fff; animation: blink 1s infinite both; }
+.cam-btn {
+  appearance: none; width: 48px; height: 48px; border-radius: 50%; border: 0; cursor: pointer;
+  display: grid; place-items: center; background: rgba(0, 0, 0, .58); color: #fff;
+}
+.cam-btn svg { width: 24px; height: 24px; }
+.cam-btn[aria-pressed="true"] { background: #f0c062; color: #1d1b18; }
+.cam-btn:disabled { opacity: .45; cursor: not-allowed; }
+.shutter {
+  appearance: none; width: 72px; height: 72px; border-radius: 50%; cursor: pointer; padding: 0;
+  border: 4px solid #fff; background: rgba(255, 255, 255, .22); box-shadow: 0 2px 10px rgba(0, 0, 0, .4);
+}
+.shutter:active:not(:disabled) { background: rgba(255, 255, 255, .85); }
+.shutter:disabled { opacity: .5; cursor: progress; }
+.scan-settings { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.scan-settings .select { width: auto; min-height: 42px; }
+.switch { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; cursor: pointer; font-weight: 600; font-size: .88rem; }
+.switch input { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; }
+.settings-grid { display: grid; gap: 12px; margin-top: 10px; }
+@media (min-width: 560px) { .settings-grid { grid-template-columns: 1fr 1fr; } }
+
+.result {
+  display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 4px 12px; align-items: start;
+  padding: 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface);
+  border-left: 6px solid var(--border); box-shadow: var(--shadow);
+}
+.result.st-auto { border-left-color: var(--ok); }
+.result.st-suggest, .result.st-duplicate { border-left-color: var(--warn); }
+.result.st-review, .result.st-failed, .result.st-error { border-left-color: var(--bad); }
+.result.st-busy { border-left-color: var(--accent); }
+.result .th, .scan-row .th {
+  width: 100%; aspect-ratio: 488 / 680; border-radius: 5px; object-fit: cover; display: block; background: var(--surface-2);
+}
+.result .body { display: grid; gap: 4px; min-width: 0; }
+.result .nm { font-weight: 700; overflow-wrap: anywhere; }
+.result .actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.st-chip { font-weight: 800; }
+.st-chip.auto { background: var(--ok-soft); color: var(--ok); }
+.st-chip.suggest, .st-chip.duplicate { background: var(--warn-soft); color: var(--warn); }
+.st-chip.review, .st-chip.failed { background: var(--bad-soft); color: var(--bad); }
+.undo-btn { min-height: 52px; font-size: 1rem; }
+
+.scan-list { display: grid; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.scan-row {
+  display: grid; grid-template-columns: 28px 52px minmax(0, 1fr); gap: 6px 10px; align-items: start;
+  padding: 10px 12px 10px 8px; border-top: 1px solid var(--border); border-left: 4px solid transparent;
+}
+.scan-row:first-child { border-top: 0; }
+.scan-row.st-auto { border-left-color: var(--ok); }
+.scan-row.st-suggest { border-left-color: var(--warn); }
+.scan-row.st-review, .scan-row.st-failed { border-left-color: var(--bad); }
+.scan-row[aria-selected="true"] { background: var(--accent-soft); }
+.scan-row .sel { display: grid; place-items: center; min-height: 44px; cursor: pointer; }
+.scan-row .sel input { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; }
+.scan-row .thb { appearance: none; border: 0; padding: 0; background: none; cursor: pointer; border-radius: 5px; }
+.scan-row .info { display: grid; gap: 3px; min-width: 0; }
+.scan-row .top { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; min-width: 0; }
+.scan-row .nm { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.scan-row .sub { font-size: .8rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.scan-row .ctrls { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.scan-row .ctrls .select { width: auto; min-height: 36px; padding: 4px 26px 4px 8px; font-size: .85rem; }
+.stepper { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); flex: none; }
+.stepper button { appearance: none; border: 0; background: none; width: 36px; height: 36px; cursor: pointer; display: grid; place-items: center; color: var(--text); }
+.stepper button:disabled { opacity: .35; cursor: not-allowed; }
+.stepper button svg { width: 18px; height: 18px; }
+.stepper output { min-width: 26px; text-align: center; font-weight: 800; font-variant-numeric: tabular-nums; }
+.finish-btn { min-height: 36px; padding: 0 10px; font-size: .82rem; }
+.finish-btn.foil { background: linear-gradient(120deg, #f9d976, #b4f1ff, #e2b6ff); color: #222; border-color: transparent; }
+.finish-btn.etched { background: linear-gradient(120deg, #d9d9d9, #f5f5f5, #bdbdbd); color: #222; border-color: transparent; }
+.list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.commit-bar {
+  position: sticky; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 8px); z-index: 20;
+  display: flex; gap: 8px; align-items: center; padding: 8px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-lg);
+}
+@media (min-width: 768px) { .commit-bar { bottom: 12px; } }
+
+.pick-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
+@media (min-width: 640px) { .pick-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); } }
+.pick {
+  appearance: none; border: 2px solid transparent; background: none; padding: 4px; border-radius: 12px; cursor: pointer;
+  display: grid; gap: 4px; text-align: left; min-width: 0; color: inherit;
+}
+.pick:hover { border-color: var(--border); }
+.pick[aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.pick img, .pick .ph { width: 100%; aspect-ratio: 488 / 680; border-radius: 4.75% / 3.5%; background: var(--surface-2); display: block; object-fit: cover; }
+.pick .ph { display: grid; place-items: center; padding: 8px; text-align: center; font-size: .8rem; color: var(--muted); }
+.pick .cap { font-size: .78rem; display: grid; gap: 1px; min-width: 0; }
+.pick .pcode {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; min-width: 0;
+  font-family: var(--mono); font-size: 1.15rem; font-weight: 800; letter-spacing: .02em; line-height: 1.25; overflow-wrap: anywhere;
+}
+.pick .pcode .pcn { color: var(--accent); }
+.pick .pcode .same { opacity: .75; }
+.pick mark { background: var(--warn-soft); color: var(--warn); border-radius: 4px; padding: 0 2px; box-shadow: inset 0 -2px 0 var(--warn); }
+.pick .ptags { display: flex; flex-wrap: wrap; gap: 3px; }
+.pick .ptags .badge { font-size: .68rem; }
+.pick .ptags .badge.diff { background: var(--warn-soft); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
+.scan-strip { display: grid; gap: 4px; min-width: 0; }
+.scan-strip .strip-box {
+  position: relative; overflow: auto; max-height: 150px; border-radius: var(--radius-sm); background: #0b0b0d;
+  border: 2px solid var(--accent); touch-action: pan-x pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+}
+.scan-strip .strip-box img { display: block; max-width: none; height: auto; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
+.scan-strip .strip-bar { display: flex; align-items: center; gap: 6px; font-size: .8rem; color: var(--muted); }
+.scan-strip .strip-bar .btn { min-height: 32px; width: 36px; }
+.sched { display: grid; gap: 6px; font-size: .88rem; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.sched .row { gap: 4px 8px; }
+.pick .cap b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hit-list { display: grid; }
+.hit {
+  appearance: none; border: 0; border-top: 1px solid var(--border); background: none; text-align: left; cursor: pointer;
+  min-height: 48px; padding: 8px 10px; display: flex; gap: 8px; align-items: center; justify-content: space-between; color: inherit;
+}
+.hit:first-child { border-top: 0; }
+.hit:hover { background: var(--surface-2); }
+.truth { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.truth figure { margin: 0; display: grid; gap: 4px; }
+.truth figcaption { font-size: .8rem; color: var(--muted); }
+.truth img { width: 100%; aspect-ratio: 488 / 680; object-fit: cover; border-radius: 4.75% / 3.5%; background: var(--surface-2); }
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 70; max-width: calc(100vw - 32px);
+  bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 76px);
+  display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 16px; border-radius: 14px;
+  background: var(--text); color: var(--bg); box-shadow: var(--shadow-lg); font-weight: 600; font-size: .9rem;
+}
+.toast .btn { min-height: 36px; background: none; border-color: transparent; color: inherit; text-decoration: underline; }
+@media (min-width: 768px) { .toast { bottom: 24px; } }
+.binder-bar { display: grid; gap: 8px; }
+.binder-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--border); }
+.binder-row:first-child { border-top: 0; }
+.kv-inline { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .88rem; }
+.meter { height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+.meter > span { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s; }
 </style>
 </head>
 <body>
@@ -643,6 +841,9 @@ function useDebounced(value, ms) {
 /** SQLite datetime('now') is "YYYY-MM-DD HH:MM:SS" in UTC without a zone. */
 function parseTs(s) {
   if (!s) return null;
+  if (typeof s === "number") { const d = new Date(s); return Number.isNaN(d.getTime()) ? null : d; }
+  if (s instanceof Date) return s;
+  s = String(s);
   const iso = /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s.replace(" ", "T") + "Z";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? null : d;
@@ -738,10 +939,29 @@ function renderMarkdown(text) {
   try {
     let html = window.marked ? marked.parse(src, { gfm: true, breaks: true }) : escapeHtml(src).replace(/\n/g, "<br>");
     html = html.replace(MD_SYMBOL_RE, (m, sym) => `<img class="sym" src="${symbolUrl(sym)}" alt="${m}" title="${m}">`);
-    return window.DOMPurify ? DOMPurify.sanitize(html) : escapeHtml(src);
+    return window.DOMPurify ? layoutTables(DOMPurify.sanitize(html)) : escapeHtml(src);
   } catch {
     return escapeHtml(src).replace(/\n/g, "<br>");
   }
+}
+/**
+ * Phone-friendly tables: each table gets its own horizontal scroller, short
+ * cells stay on one line and longer ones get a readable minimum width, so a
+ * wide table scrolls inside the bubble instead of being squeezed into columns
+ * a few letters wide.
+ */
+function layoutTables(html) {
+  if (!html.includes("<table")) return html;
+  const t = document.createElement("template");
+  t.innerHTML = html;
+  for (const table of t.content.querySelectorAll("table")) {
+    for (const cell of table.querySelectorAll("th, td")) cell.className = (cell.textContent || "").trim().length <= 14 ? "nw" : "wide";
+    const wrap = document.createElement("div");
+    wrap.className = "md-table";
+    table.replaceWith(wrap);
+    wrap.appendChild(table);
+  }
+  return t.innerHTML;
 }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -792,6 +1012,16 @@ const Icon = {
   refresh: () => <Svg><path d="M20 11a8 8 0 0 0-14.8-4M4 4v4h4M4 13a8 8 0 0 0 14.8 4M20 20v-4h-4" /></Svg>,
   file: () => <Svg><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h6" /></Svg>,
   sparkle: () => <Svg><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="M19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7z" /></Svg>,
+  scan: () => <Svg><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2" /><rect x="8.5" y="7" width="7" height="10" rx="1" /></Svg>,
+  camera: () => <Svg><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" /><circle cx="12" cy="13" r="3.5" /></Svg>,
+  bolt: () => <Svg><path d="M13 2L5 14h6l-1 8 8-12h-6z" /></Svg>,
+  undo: () => <Svg><path d="M9 14L4 9l5-5" /><path d="M4 9h11a5 5 0 0 1 0 10h-3" /></Svg>,
+  check: () => <Svg><path d="M5 12.5l4.5 4.5L19 7" /></Svg>,
+  minus: () => <Svg><path d="M5 12h14" /></Svg>,
+  more: () => <Svg><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></Svg>,
+  crown: () => <Svg><path d="M4 18h16M5 15l-1-9 5 4 3-6 3 6 5-4-1 9z" /></Svg>,
+  zoomIn: () => <Svg><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5M8 11h6M11 8v6" /></Svg>,
+  zoomOut: () => <Svg><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5M8 11h6" /></Svg>,
 };
 
 // ===========================================================================
@@ -820,7 +1050,7 @@ function ErrorNotice({ error, onRetry, onDismiss }) {
   );
 }
 
-const SOURCE_BADGE = { manabox: "warn", claude: "accent", manual: "" };
+const SOURCE_BADGE = { manabox: "warn", claude: "accent", manual: "", scan: "ok" };
 function SourceBadge({ source }) {
   return <span className={`badge ${SOURCE_BADGE[source] ?? ""}`}>{source === "claude" ? "✦ claude" : source}</span>;
 }
@@ -829,7 +1059,7 @@ function SourceBadge({ source }) {
  * Modal sheet: bottom sheet on phones, centered dialog on desktop.
  * Handles Escape, focus trap, focus restore and background scroll lock.
  */
-function Sheet({ title, onClose, children, actions }) {
+function Sheet({ title, onClose, children, actions, pinned }) {
   const ref = useRef(null);
   const titleId = useMemo(() => `sheet-${Math.random().toString(36).slice(2)}`, []);
   useEffect(() => {
@@ -858,10 +1088,11 @@ function Sheet({ title, onClose, children, actions }) {
   return (
     <div className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} ref={ref}>
-        <div className="sheet-head">
+        <div className={`sheet-head${pinned ? " has-pin" : ""}`}>
           <h2 id={titleId}>{title}</h2>
           {actions}
           <button type="button" className="btn ghost icon" aria-label="Close" onClick={onClose}><Icon.close /></button>
+          {pinned && <div className="sheet-pin">{pinned}</div>}
         </div>
         {children}
       </div>
@@ -960,7 +1191,7 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck }) {
                 : (
                   <div className="table-wrap">
                     <table className="t">
-                      <thead><tr><th>Set</th><th>Finish</th><th>Lang</th><th>Condition</th><th>Binder</th><th className="num">Qty</th></tr></thead>
+                      <thead><tr><th>Set</th><th>Finish</th><th>Lang</th><th>Condition</th><th>Binder</th>{data.owned.some((r) => r.source) && <th>Source</th>}<th className="num">Qty</th></tr></thead>
                       <tbody>
                         {data.owned.map((r, i) => (
                           <tr key={i} aria-current={r.scryfall_id === id || undefined}>
@@ -973,6 +1204,7 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck }) {
                             <td>{(r.language || "").toUpperCase()}</td>
                             <td>{conditionLabel(r.condition)}</td>
                             <td>{r.binder || <span className="muted">—</span>}</td>
+                            {data.owned.some((x) => x.source) && <td>{r.source ? <SourceBadge source={r.source} /> : "—"}</td>}
                             <td className="num"><b>{r.quantity}</b></td>
                           </tr>
                         ))}
@@ -1114,7 +1346,7 @@ function CardListRow({ row, group, onOpen }) {
   );
 }
 
-function CollectionTab({ dataVersion, onOpenCard, onGoImport }) {
+function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChanged }) {
   const [q, setQ] = useState(() => store.get("mtg.q", ""));
   const dq = useDebounced(q.trim(), 300);
   const [group, setGroup] = useState(() => store.get("mtg.group", "card"));
@@ -1198,6 +1430,7 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport }) {
               onClick={() => toggleFilter(term)}>{label}</button>
           ))}
         </div>
+        <BinderBar dataVersion={dataVersion} tokens={tokens} onToggle={toggleFilter} onChanged={onChanged} />
         <QueryHelp />
         <div className="toolbar">
           <div className="segmented" role="group" aria-label="Group by">
@@ -1229,8 +1462,11 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport }) {
         {emptyCollection && (
           <div className="empty card">
             <h3>Your collection is empty</h3>
-            <p style={{ margin: 0 }}>Export your collection from ManaBox as CSV and import it here.</p>
-            <button type="button" className="btn primary" onClick={onGoImport}><Icon.import /> Import from ManaBox</button>
+            <p style={{ margin: 0 }}>Scan your cards with the camera, or export your collection from ManaBox as CSV and import it here.</p>
+            <div className="row" style={{ justifyContent: "center" }}>
+              <button type="button" className="btn primary" onClick={onGoScan}><Icon.scan /> Scan cards</button>
+              <button type="button" className="btn" onClick={onGoImport}><Icon.import /> Import from ManaBox</button>
+            </div>
           </div>
         )}
         {total === 0 && dq && !error && (
@@ -1379,6 +1615,7 @@ function DeckList({ dataVersion, onOpen, refreshKey }) {
                 {d.format && <span className="badge">{d.format}</span>}
                 <SourceBadge source={d.source} />
                 <span className="muted">{plural(d.card_count, "card")}</span>
+                {d.value_eur != null && <span className="muted" title="Value of main deck, commander and sideboard (EUR prices)">· <b style={{ color: "var(--text)" }}>{fmtEur(d.value_eur)}</b></span>}
                 <span className="muted">· updated {fmtAgo(d.updated_at)}</span>
               </span>
             </button>
@@ -1389,7 +1626,7 @@ function DeckList({ dataVersion, onOpen, refreshKey }) {
   );
 }
 
-function DeckCardRow({ card, onOpenCard }) {
+function DeckCardRow({ card, onOpenCard, onActions }) {
   const [peek, setPeek] = useState(false);
   let badge;
   if (card.basic) badge = <span className="badge" title="Basic land">basic</span>;
@@ -1398,6 +1635,7 @@ function DeckCardRow({ card, onOpenCard }) {
   const unresolved = !card.scryfall_id;
   return (
     <>
+      <div className="deck-line">
       <button type="button" className="deck-row" disabled={unresolved} aria-expanded={unresolved ? undefined : peek}
         onClick={() => setPeek((p) => !p)} title={unresolved ? "Not found on Scryfall" : undefined}>
         <span className="q">{card.quantity}</span>
@@ -1411,6 +1649,10 @@ function DeckCardRow({ card, onOpenCard }) {
           {badge}
         </span>
       </button>
+      {onActions && (
+        <button type="button" className="btn ghost icon row-more" aria-label={`Actions for ${card.name}`} title="Board, quantity, commander" onClick={() => onActions(card)}><Icon.more /></button>
+      )}
+      </div>
       {peek && !unresolved && (
         <div className="peek">
           {card.image_small ? <img src={card.image_small} alt={card.name} loading="lazy" /> : <span />}
@@ -1425,6 +1667,112 @@ function DeckCardRow({ card, onOpenCard }) {
   );
 }
 
+const MOVE_BOARDS = ["main", "side", "maybe"];
+/** commander_suggestions may be names or card objects. */
+const commanderSuggestions = (deck) => asList(deck?.commander_suggestions, "cards", "suggestions")
+  .map((x) => (typeof x === "string" ? { name: x } : x))
+  .filter((x) => x && x.name)
+  .filter((x, i, a) => a.findIndex((y) => y.name === x.name) === i);
+// Same rule as the server (lib/decks.js isCommanderFormat): trimmed, case-insensitive.
+const isCommanderFormat = (deck) => String(deck?.format || "").trim().toLowerCase() === "commander";
+const hasCommander = (deck) => (deck?.counts?.commander ?? 0) > 0 || (deck?.cards || []).some((c) => c.board === "commander");
+
+/** Per-card actions: commander, board moves, quantity, remove. */
+function CardActionsSheet({ deck, card, busy, error, onRun, onOpenCard, onClose }) {
+  const qty = card.quantity ?? 1;
+  const isCmd = card.board === "commander";
+  const cmdCount = (deck.cards || []).filter((c) => c.board === "commander").length;
+  const cmdHint = isCmd ? null
+    : cmdCount === 0 ? null
+    : isCommanderFormat(deck) && cmdCount === 1 ? "Partners and backgrounds become a second commander; otherwise it replaces the current one (which moves to the main deck)."
+    : cmdCount > 1 ? "Replaces the current commanders (they move to the main deck), or pick one to replace:"
+    : "Replaces the current commander, which moves to the main deck.";
+  const patch = (body, label) => onRun(`/api/decks/${deck.id}/cards`, "PATCH", { name: card.name, board: card.board, ...body }, label);
+  const remove = () => {
+    if (!window.confirm(`Remove ${card.name} from the ${(BOARD_LABEL[card.board] || card.board).toLowerCase()}?`)) return;
+    patch({ quantity: 0 }, "remove");
+  };
+  return (
+    <Sheet title={card.name} onClose={onClose}>
+      <div className="stack">
+        <div className="card-actions-head">
+          {card.image_small ? <img src={card.image_small} alt="" /> : <span className="ph" />}
+          <div className="stack small" style={{ gap: 4 }}>
+            <span>{card.type_line || <span className="muted">Not found on Scryfall</span>}</span>
+            <span className="row" style={{ gap: 6 }}>
+              <span className="badge accent">{BOARD_LABEL[card.board] || card.board}</span>
+              <span className="muted">{qty}× · {fmtPrice(card.price)}</span>
+            </span>
+            {card.scryfall_id && <button type="button" className="btn sm" style={{ justifySelf: "start" }} onClick={() => onOpenCard(card.scryfall_id)}>Card details</button>}
+          </div>
+        </div>
+
+        {!isCmd && (
+          <div className="stack" style={{ gap: 4 }}>
+            <button type="button" className="btn primary" disabled={busy} onClick={() => onRun(`/api/decks/${deck.id}/commander`, "POST", { name: card.name }, "commander")}>
+              <Icon.crown /> Set as commander
+            </button>
+            {cmdHint && <span className="small muted">{cmdHint}</span>}
+            {cmdCount > 1 && (
+              <div className="action-grid">
+                {(deck.cards || []).filter((c) => c.board === "commander").map((c) => (
+                  <button key={c.name} type="button" className="btn sm" disabled={busy}
+                    onClick={() => onRun(`/api/decks/${deck.id}/commander`, "POST", { name: card.name, replace: c.name }, "commander")}>Replace {c.name}</button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="stack" style={{ gap: 6 }}>
+          <span className="label">Move to</span>
+          <div className="action-grid">
+            {MOVE_BOARDS.filter((b) => b !== card.board).map((b) => (
+              <button key={b} type="button" className="btn" disabled={busy} onClick={() => patch({ to_board: b }, "move")}>{BOARD_LABEL[b]}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="row between">
+          <span className="label">Quantity</span>
+          <div className="stepper" role="group" aria-label="Quantity">
+            <button type="button" aria-label="One less" disabled={busy || qty <= 1} onClick={() => patch({ quantity: qty - 1 }, "qty")}><Icon.minus /></button>
+            <output aria-live="polite">{qty}</output>
+            <button type="button" aria-label="One more" disabled={busy} onClick={() => patch({ quantity: qty + 1 }, "qty")}><Icon.plus /></button>
+          </div>
+        </div>
+
+        <ErrorNotice error={error} />
+        {deck.source === "manabox" && (
+          <p className="small muted" style={{ margin: 0 }}>Synced from ManaBox: board changes (commander, sideboard, maybeboard) survive the next sync while the card is still in the binder; quantities come from ManaBox again.</p>
+        )}
+        <button type="button" className="btn danger" disabled={busy} onClick={remove}><Icon.trash /> Remove from deck</button>
+      </div>
+    </Sheet>
+  );
+}
+
+function DeckValue({ value }) {
+  if (!value || typeof value !== "object") return null;
+  const items = [
+    ["total", "Deck value", value.total_eur],
+    ["", "Owned", value.owned_eur],
+    ["", "To buy", value.to_buy_eur],
+    ["", "Maybeboard", value.maybe_eur],
+  ].filter(([, , v]) => v != null);
+  if (!items.length && !value.no_eur_price) return null;
+  return (
+    <div className="stack" style={{ gap: 6 }} aria-label="Deck value">
+      <div className="value-grid">
+        {items.map(([cls, k, v]) => <div key={k} className={`stat ${cls}`}><div className="v">{fmtEur(v)}</div><div className="k">{k}</div></div>)}
+      </div>
+      {value.no_eur_price > 0 && (
+        <span className="small muted">{plural(value.no_eur_price, "card")} without € price (not counted)</span>
+      )}
+    </div>
+  );
+}
+
 function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk, onChanged }) {
   const [deck, setDeck] = useState(null);
   const [error, setError] = useState(null);
@@ -1434,6 +1782,9 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk,
   const [form, setForm] = useState({ name: "", format: "", description: "" });
   const [saving, setSaving] = useState(false);
   const [onlyMissing, setOnlyMissing] = useState(false);
+  const [actionCard, setActionCard] = useState(null); // {board, name}
+  const [cardBusy, setCardBusy] = useState(false);
+  const [cardError, setCardError] = useState(null);
 
   const load = useCallback(() => {
     setError(null);
@@ -1472,6 +1823,34 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk,
       setActionError(err.message);
     }
   };
+
+  // Card edits (board moves, quantity, commander). The answer is the updated
+  // deck when the server sends one; otherwise the deck is reloaded.
+  const runCardAction = async (path, method, json, kind) => {
+    setCardBusy(true);
+    setCardError(null);
+    try {
+      const res = await api(path, { method, json });
+      const next = res && Array.isArray(res.cards) ? res : res && Array.isArray(res.deck?.cards) ? res.deck : null;
+      if (next) setDeck(next);
+      else load();
+      if (kind !== "qty") setActionCard(null);
+      else if (next) {
+        const c = next.cards.find((x) => x.board === json.board && x.name === json.name);
+        setActionCard(c ? { board: c.board, name: c.name } : null);
+      }
+      onChanged();
+    } catch (err) {
+      if (kind === "suggest") setActionError(err.message);
+      else setCardError(err.message);
+    } finally {
+      setCardBusy(false);
+    }
+  };
+  const openActions = (c) => { setCardError(null); setActionCard({ board: c.board, name: c.name }); };
+  const actionTarget = actionCard && deck?.cards.find((c) => c.board === actionCard.board && c.name === actionCard.name);
+  const suggestions = commanderSuggestions(deck);
+  const needsCommander = deck && (isCommanderFormat(deck) || Array.isArray(deck.commander_suggestions)) && !hasCommander(deck);
 
   const grouped = useMemo(() => {
     if (!deck) return [];
@@ -1533,6 +1912,28 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk,
                 <div className="stat" key={b}><div className="v">{deck.counts?.[b] ?? 0}</div><div className="k">{BOARD_LABEL[b]}</div></div>
               ))}
             </div>
+            <DeckValue value={deck.value} />
+            {needsCommander && (
+              <div className="notice warn" role="status">
+                <span aria-hidden="true">♛</span>
+                <div className="grow stack" style={{ gap: 8 }}>
+                  <b>No commander set</b>
+                  {suggestions.length > 0 ? (
+                    <>
+                      <span className="small">Tap a card from this deck to make it the commander:</span>
+                      <div className="chips cmd-suggest">
+                        {suggestions.map((sg) => (
+                          <button key={sg.name} type="button" className="chip" disabled={cardBusy}
+                            onClick={() => runCardAction(`/api/decks/${id}/commander`, "POST", { name: sg.name }, "suggest")}>
+                            <Icon.crown /> {sg.name}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : <span className="small">Use the <b>⋯</b> button next to a card to set it as the commander.</span>}
+                </div>
+              </div>
+            )}
             {deck.missing_count > 0
               ? <div className="notice warn"><span aria-hidden="true">✗</span><div className="grow"><b>Missing: {plural(deck.missing_count, "card")} (~{fmtEur(deck.missing_cost_eur)})</b> <span className="small">— maybeboard not counted</span></div></div>
               : <div className="notice ok"><span aria-hidden="true">✓</span><div className="grow"><b>You own every card in this deck.</b></div></div>}
@@ -1562,12 +1963,17 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk,
                 {b.byType.map((g) => (
                   <div key={g.type} className="type-group">
                     <h4>{g.type} ({g.cards.reduce((a, c) => a + c.quantity, 0)})</h4>
-                    {g.cards.map((c) => <DeckCardRow key={`${c.board}|${c.name}`} card={c} onOpenCard={onOpenCard} />)}
+                    {g.cards.map((c) => <DeckCardRow key={`${c.board}|${c.name}`} card={c} onOpenCard={onOpenCard} onActions={openActions} />)}
                   </div>
                 ))}
               </div>
             </section>
           ))}
+          {actionTarget && (
+            <CardActionsSheet deck={deck} card={actionTarget} busy={cardBusy} error={cardError}
+              onRun={runCardAction} onOpenCard={(cid) => { setActionCard(null); onOpenCard(cid); }}
+              onClose={() => setActionCard(null)} />
+          )}
         </>
       )}
     </div>
@@ -2129,7 +2535,7 @@ function ImportTab({ dataVersion, health, onImported }) {
           <legend className="label" style={{ marginBottom: 8 }}>Mode</legend>
           <label className="radio-card">
             <input type="radio" name="mode" value="replace" checked={mode === "replace"} onChange={() => setMode("replace")} />
-            <span><b>Replace (sync)</b><br /><span className="small muted">Your collection becomes exactly what's in the file. ManaBox is the source of truth.</span></span>
+            <span><b>Replace (sync)</b><br /><span className="small muted">Cards imported from ManaBox become exactly what's in the file. Scanned cards are kept.</span></span>
           </label>
           <label className="radio-card">
             <input type="radio" name="mode" value="add" checked={mode === "add"} onChange={() => setMode("add")} />
@@ -2168,6 +2574,8 @@ function ImportTab({ dataVersion, health, onImported }) {
         <ErrorNotice error={refresh.error} />
       </section>
 
+      <ScannerIndexPanel health={health} />
+
       <section className="card stack" aria-labelledby="history-title">
         <h2 id="history-title">Import history</h2>
         <ErrorNotice error={historyError} onRetry={loadHistory} />
@@ -2202,10 +2610,1444 @@ function ImportTab({ dataVersion, health, onImported }) {
 }
 
 // ===========================================================================
+// Scan tab: camera scanner, staging list, commit to binder / deck
+// ===========================================================================
+
+const SCAN_LANGS = [
+  ["en", "English"], ["de", "Deutsch"], ["fr", "Français"], ["it", "Italiano"], ["es", "Español"], ["pt", "Português"],
+  ["ja", "日本語"], ["ko", "한국어"], ["ru", "Русский"], ["zhs", "简体中文"], ["zht", "繁體中文"],
+];
+const CONDITIONS = [
+  ["mint", "Mint", "M"], ["near_mint", "Near Mint", "NM"], ["excellent", "Excellent", "EX"], ["good", "Good", "GD"],
+  ["light_played", "Light Played", "LP"], ["played", "Played", "PL"], ["poor", "Poor", "PR"],
+];
+const BOARDS = [["main", "Main deck"], ["side", "Sideboard"], ["commander", "Commander"], ["maybe", "Maybeboard"]];
+const FINISH_LABEL = { nonfoil: "Non-foil", foil: "Foil", etched: "Etched" };
+const STATUS_LABEL = { auto: "✓ matched", suggest: "? confirm", review: "✗ pick", failed: "✗ unknown", duplicate: "= same as last" };
+const STATUS_COLOR = { auto: "#62d18d", suggest: "#f0c062", duplicate: "#f0c062", review: "#ff8274", failed: "#ff8274", error: "#ff8274" };
+const SCAN_DEFAULTS = { storageLang: "en", foil: "auto", condition: "near_mint", setHint: "", sound: true, auto: true, photo: true, calibration: false };
+
+/** Array from an API answer that may be a bare array or wrap it in a key. */
+const asList = (d, ...keys) => (Array.isArray(d) ? d : keys.map((k) => d?.[k]).find(Array.isArray) || []);
+const jsonArr = (v) => {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string" && v.trim().startsWith("[")) { try { const a = JSON.parse(v); return Array.isArray(a) ? a : []; } catch { return []; } }
+  return [];
+};
+const normFinish = (f) => (f === "normal" || !f ? "nonfoil" : f);
+
+/** One printing shape for index rows, candidates and scan rows. */
+function normPrinting(p) {
+  if (!p) return null;
+  const face = jsonArr(p.faces)[0] || {};
+  return {
+    id: p.id ?? p.printing_id ?? p.scryfall_id ?? null,
+    oracle_id: p.oracle_id ?? null,
+    name: p.printed_name && p.lang && p.lang !== "en" ? p.printed_name : (p.name ?? face.name ?? "?"),
+    en_name: p.name ?? face.name ?? "",
+    set: String(p.set_code ?? p.set ?? "").toLowerCase(),
+    set_name: p.set_name ?? "",
+    cn: p.collector_number ?? p.number ?? "",
+    lang: p.lang ?? p.language ?? "",
+    frame: p.frame != null ? String(p.frame) : null,
+    img: p.image_normal ?? face.image_normal ?? p.image_small ?? face.image_small ?? null,
+    imgSmall: p.image_small ?? face.image_small ?? p.image_normal ?? face.image_normal ?? null,
+    finishes: jsonArr(p.finishes).map(normFinish),
+    score: typeof p.score === "number" ? p.score : null,
+    // What tells near-identical printings apart (promo stamps, frames, borders).
+    tags: [...new Set([
+      ...jsonArr(p.promo_types), ...jsonArr(p.frame_effects).filter((f) => f !== "legendary"),
+      p.full_art ? "full art" : null, p.textless ? "textless" : null,
+      p.border_color && p.border_color !== "black" ? `${p.border_color} border` : null,
+      p.frame && !["2015", "2003"].includes(String(p.frame)) ? `${p.frame} frame` : null,
+    ].filter(Boolean).map(String))],
+  };
+}
+const printingLabel = (p) => (p ? `${p.set.toUpperCase()} #${p.cn}${p.lang ? ` · ${p.lang.toUpperCase()}` : ""}` : "");
+
+// Scan ids can be reused (Rescan/Undo delete the newest row, SQLite hands its id
+// out again), so the URL carries the scan's created_at: a new capture never hits
+// the browser's cached JPEG of the old one.
+const scanFileUrl = (s, kind) => `/api/scans/${s.id}/${kind}${s.created_at ? `?v=${encodeURIComponent(s.created_at)}` : ""}`;
+function scanThumb(s) {
+  const st = s.store || s.store_printing || s.printing || {};
+  return s.image_small || s.image_normal || st.image_small || st.image_normal || jsonArr(st.faces)[0]?.image_small || (s.image_path || s.has_image ? scanFileUrl(s, "image") : null);
+}
+function scanFinishes(s) {
+  const st = s.store || s.store_printing || s.printing || {};
+  const f = jsonArr(s.finishes).length ? jsonArr(s.finishes) : jsonArr(st.finishes);
+  const list = [...new Set(f.map(normFinish))].filter((x) => FINISH_LABEL[x]);
+  return list.length ? list : ["nonfoil", "foil"];
+}
+const candidatesOf = (result, scan) => {
+  const r = jsonArr(result?.candidates);
+  return (r.length ? r : jsonArr(scan?.candidates)).map(normPrinting).filter((p) => p && p.id);
+};
+
+// ---------------------------------------------------------------------------
+// Feedback: short beep (WebAudio, unlocked on the "Start camera" tap) + vibration
+
+let audioCtx = null;
+function unlockAudio() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!audioCtx && AC) audioCtx = new AC();
+    audioCtx?.resume?.();
+  } catch { /* no audio */ }
+}
+function beep(kind) {
+  if (!audioCtx) return;
+  try {
+    const tones = { auto: [[1320, 0.09]], suggest: [[880, 0.08], [1100, 0.08]], duplicate: [[700, 0.07], [700, 0.07]] };
+    const seq = tones[kind] || [[300, 0.22]];
+    let t = audioCtx.currentTime + 0.01;
+    for (const [f, dur] of seq) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.frequency.value = f;
+      o.type = kind === "auto" || kind === "suggest" ? "sine" : "square";
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t); o.stop(t + dur + 0.02);
+      t += dur + 0.05;
+    }
+  } catch { /* ignore */ }
+}
+function vibrate(kind) {
+  try { navigator.vibrate?.(kind === "auto" ? 40 : kind === "suggest" || kind === "duplicate" ? [30, 60, 30] : [120, 60, 120]); } catch { /* ignore */ }
+}
+
+function cameraErrorMessage(e) {
+  const n = e?.name;
+  if (n === "NotAllowedError" || n === "SecurityError") return "Camera access was denied. Allow the camera for this site in your browser settings, then tap Start camera again.";
+  if (n === "NotFoundError" || n === "OverconstrainedError") return "No usable camera was found on this device.";
+  if (n === "NotReadableError" || n === "AbortError") return "The camera is busy (another app or tab may be using it). Close it and try again.";
+  return e?.message || "Could not start the camera.";
+}
+
+// ---------------------------------------------------------------------------
+// Camera view: stream, analysis loop, overlay, auto/manual capture
+
+function CameraView({ lib, active, settings, busy, paused, flash, rearmKey, onCapture, onError }) {
+  const videoRef = useRef(null);
+  const overlayRef = useRef(null);
+  const streamRef = useRef(null);
+  const trackRef = useRef(null);
+  const acRef = useRef(null);
+  const obsRef = useRef(null);
+  const capturingRef = useRef(false);
+  const live = useRef({});
+  live.current = { busy, paused, auto: settings.auto, photo: settings.photo, onCapture, onError, flash };
+  const [cam, setCam] = useState({ state: "off", error: null, vw: 0, vh: 0 });
+  const [status, setStatus] = useState({ phase: "searching", hint: "" });
+  const [torch, setTorchState] = useState({ supported: null, on: false });
+  // Every stop() bumps the generation; a start() that resumes after it (the
+  // permission prompt or camera warm-up was still pending) drops its stream.
+  const genRef = useRef(0);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  const stop = useCallback(() => {
+    genRef.current++;
+    if (lib) lib.stopStream(streamRef.current);
+    else streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    trackRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCam((c) => (c.state === "off" || c.state === "error" ? c : { ...c, state: "off" }));
+    setTorchState((t) => ({ ...t, on: false }));
+  }, [lib]);
+
+  const start = async () => {
+    if (!lib || cam.state === "starting") return;
+    unlockAudio();
+    const gen = ++genRef.current;
+    const stale = () => gen !== genRef.current || !activeRef.current || document.hidden;
+    setCam({ state: "starting", error: null, vw: 0, vh: 0 });
+    try {
+      const stream = await lib.openCamera();
+      if (stale()) {
+        lib.stopStream(stream);
+        if (gen === genRef.current) stop();
+        return;
+      }
+      streamRef.current = stream;
+      const track = stream.getVideoTracks()[0];
+      trackRef.current = track;
+      track?.addEventListener?.("ended", () => { stop(); setCam({ state: "error", error: "The camera stopped (another app may have taken it).", vw: 0, vh: 0 }); });
+      const v = videoRef.current;
+      v.muted = true;
+      v.setAttribute("playsinline", "");
+      v.setAttribute("muted", "");
+      v.srcObject = stream;
+      await v.play().catch(() => {});
+      if (!v.videoWidth) {
+        await new Promise((res) => { v.addEventListener("loadedmetadata", res, { once: true }); setTimeout(res, 4000); });
+      }
+      if (stale()) { if (gen === genRef.current) stop(); return; }
+      lib.preferContinuousFocus(track);
+      setTorchState({ supported: lib.torchCapability(track), on: false });
+      acRef.current = new lib.AutoCapture();
+      setCam({ state: "on", error: null, vw: v.videoWidth, vh: v.videoHeight });
+    } catch (e) {
+      stop();
+      setCam({ state: "error", error: cameraErrorMessage(e), vw: 0, vh: 0 });
+    }
+  };
+
+  // Stop the camera when the tab is left or the page is hidden.
+  useEffect(() => { if (!active) stop(); }, [active, stop]);
+  useEffect(() => {
+    const h = () => { if (document.hidden) stop(); };
+    document.addEventListener("visibilitychange", h);
+    return () => { document.removeEventListener("visibilitychange", h); stop(); };
+  }, [stop]);
+  useEffect(() => { acRef.current?.rearm(); }, [rearmKey]);
+
+  const shoot = useCallback(async (o, mode) => {
+    const v = videoRef.current;
+    if (!lib || !v || !v.videoWidth || capturingRef.current || live.current.busy) return;
+    capturingRef.current = true;
+    const found = Boolean(o && o.found);
+    const corners = found ? o.corners : lib.rectQuad(lib.guideRect(v.videoWidth, v.videoHeight));
+    if (mode === "manual") acRef.current?.captured(o || {});
+    try {
+      const cap = await lib.captureCard(v, trackRef.current, corners, { preferPhoto: live.current.photo !== false });
+      live.current.onCapture({ ...cap, mode, detected: found });
+    } catch (e) {
+      acRef.current?.rearm();
+      live.current.onError?.(`Capture failed: ${e.message}`);
+    } finally {
+      capturingRef.current = false;
+    }
+  }, [lib]);
+
+  // Analysis loop (~8 fps) + overlay drawing.
+  useEffect(() => {
+    if (cam.state !== "on" || !lib) return;
+    const v = videoRef.current;
+    const analyze = lib.createAnalyzer();
+    const gap = 1000 / lib.CAPTURE_DEFAULTS.fps;
+    let alive = true, timer = null, last = 0, shown = { phase: "", hint: "" };
+
+    const draw = (o, r) => {
+      const c = overlayRef.current;
+      if (!c) return;
+      const cw = c.clientWidth, ch = c.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
+      if (!cw || !ch) return;
+      if (c.width !== Math.round(cw * dpr) || c.height !== Math.round(ch * dpr)) { c.width = Math.round(cw * dpr); c.height = Math.round(ch * dpr); }
+      const ctx = c.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cw, ch);
+      const sc = Math.max(cw / o.vw, ch / o.vh), dx = (cw - o.vw * sc) / 2, dy = (ch - o.vh * sc) / 2;
+      const map = ([x, y]) => [x * sc + dx, y * sc + dy];
+      const g = lib.rectQuad(o.guide).map(map);
+      ctx.fillStyle = "rgba(0,0,0,.38)";
+      ctx.beginPath();
+      ctx.rect(0, 0, cw, ch);
+      ctx.moveTo(g[0][0], g[0][1]); ctx.lineTo(g[3][0], g[3][1]); ctx.lineTo(g[2][0], g[2][1]); ctx.lineTo(g[1][0], g[1][1]); ctx.closePath();
+      ctx.fill();
+      const fl = live.current.flash;
+      const flashOn = fl && Date.now() < fl.until;
+      ctx.lineWidth = flashOn ? 6 : 2.5;
+      ctx.setLineDash(flashOn || o.found ? [] : [10, 8]);
+      ctx.strokeStyle = flashOn ? fl.color : "rgba(255,255,255,.85)";
+      ctx.strokeRect(g[0][0], g[0][1], g[2][0] - g[0][0], g[2][1] - g[0][1]);
+      if (o.found && o.corners) {
+        const q = o.corners.map(map);
+        ctx.setLineDash([]);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = r.state === "cooldown" ? "#f0c062" : r.state === "stable" || r.state === "capture" ? "#62d18d" : "#a38bff";
+        ctx.beginPath();
+        q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.stroke();
+      }
+    };
+
+    const loop = () => {
+      if (!alive) return;
+      const now = performance.now();
+      if (now - last >= gap && v.readyState >= 2 && !capturingRef.current) {
+        last = now;
+        let o = null;
+        try { o = analyze(v); } catch { o = null; }
+        if (o) {
+          if (o.vw !== cam.vw || o.vh !== cam.vh) setCam((c) => ({ ...c, vw: o.vw, vh: o.vh }));
+          obsRef.current = o;
+          const L = live.current;
+          const r = acRef.current.step({ ...o, now: Date.now(), paused: L.busy || L.paused || !L.auto });
+          draw(o, r);
+          let hint = r.hint, phase = r.state;
+          if (L.busy) { hint = "Identifying…"; phase = "busy"; }
+          else if (L.paused) hint = "Paused";
+          else if (!L.auto && r.state !== "cooldown") hint = o.found ? "Card found: tap the shutter" : "Place a card in the frame";
+          if (hint !== shown.hint || phase !== shown.phase) { shown = { hint, phase }; setStatus(shown); }
+          if (r.capture && !L.busy && !L.paused && L.auto) shoot(o, "auto");
+        }
+      }
+      timer = setTimeout(loop, 30);
+    };
+    loop();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [cam.state, cam.vw, cam.vh, lib, shoot]);
+
+  const toggleTorch = async () => {
+    const next = !torch.on;
+    try {
+      await lib.setTorch(trackRef.current, next);
+      setTorchState((t) => ({ ...t, on: next, supported: true }));
+    } catch {
+      setTorchState({ supported: false, on: false });
+      onError?.("The torch is not available on this camera.");
+    }
+  };
+
+  const on = cam.state === "on";
+  const ratio = cam.vw && cam.vh ? cam.vw / cam.vh : 3 / 4;
+  const style = { aspectRatio: `${ratio}`, width: `min(100%, calc(72dvh * ${ratio.toFixed(4)}))` };
+  const support = lib ? lib.cameraSupport() : null;
+
+  return (
+    <div className="cam" style={style}>
+      <video ref={videoRef} playsInline muted autoPlay aria-label="Camera preview" />
+      <canvas ref={overlayRef} aria-hidden="true" hidden={!on} />
+      {!on && (
+        <div className="cam-start">
+          {cam.state === "starting" ? <Spinner label="Starting camera…" /> : (
+            <>
+              {cam.error && <p role="alert" style={{ color: "#ffb4a8" }}>{cam.error}</p>}
+              {support && !support.secure && <p role="alert" style={{ color: "#ffb4a8" }}>The camera only works over HTTPS.</p>}
+              <button type="button" className="btn primary" onClick={start} disabled={!lib}><Icon.camera /> {cam.error ? "Try again" : "Start camera"}</button>
+              <p>Lay the card on a plain, light surface and fill the frame. Scanning starts automatically when the card is steady and sharp.</p>
+            </>
+          )}
+        </div>
+      )}
+      {on && (
+        <>
+          <div className="cam-hud top">
+            <span className={`pill s-${status.phase}`} role="status" aria-live="polite"><span className="dot" aria-hidden="true" />{status.hint || "Ready"}</span>
+            {torch.supported !== false && (
+              <button type="button" className="cam-btn" aria-pressed={torch.on} aria-label={torch.on ? "Turn torch off" : "Turn torch on"} onClick={toggleTorch}><Icon.bolt /></button>
+            )}
+          </div>
+          <div className="cam-hud bottom">
+            <button type="button" className="cam-btn" aria-label="Stop camera" onClick={stop}><Icon.close /></button>
+            <button type="button" className="shutter" aria-label="Take scan now" disabled={busy || paused}
+              onClick={() => shoot(obsRef.current, "manual")} />
+            <button type="button" className="cam-btn" aria-label="Scan this card again" title="Re-arm auto capture" onClick={() => acRef.current?.rearm()}><Icon.refresh /></button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Printing picker (candidates, all printings of a card, title search)
+
+/**
+ * Where a list of printings differs: per field, whether the values differ and
+ * the common prefix/suffix length (so only the differing characters of a set
+ * code or collector number get marked).
+ */
+function printingDiff(list) {
+  const out = { set: null, cn: null, lang: false, finish: false, tags: new Set() };
+  if (!list || list.length < 2) return out;
+  const affix = (vals) => {
+    if (new Set(vals).size < 2) return null;
+    const min = Math.min(...vals.map((v) => v.length));
+    let pre = 0;
+    while (pre < min && vals.every((v) => v[pre] === vals[0][pre])) pre++;
+    let suf = 0;
+    while (suf < min - pre && vals.every((v) => v[v.length - 1 - suf] === vals[0][vals[0].length - 1 - suf])) suf++;
+    return { pre, suf };
+  };
+  out.set = affix(list.map((p) => p.set.toUpperCase()));
+  out.cn = affix(list.map((p) => String(p.cn)));
+  out.lang = new Set(list.map((p) => p.lang)).size > 1;
+  out.finish = new Set(list.map((p) => p.finishes.join("/"))).size > 1;
+  const all = list.map((p) => new Set(p.tags || []));
+  for (const t of new Set(list.flatMap((p) => p.tags || []))) if (!all.every((x) => x.has(t))) out.tags.add(t);
+  return out;
+}
+
+/** Text with the differing middle part (between common prefix and suffix) marked. */
+function DiffText({ text, d, prefix = "" }) {
+  const t = String(text);
+  if (!d) return <span className="same">{prefix}{t}</span>;
+  const mid = t.slice(d.pre, t.length - d.suf);
+  return <span>{prefix}{t.slice(0, d.pre)}{mid ? <mark>{mid}</mark> : null}{t.slice(t.length - d.suf)}</span>;
+}
+
+function PickTile({ p, current, onPick, diff }) {
+  const d = diff || printingDiff([]);
+  const tags = (p.tags || []).filter((t) => d.tags.has(t) || (p.tags || []).length <= 2);
+  return (
+    <button type="button" className="pick" aria-current={current || undefined} onClick={() => onPick(p)}
+      aria-label={`${p.name}, ${p.set_name || p.set.toUpperCase()} number ${p.cn}${p.lang ? `, ${p.lang}` : ""}${p.tags?.length ? `, ${p.tags.join(", ")}` : ""}`}>
+      <span className="pcode" aria-hidden="true">
+        <span className="pset"><DiffText text={p.set.toUpperCase()} d={d.set} /></span>
+        <span className="pcn"><DiffText text={p.cn} d={d.cn} prefix="#" /></span>
+        {/* Language variants share set + number: then the language is the difference. */}
+        {d.lang && p.lang ? <span className="pcn"><mark>{p.lang.toUpperCase()}</mark></span> : null}
+      </span>
+      {p.img ? <img src={p.img} alt="" loading="lazy" decoding="async" /> : <span className="ph">{p.name}</span>}
+      <span className="cap">
+        <b>{p.name}</b>
+        {p.set_name && <span className="muted" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.set_name}</span>}
+        <span className="ptags">
+          {p.lang && <span className={`badge${d.lang ? " diff" : ""}`}>{p.lang.toUpperCase()}</span>}
+          {p.finishes.length > 0 && <span className={`badge${d.finish ? " diff" : ""}`}>{p.finishes.map((f) => (f === "nonfoil" ? "non-foil" : f)).join(" / ")}</span>}
+          {tags.map((t) => <span key={t} className={`badge${d.tags.has(t) ? " diff" : ""}`}>{t}</span>)}
+        </span>
+        {p.score != null && <span className="muted">score {p.score.toFixed(2)}</span>}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * The user's own capture of the collector line (the high-res bottom strip),
+ * zoomed in so near-identical printings can be told apart. Tries each source in
+ * turn (server copy, then the local capture) and hides itself when none loads.
+ * Pinch (touch), ctrl+wheel or the buttons zoom.
+ */
+function ScanStrip({ srcs, startZoom = 2 }) {
+  const list = useMemo(() => (srcs || []).filter(Boolean), [srcs]);
+  const [i, setI] = useState(0);
+  const [zoom, setZoom] = useState(startZoom);
+  const zoomRef = useRef(startZoom);
+  zoomRef.current = zoom;
+  const boxRef = useRef(null);
+  const placed = useRef(false);
+
+  // Zoom around a point (box coordinates), keeping that point in place.
+  const zoomTo = useCallback((z, cx, cy) => {
+    const box = boxRef.current;
+    const prev = zoomRef.current;
+    const next = Math.max(1, Math.min(6, z));
+    if (!box || next === prev) return;
+    const x = cx ?? box.clientWidth / 2, y = cy ?? box.clientHeight / 2;
+    const sl = box.scrollLeft, st = box.scrollTop;
+    zoomRef.current = next;
+    setZoom(next);
+    requestAnimationFrame(() => {
+      box.scrollLeft = (sl + x) * (next / prev) - x;
+      box.scrollTop = (st + y) * (next / prev) - y;
+    });
+  }, []);
+
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    let start = null;
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const mid = (t) => {
+      const r = box.getBoundingClientRect();
+      return [(t[0].clientX + t[1].clientX) / 2 - r.left, (t[0].clientY + t[1].clientY) / 2 - r.top];
+    };
+    const onStart = (e) => { if (e.touches.length === 2) start = { d: dist(e.touches), z: zoomRef.current }; };
+    const onMove = (e) => {
+      if (!start || e.touches.length !== 2) return;
+      e.preventDefault();
+      const [x, y] = mid(e.touches);
+      zoomTo(start.z * dist(e.touches) / start.d, x, y);
+    };
+    const onEnd = (e) => { if (e.touches.length < 2) start = null; };
+    const onWheel = (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const r = box.getBoundingClientRect();
+      zoomTo(zoomRef.current * Math.exp(-e.deltaY / 200), e.clientX - r.left, e.clientY - r.top);
+    };
+    box.addEventListener("touchstart", onStart, { passive: true });
+    box.addEventListener("touchmove", onMove, { passive: false });
+    box.addEventListener("touchend", onEnd, { passive: true });
+    box.addEventListener("touchcancel", onEnd, { passive: true });
+    box.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      box.removeEventListener("touchstart", onStart);
+      box.removeEventListener("touchmove", onMove);
+      box.removeEventListener("touchend", onEnd);
+      box.removeEventListener("touchcancel", onEnd);
+      box.removeEventListener("wheel", onWheel);
+    };
+  }, [zoomTo, i, list.length]);
+
+  if (i >= list.length) return null;
+  const onLoad = () => {
+    // M15+ frames: the collector line sits in the upper-left part of the strip,
+    // start there. Older frames (startZoom 1) show the whole strip.
+    const box = boxRef.current;
+    if (!box || placed.current) return;
+    placed.current = true;
+    box.scrollLeft = 0;
+    box.scrollTop = Math.max(0, (box.scrollHeight - box.clientHeight) * 0.25);
+  };
+  return (
+    <figure className="scan-strip" style={{ margin: 0 }}>
+      <div className="strip-box" ref={boxRef}>
+        <img src={list[i]} alt="Your scan: the card's bottom edge with set code and collector number" draggable={false}
+          style={{ width: `${zoom * 100}%` }} onLoad={onLoad} onError={() => { placed.current = false; setI((n) => n + 1); }} />
+      </div>
+      <figcaption className="strip-bar">
+        <span className="grow">Your scan · compare the set code and number</span>
+        <button type="button" className="btn ghost icon" aria-label="Zoom out" disabled={zoom <= 1} onClick={() => zoomTo(zoom / 1.4)}><Icon.zoomOut /></button>
+        <button type="button" className="btn ghost icon" aria-label="Zoom in" disabled={zoom >= 6} onClick={() => zoomTo(zoom * 1.4)}><Icon.zoomIn /></button>
+      </figcaption>
+    </figure>
+  );
+}
+
+function PrintingPicker({ title, candidates = [], oracleId = null, lang = "", currentId = null, startInSearch = false, strips = null, onPick, onClose }) {
+  const cands = useMemo(() => candidates.map((c) => (c && c.set !== undefined && c.cn !== undefined ? c : normPrinting(c))).filter((c) => c && c.id), [candidates]);
+  const [mode, setMode] = useState(startInSearch ? "search" : cands.length ? "cand" : oracleId ? "all" : "search");
+  const [oid, setOid] = useState(oracleId || cands.find((c) => c.oracle_id)?.oracle_id || null);
+  const [plang, setPlang] = useState(lang || "");
+  const [all, setAll] = useState(null);
+  const [q, setQ] = useState("");
+  const dq = useDebounced(q.trim(), 300);
+  const [hits, setHits] = useState(null);
+  const [error, setError] = useState(null);
+  const candDiff = useMemo(() => printingDiff(cands), [cands]);
+  // Only the 2015 frame puts the collector line in the strip's upper-left
+  // corner; for older frames (info at the centre/right) start with the whole strip.
+  const stripZoom = cands.length && cands.every((c) => c.frame && c.frame !== "2015" && c.frame !== "future") ? 1 : 2;
+  const allDiff = useMemo(() => printingDiff(all || []), [all]);
+
+  useEffect(() => {
+    if (mode !== "all" || !oid) return;
+    let alive = true;
+    setAll(null); setError(null);
+    const params = new URLSearchParams({ oracle_id: oid });
+    if (plang) params.set("lang", plang);
+    api(`/api/printings?${params}`)
+      .then((d) => { if (alive) setAll(asList(d, "printings", "rows").map(normPrinting).filter((p) => p && p.id)); })
+      .catch((e) => { if (alive) setError(e.message); });
+    return () => { alive = false; };
+  }, [mode, oid, plang]);
+
+  useEffect(() => {
+    if (mode !== "search" || dq.length < 2) { setHits(null); return; }
+    let alive = true;
+    setError(null);
+    const params = new URLSearchParams({ q: dq });
+    if (plang) params.set("lang", plang);
+    api(`/api/printings/search?${params}`)
+      .then((d) => { if (alive) setHits(asList(d, "results", "rows", "printings")); })
+      .catch((e) => { if (alive) setError(e.message); });
+    return () => { alive = false; };
+  }, [mode, dq, plang]);
+
+  const langSelect = (
+    <select className="select" style={{ width: "auto" }} aria-label="Language filter" value={plang} onChange={(e) => setPlang(e.target.value)}>
+      <option value="">All languages</option>
+      {SCAN_LANGS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+    </select>
+  );
+
+  return (
+    <Sheet title={title} onClose={onClose} pinned={strips && strips.length ? <ScanStrip srcs={strips} startZoom={stripZoom} /> : null}>
+      <div className="stack">
+        <div className="row">
+          <div className="segmented" role="group" aria-label="Show">
+            {cands.length > 0 && <button type="button" aria-pressed={mode === "cand"} onClick={() => setMode("cand")}>Candidates ({cands.length})</button>}
+            {oid && <button type="button" aria-pressed={mode === "all"} onClick={() => setMode("all")}>All printings</button>}
+            <button type="button" aria-pressed={mode === "search"} onClick={() => setMode("search")}><Icon.search /> Name</button>
+          </div>
+          {mode !== "cand" && langSelect}
+        </div>
+        <ErrorNotice error={error} />
+        {mode === "cand" && (
+          <div className="pick-grid">{cands.map((p) => <PickTile key={p.id} p={p} diff={candDiff} current={p.id === currentId} onPick={onPick} />)}</div>
+        )}
+        {mode === "all" && (!all ? (!error && <Spinner />) : all.length === 0
+          ? <p className="muted">No printings found{plang ? " in this language" : ""}.</p>
+          : <div className="pick-grid">{all.map((p) => <PickTile key={p.id} p={p} diff={allDiff} current={p.id === currentId} onPick={onPick} />)}</div>)}
+        {mode === "search" && (
+          <div className="stack">
+            <div className="search">
+              <Icon.search />
+              <label htmlFor="pick-q" className="sr-only">Card name</label>
+              <input id="pick-q" className="input" type="search" autoFocus autoComplete="off" autoCorrect="off" spellCheck="false"
+                placeholder="Card name (any language)…" value={q} onChange={(e) => setQ(e.target.value)} />
+            </div>
+            {hits && hits.length === 0 && <p className="muted">No card matches “{dq}”.</p>}
+            {hits && hits.length > 0 && (
+              <div className="hit-list">
+                {hits.map((h, i) => (
+                  <button key={`${h.id || h.oracle_id}-${i}`} type="button" className="hit"
+                    onClick={() => { setOid(h.oracle_id); if (h.lang && !plang) setPlang(h.lang); setMode("all"); }}>
+                    <span><b>{h.printed_name || h.name}</b>{h.printed_name && h.printed_name !== h.name && <span className="muted small"> · {h.name}</span>}</span>
+                    {h.lang && <span className="badge">{String(h.lang).toUpperCase()}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Sheet>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Commit sheet: add staged scans to a binder or a deck
+
+function CommitSheet({ ids, onClose, onDone }) {
+  const saved = store.get("mtg.scan.target", {}) || {};
+  const [type, setType] = useState(saved.type === "deck" ? "deck" : "binder");
+  const [binders, setBinders] = useState(null);
+  const [decks, setDecks] = useState(null);
+  const [binder, setBinder] = useState(saved.type === "binder" && saved.name ? saved.name : "");
+  const [newBinder, setNewBinder] = useState("");
+  const [deckId, setDeckId] = useState(saved.type === "deck" && saved.id ? String(saved.id) : "");
+  const [newDeck, setNewDeck] = useState({ name: "", format: "commander" });
+  const [board, setBoard] = useState(saved.board || "main");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    api("/api/binders").then((d) => {
+      // The unnamed bucket ("no binder") can't be a target: scans always go into a named binder.
+      const list = asList(d, "binders").filter((x) => x.name);
+      setBinders(list);
+      setBinder((b) => (b && (b === "__new" || list.some((x) => x.name === b)) ? b : list[0]?.name || "__new"));
+    }).catch(() => { setBinders([]); setBinder("__new"); });
+    api("/api/decks").then((d) => {
+      // Decks synced from ManaBox are rebuilt by the next replace import: not a target.
+      const list = asList(d, "decks").filter((dk) => dk.source !== "manabox");
+      setDecks(list);
+      setDeckId((x) => (x && (x === "__new" || list.some((dk) => String(dk.id) === x)) ? x : list[0] ? String(list[0].id) : "__new"));
+    }).catch(() => { setDecks([]); setDeckId("__new"); });
+  }, []);
+
+  let target = null, label = "";
+  if (type === "binder") {
+    const name = binder === "__new" ? newBinder.trim() : binder;
+    if (name) { target = { type: "binder", name, create: binder === "__new" }; label = `binder “${name}”`; }
+  } else if (deckId === "__new") {
+    if (newDeck.name.trim()) { target = { type: "deck", name: newDeck.name.trim(), create: true, format: newDeck.format, board }; label = `new deck “${newDeck.name.trim()}”`; }
+  } else if (deckId) {
+    const dk = decks?.find((d) => String(d.id) === deckId);
+    target = { type: "deck", id: Number(deckId), board };
+    label = `deck “${dk?.name || deckId}”`;
+  }
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!target || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await api("/api/scans/commit", { method: "POST", json: { ids, target } });
+      const resTarget = res?.target || {};
+      store.set("mtg.scan.target", target.type === "binder"
+        ? { type: "binder", name: target.name }
+        : { type: "deck", id: resTarget.id ?? target.id ?? null, board });
+      onDone(res, label);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet title={`Add ${plural(ids.length, "scan")} to…`} onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
+        <div className="segmented" role="group" aria-label="Destination">
+          <button type="button" aria-pressed={type === "binder"} onClick={() => setType("binder")}><Icon.collection /> Binder</button>
+          <button type="button" aria-pressed={type === "deck"} onClick={() => setType("deck")}><Icon.decks /> Deck</button>
+        </div>
+        {type === "binder" && (
+          <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0 }}>
+            <legend className="label" style={{ marginBottom: 8 }}>Binder (collection)</legend>
+            {!binders && <Spinner />}
+            {binders?.map((b) => (
+              <label key={b.name} className="radio-card">
+                <input type="radio" name="binder" checked={binder === b.name} onChange={() => setBinder(b.name)} />
+                <span className="grow"><b>{b.name}</b><br /><span className="small muted">{plural(b.copies ?? b.cards ?? 0, "copy", "copies")}{b.sources ? ` · ${[].concat(b.sources).join(", ")}` : ""}</span></span>
+              </label>
+            ))}
+            <label className="radio-card">
+              <input type="radio" name="binder" checked={binder === "__new"} onChange={() => setBinder("__new")} />
+              <span className="grow stack" style={{ gap: 6 }}>
+                <b>New binder…</b>
+                {binder === "__new" && (
+                  <input className="input" aria-label="New binder name" placeholder="e.g. Trade binder" maxLength={120} autoFocus
+                    value={newBinder} onChange={(e) => setNewBinder(e.target.value)} />
+                )}
+              </span>
+            </label>
+          </fieldset>
+        )}
+        {type === "deck" && (
+          <div className="stack">
+            <div className="field">
+              <label htmlFor="commit-deck">Deck</label>
+              <select id="commit-deck" className="select" value={deckId} onChange={(e) => setDeckId(e.target.value)}>
+                {decks?.map((d) => <option key={d.id} value={String(d.id)}>{d.name}{d.format ? ` (${d.format})` : ""}</option>)}
+                <option value="__new">New deck…</option>
+              </select>
+            </div>
+            {deckId === "__new" && (
+              <div className="row" style={{ alignItems: "flex-end" }}>
+                <div className="field grow" style={{ flexBasis: 200 }}>
+                  <label htmlFor="commit-deck-name">Deck name</label>
+                  <input id="commit-deck-name" className="input" required maxLength={200} value={newDeck.name} onChange={(e) => setNewDeck({ ...newDeck, name: e.target.value })} />
+                </div>
+                <div className="field" style={{ flexBasis: 150, flexGrow: 1 }}>
+                  <label htmlFor="commit-deck-format">Format</label>
+                  <select id="commit-deck-format" className="select" value={newDeck.format} onChange={(e) => setNewDeck({ ...newDeck, format: e.target.value })}>
+                    {FORMATS.map((f) => <option key={f} value={f}>{cap(f)}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+            <div className="field">
+              <label htmlFor="commit-board">Board</label>
+              <select id="commit-board" className="select" value={board} onChange={(e) => setBoard(e.target.value)}>
+                {BOARDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
+            <p className="small muted" style={{ margin: 0 }}>Deck cards are added to the deck list; they don't change your binders.</p>
+          </div>
+        )}
+        <ErrorNotice error={error} />
+        <button type="submit" className="btn primary" disabled={!target || busy}>
+          {busy ? <><span className="spinner" aria-hidden="true" style={{ borderTopColor: "var(--accent-ink)" }} /> Adding…</> : <><Icon.check /> Add {plural(ids.length, "scan")}{label ? ` to ${label}` : ""}</>}
+        </button>
+      </form>
+    </Sheet>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Calibration: confirm or correct the truth for each scan
+
+function TruthSheet({ entry, onClose, onDone, onPickNeeded }) {
+  const { scan, result, preview } = entry;
+  const detected = normPrinting(result?.printing || scan?.printing || (scan ? { ...scan, id: scan.printing_id } : null));
+  const [finish, setFinish] = useState(normFinish(result?.finish || scan?.finish));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const confirm = async (printingId) => {
+    if (!scan?.id || !printingId) return;
+    setBusy(true); setError(null);
+    try {
+      await api(`/api/scans/${scan.id}/truth`, { method: "POST", json: { printing_id: printingId, finish } });
+      onDone(`Truth saved for scan #${scan.id}`);
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  };
+  const fin = scan ? scanFinishes(scan) : ["nonfoil", "foil", "etched"];
+  return (
+    <Sheet title="Calibration: is this right?" onClose={onClose}>
+      <div className="stack">
+        <div className="truth">
+          <figure>{preview ? <img src={preview} alt="Your capture" /> : <div className="ph" />}<figcaption>Your capture</figcaption></figure>
+          <figure>
+            {detected?.img ? <img src={detected.img} alt={detected.name} /> : <div className="pick"><span className="ph">{detected?.name || "No match"}</span></div>}
+            <figcaption>{detected ? `${detected.name} · ${printingLabel(detected)}` : `Identification: ${result?.status || "failed"}`}</figcaption>
+          </figure>
+        </div>
+        <div className="row">
+          <span className="label">Finish</span>
+          <div className="segmented" role="group" aria-label="Finish">
+            {fin.map((f) => <button key={f} type="button" aria-pressed={finish === f} onClick={() => setFinish(f)}>{FINISH_LABEL[f]}</button>)}
+          </div>
+        </div>
+        <ErrorNotice error={error} />
+        {!scan?.id && <div className="notice warn"><div className="grow">This scan was not staged. Pick the right printing to stage it and record the truth.</div></div>}
+        <div className="row">
+          {scan?.id && detected?.id && <button type="button" className="btn primary" disabled={busy} onClick={() => confirm(detected.id)}><Icon.check /> Correct</button>}
+          <button type="button" className="btn" disabled={busy} onClick={() => onPickNeeded(finish)}>Wrong: pick the printing</button>
+          <button type="button" className="btn ghost" onClick={onClose}>Skip</button>
+        </div>
+        <p className="small muted" style={{ margin: 0 }}>Pick the exact printing <b>in the language printed on the card</b>. The scores and OCR output of this scan are kept to tune the scanner thresholds.</p>
+      </div>
+    </Sheet>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Staged scan row
+
+function ScanRow({ s, status, selected, onSelect, onPatch, onDelete, onIncrement, onPick, onConfirm }) {
+  const p = normPrinting({ ...s, id: s.store_printing_id || s.printing_id });
+  const fins = scanFinishes(s);
+  const finish = normFinish(s.finish);
+  const nextFinish = fins[(fins.indexOf(finish) + 1) % fins.length];
+  const variants = jsonArr(s.variants);
+  const qty = s.quantity ?? 1;
+  const thumb = scanThumb(s);
+  const ld = (s.lang_detected || "").toUpperCase(), ls = (s.store_lang || "").toUpperCase();
+  return (
+    <div className={`scan-row st-${status}`} aria-selected={selected}>
+      <label className="sel"><input type="checkbox" checked={selected} onChange={(e) => onSelect(e.target.checked)} aria-label={`Select ${s.name || "scan"}`} /></label>
+      <button type="button" className="thb" onClick={onPick} aria-label={`Change printing of ${s.name || "scan"}`}>
+        {thumb ? <img className="th" src={thumb} alt="" loading="lazy" decoding="async" /> : <span className="th" />}
+      </button>
+      <div className="info">
+        <div className="top">
+          <span className="nm" title={s.name}>{s.name || "Unidentified card"}</span>
+          <span className={`badge st-chip ${status}`}>{STATUS_LABEL[status] || status}</span>
+        </div>
+        <div className="sub">
+          {s.set_code && <span>{String(s.set_code).toUpperCase()} #{s.collector_number}</span>}
+          {(ld || ls) && <span className="badge" title="Detected language → stored language">{ld && ls && ld !== ls ? `${ld}→${ls}` : ls || ld}</span>}
+          {s.method && <span className="muted">{s.method}{typeof s.confidence === "number" ? ` ${Math.round(s.confidence * 100)}%` : ""}</span>}
+        </div>
+      </div>
+      <div className="ctrls">
+        <div className="stepper" role="group" aria-label="Quantity">
+          <button type="button" aria-label="One less" disabled={qty <= 1} onClick={() => onPatch({ quantity: qty - 1 })}><Icon.minus /></button>
+          <output aria-live="polite">{qty}</output>
+          <button type="button" aria-label="One more" onClick={onIncrement}><Icon.plus /></button>
+        </div>
+        <button type="button" className={`btn sm finish-btn ${finish}`} disabled={fins.length < 2}
+          title={fins.length < 2 ? `Only printed ${FINISH_LABEL[finish] || finish}` : `Switch to ${FINISH_LABEL[nextFinish]}`}
+          onClick={() => onPatch({ finish: nextFinish })}>{finish !== "nonfoil" && "✦ "}{FINISH_LABEL[finish] || finish}</button>
+        <select className="select" aria-label="Condition" value={s.condition || "near_mint"} onChange={(e) => onPatch({ condition: e.target.value })}>
+          {CONDITIONS.map(([k, , short]) => <option key={k} value={k}>{short}</option>)}
+        </select>
+        <select className="select" aria-label="Store as language" value={s.store_lang || "en"} onChange={(e) => onPatch({ store_lang: e.target.value })}>
+          {SCAN_LANGS.map(([k]) => <option key={k} value={k}>{k.toUpperCase()}</option>)}
+        </select>
+        {status === "suggest" && <button type="button" className="btn sm" onClick={onConfirm}><Icon.check /> Confirm</button>}
+        {(status === "review" || status === "failed") && <button type="button" className="btn sm danger" onClick={onPick}>Pick printing</button>}
+        {variants.length > 0 && <button type="button" className="chip" onClick={onPick} title="Promo / List / other printings share this collector number">variant?</button>}
+        <button type="button" className="btn ghost icon sm" aria-label={`Delete ${s.name || "scan"}`} onClick={onDelete} style={{ marginLeft: "auto" }}><Icon.trash /></button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Scan tab
+
+function ScanTab({ active, health, onCommitted }) {
+  const [lib, setLib] = useState(null);
+  const [libError, setLibError] = useState(null);
+  const [settings, setSettings] = useState(() => ({ ...SCAN_DEFAULTS, ...(store.get("mtg.scan.settings", {}) || {}) }));
+  const [scans, setScans] = useState(null);
+  const [listError, setListError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [last, setLast] = useState(null); // {kind, scan, result, payload, preview, error}
+  const [sheet, setSheet] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [toast, setToast] = useState(null);
+  const [flash, setFlash] = useState(null);
+  const [rearmKey, bumpRearm] = useReducer((x) => x + 1, 0);
+  const [statusById, setStatusById] = useState({});
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const replaceRef = useRef(null);
+
+  useEffect(() => {
+    if (!active || lib) return;
+    let alive = true;
+    import("./scanlib.js").then((m) => { if (alive) setLib(m); })
+      .catch((e) => { if (alive) setLibError(`Could not load the scanner: ${e.message}`); });
+    return () => { alive = false; };
+  }, [active, lib]);
+
+  const setSetting = (k, v) => setSettings((s) => { const n = { ...s, [k]: v }; store.set("mtg.scan.settings", n); return n; });
+
+  const loadScans = useCallback(async () => {
+    try {
+      const d = await api("/api/scans?status=staged");
+      const list = asList(d, "scans", "rows").slice().sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
+      setScans(list);
+      setListError(null);
+      setSelected((sel) => new Set([...sel].filter((id) => list.some((s) => s.id === id))));
+    } catch (e) {
+      setListError(e.status === 404 ? "The scanner is not available on this server (update the app)." : `Could not load scans: ${e.message}`);
+      setScans((s) => s || []);
+    }
+  }, []);
+  useEffect(() => { if (active) loadScans(); }, [active, loadScans]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), toast.ms || 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const statusOf = useCallback((s) => {
+    if (!s) return "failed";
+    if (statusById[s.id]) return statusById[s.id];
+    const raw = s.result_status || s.identify_status || s.decision || s.status;
+    if (["auto", "suggest", "review", "failed"].includes(raw)) return raw;
+    if (!s.printing_id && !s.store_printing_id) return "review";
+    return "auto";
+  }, [statusById]);
+  const markStatus = (id, st) => setStatusById((m) => ({ ...m, [id]: st }));
+
+  const feedback = (kind) => {
+    if (settingsRef.current.sound) beep(kind);
+    vibrate(kind);
+    setFlash({ color: STATUS_COLOR[kind] || "#ffffff", until: Date.now() + 900 });
+  };
+
+  const showError = (msg) => setToast({ text: msg, ms: 5000 });
+
+  function openPickerFor(scan, result, { truthFinish = null, payload = null } = {}) {
+    // The user's own collector line: the server's stored strip, else the local capture.
+    const strips = [];
+    if (scan?.id && scan.has_strip !== false) strips.push(scanFileUrl(scan, "strip"));
+    if (payload?.strip) strips.push(`data:image/jpeg;base64,${payload.strip}`);
+    const cands = [...candidatesOf(result, scan), ...jsonArr(result?.variants || scan?.variants).map(normPrinting)]
+      .filter((p, i, a) => p && p.id && a.findIndex((x) => x.id === p.id) === i);
+    setSheet({
+      type: "pick", scan, candidates: cands, truthFinish, strips,
+      oracleId: scan?.oracle_id || result?.printing?.oracle_id || cands[0]?.oracle_id || null,
+      lang: scan?.lang_detected || result?.lang_detected || "",
+    });
+  }
+
+  async function handleResult(res, payload, preview) {
+    const r = res?.result || {};
+    const scan = res?.scan || null;
+    if (res?.duplicate) {
+      setLast({ kind: "duplicate", scan, result: r, payload, preview });
+      feedback("duplicate");
+      return;
+    }
+    const status = ["auto", "suggest", "review", "failed"].includes(r.status) ? r.status : scan ? statusOf(scan) : "failed";
+    if (scan?.id) markStatus(scan.id, status);
+    setLast({ kind: status, scan, result: r, payload, preview });
+    feedback(status);
+    loadScans();
+    if (settingsRef.current.calibration) setSheet({ type: "truth", entry: { scan, result: r, preview, payload } });
+    else if (status === "review" || status === "failed") {
+      if (candidatesOf(r, scan).length) openPickerFor(scan, r, { payload });
+    }
+  }
+
+  async function postScan(payload, preview) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const res = await api("/api/scan", { method: "POST", json: payload });
+      await handleResult(res, payload, preview);
+    } catch (e) {
+      setLast({ kind: "error", error: e.message, payload, preview });
+      feedback("error");
+      bumpRearm(); // let the same card be captured again
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  const onCapture = (cap) => {
+    const s = settingsRef.current;
+    const payload = {
+      card: cap.card,
+      strip: cap.strip,
+      settings: { storageLang: s.storageLang, foil: s.foil, condition: s.condition, ...(s.setHint.trim() ? { setHint: s.setHint.trim().toLowerCase() } : {}) },
+      ...(s.calibration ? { calibration: true } : {}),
+      ...(replaceRef.current ? { replace_id: replaceRef.current } : {}),
+    };
+    replaceRef.current = null;
+    postScan(payload, cap.cardPreview);
+  };
+
+  const patchScan = async (id, body, { status } = {}) => {
+    try {
+      await api(`/api/scans/${id}`, { method: "PATCH", json: body });
+      if (status) markStatus(id, status);
+      await loadScans();
+      setLast((l) => (l?.scan?.id === id ? { ...l, kind: status || l.kind, scan: { ...l.scan, ...body } } : l));
+    } catch (e) { showError(e.message); }
+  };
+  const deleteScan = async (id) => {
+    try {
+      await api(`/api/scans/${id}`, { method: "DELETE" });
+      setLast((l) => (l?.scan?.id === id ? null : l));
+      await loadScans();
+    } catch (e) { showError(e.message); }
+  };
+  const increment = async (id) => {
+    try {
+      await api(`/api/scans/${id}/increment`, { method: "POST", json: {} });
+      setToast({ text: "+1 copy" });
+      feedback("auto");
+      await loadScans();
+    } catch (e) { showError(e.message); }
+  };
+  const undo = async () => {
+    try {
+      const r = await api("/api/scans/undo", { method: "POST", json: {} });
+      setLast(null);
+      setToast({ text: r?.scan?.name || r?.name ? `Removed ${r.scan?.name || r.name}` : "Last scan undone" });
+      await loadScans();
+    } catch (e) { showError(e.status === 404 ? "Nothing to undo." : e.message); }
+  };
+  const forceAdd = () => {
+    if (!last?.payload) return;
+    postScan({ ...last.payload, force: true }, last.preview);
+  };
+
+  async function onPicked(p) {
+    const sh = sheet;
+    setSheet(null);
+    if (!sh) return;
+    const s = settingsRef.current;
+    const singleFinish = p.finishes?.length === 1 ? p.finishes[0] : null;
+    try {
+      if (sh.type === "manual" || !sh.scan?.id) {
+        const finish = sh.truthFinish || singleFinish || (s.foil === "foil" ? "foil" : "nonfoil");
+        const res = await api("/api/scans/manual", { method: "POST", json: { printing_id: p.id, finish, quantity: 1, storageLang: s.storageLang, condition: s.condition } });
+        const scan = res?.scan || (res?.id ? res : null);
+        if (scan?.id) markStatus(scan.id, "auto");
+        if (sh.truthFinish && scan?.id) {
+          await api(`/api/scans/${scan.id}/truth`, { method: "POST", json: { printing_id: p.id, finish } }).catch(() => {});
+        }
+        setToast({ text: `Added ${p.name}` });
+        feedback("auto");
+      } else {
+        await api(`/api/scans/${sh.scan.id}`, { method: "PATCH", json: { printing_id: p.id } });
+        markStatus(sh.scan.id, "auto");
+        if (sh.truthFinish) {
+          await api(`/api/scans/${sh.scan.id}/truth`, { method: "POST", json: { printing_id: p.id, finish: sh.truthFinish } });
+          setToast({ text: "Truth saved" });
+        }
+        setLast((l) => (l?.scan?.id === sh.scan.id ? { ...l, kind: "auto", scan: { ...l.scan, printing_id: p.id, name: p.name, set_code: p.set, collector_number: p.cn, image_normal: p.img } } : l));
+      }
+      await loadScans();
+    } catch (e) { showError(e.message); }
+  }
+
+  const list = scans || [];
+  const committable = list.filter((s) => (s.printing_id || s.store_printing_id) && !["review", "failed"].includes(statusOf(s)));
+  const selIds = [...selected];
+  // Review/failed rows can't be committed (the server refuses the whole batch): leave them out of a selection too.
+  const committableIds = new Set(committable.map((s) => s.id));
+  const selCommit = selIds.filter((id) => committableIds.has(id));
+  const commitIds = selIds.length ? selCommit : committable.map((s) => s.id);
+  const copies = list.reduce((a, s) => a + (s.quantity ?? 1), 0);
+  const allSelected = list.length > 0 && selected.size === list.length;
+  const scanner = health?.scanner;
+  const sheetOpen = Boolean(sheet);
+
+  return (
+    <div className="scan">
+      <div className="scan-main">
+        {libError && <ErrorNotice error={libError} />}
+        {scanner && scanner.index_ready === false && (
+          <div className="notice warn" role="status"><span aria-hidden="true">⏳</span><div className="grow">The card index is still being built. Scanning works once it's ready (see Import → Scanner index).</div></div>
+        )}
+        {scanner && (scanner.tesseract === false || scanner.djpeg === false) && (
+          <div className="notice warn" role="status"><div className="grow">Text recognition is not installed on the server{scanner.tesseract === false ? " (tesseract missing)" : ""}{scanner.djpeg === false ? " (djpeg missing)" : ""}. Scans will be less accurate.</div></div>
+        )}
+        <CameraView lib={lib} active={active} settings={settings} busy={busy} paused={sheetOpen} flash={flash} rearmKey={rearmKey}
+          onCapture={onCapture} onError={showError} />
+        {(busy || last) && <ResultCard busy={busy} last={last} onPick={() => openPickerFor(last?.scan, last?.result, { payload: last?.payload })}
+          onConfirm={() => last?.scan?.id && patchScan(last.scan.id, { printing_id: last.scan.printing_id }, { status: "auto" })}
+          onIncrement={() => last?.scan?.id && increment(last.scan.id)} onForce={forceAdd} onUndo={undo}
+          onResend={() => last?.payload && postScan(last.payload, last.preview)}
+          onRetry={() => {
+            // A rescan replaces the open review row of this card instead of adding a second one.
+            replaceRef.current = last?.scan?.id && ["review", "failed"].includes(last.kind) ? last.scan.id : null;
+            setLast(null); bumpRearm();
+          }} onSearch={() => setSheet({ type: "manual" })} />}
+
+        <div className="scan-settings">
+          <div className="segmented" role="group" aria-label="Foil">
+            {[["auto", "Auto"], ["nonfoil", "Non-foil"], ["foil", "✦ Foil"]].map(([k, l]) => (
+              <button key={k} type="button" aria-pressed={settings.foil === k} onClick={() => setSetting("foil", k)}>{l}</button>
+            ))}
+          </div>
+          <label className="sr-only" htmlFor="scan-lang">Store cards as language</label>
+          <select id="scan-lang" className="select" value={settings.storageLang} onChange={(e) => setSetting("storageLang", e.target.value)} title="Store scanned cards in this language">
+            {SCAN_LANGS.map(([k, l]) => <option key={k} value={k}>Store as {l}</option>)}
+          </select>
+          <label className="switch"><input type="checkbox" checked={settings.auto} onChange={(e) => setSetting("auto", e.target.checked)} /> Auto-scan</label>
+        </div>
+        <details className="disclosure">
+          <summary>More scan settings{settings.calibration ? " · calibration on" : ""}</summary>
+          <div className="settings-grid">
+            <div className="field">
+              <label htmlFor="scan-cond">Condition for new scans</label>
+              <select id="scan-cond" className="select" value={settings.condition} onChange={(e) => setSetting("condition", e.target.value)}>
+                {CONDITIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="scan-set">Set hint (optional)</label>
+              <input id="scan-set" className="input" placeholder="e.g. dmu" maxLength={8} autoCapitalize="off" autoCorrect="off" spellCheck="false"
+                value={settings.setHint} onChange={(e) => setSetting("setHint", e.target.value.replace(/[^a-z0-9]/gi, ""))} />
+            </div>
+            <label className="switch"><input type="checkbox" checked={settings.sound} onChange={(e) => setSetting("sound", e.target.checked)} /> Beep on scan</label>
+            <label className="switch"><input type="checkbox" checked={settings.photo} onChange={(e) => setSetting("photo", e.target.checked)} /> Full-resolution photo (Android)</label>
+            <label className="switch" style={{ gridColumn: "1 / -1" }}><input type="checkbox" checked={settings.calibration} onChange={(e) => setSetting("calibration", e.target.checked)} /> Calibration mode: confirm the true printing after each scan</label>
+          </div>
+        </details>
+      </div>
+
+      <div className="scan-side">
+
+        <div className="list-head">
+          <h2 style={{ fontSize: "1.1rem" }}>Scanned {list.length > 0 && <span className="muted small">{plural(list.length, "card")} · {plural(copies, "copy", "copies")}</span>}</h2>
+          <div className="row">
+            <button type="button" className="btn sm" onClick={() => setSheet({ type: "manual" })}><Icon.plus /> Add by name</button>
+            <button type="button" className="btn sm" onClick={undo} disabled={!list.length}><Icon.undo /> Undo</button>
+          </div>
+        </div>
+        <ErrorNotice error={listError} onRetry={loadScans} />
+        {!scans && !listError && <Spinner />}
+        {scans && list.length === 0 && !listError && (
+          <div className="empty card"><h3>No scans yet</h3><p style={{ margin: 0 }}>Scanned cards collect here. Check them, then add them to a binder or a deck.</p></div>
+        )}
+        {list.length > 0 && (
+          <>
+            <label className="switch"><input type="checkbox" checked={allSelected} onChange={(e) => setSelected(e.target.checked ? new Set(list.map((s) => s.id)) : new Set())} /> Select all</label>
+            <div className="scan-list">
+              {list.map((s) => (
+                <ScanRow key={s.id} s={s} status={statusOf(s)} selected={selected.has(s.id)}
+                  onSelect={(on) => setSelected((sel) => { const n = new Set(sel); if (on) n.add(s.id); else n.delete(s.id); return n; })}
+                  onPatch={(body) => patchScan(s.id, body)} onDelete={() => deleteScan(s.id)} onIncrement={() => increment(s.id)}
+                  onPick={() => openPickerFor(s, null, { payload: last?.scan?.id === s.id ? last.payload : null })} onConfirm={() => patchScan(s.id, { printing_id: s.printing_id }, { status: "auto" })} />
+              ))}
+            </div>
+            <div className="commit-bar">
+              <span className="grow small">{selIds.length ? `${plural(selIds.length, "scan")} selected` : `${plural(committable.length, "scan")} ready`}
+                {!selIds.length && committable.length < list.length && <span className="muted"> · {list.length - committable.length} need a pick</span>}
+                {selIds.length > selCommit.length && <span className="muted"> · {selIds.length - selCommit.length} need a pick first</span>}</span>
+              <button type="button" className="btn primary" disabled={!commitIds.length} onClick={() => setSheet({ type: "commit", ids: commitIds })}>
+                Add {selIds.length ? "selected" : "all"} to…
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {sheet?.type === "pick" && (
+        <PrintingPicker title={sheet.scan?.name ? `Which printing? ${sheet.scan.name}` : "Which card is it?"} candidates={sheet.candidates}
+          oracleId={sheet.oracleId} lang={sheet.lang} currentId={sheet.scan?.printing_id} strips={sheet.strips} onPick={onPicked} onClose={() => setSheet(null)} />
+      )}
+      {sheet?.type === "manual" && (
+        <PrintingPicker title="Add a card by name" startInSearch lang="" onPick={onPicked} onClose={() => setSheet(null)} />
+      )}
+      {sheet?.type === "commit" && (
+        <CommitSheet ids={sheet.ids} onClose={() => setSheet(null)} onDone={(res, label) => {
+          setSheet(null);
+          setSelected(new Set());
+          const n = res?.committed ?? sheet.ids.length;
+          setToast({ text: `Added ${typeof n === "number" ? plural(n, "scan") : "scans"} to ${label}` });
+          setLast(null);
+          loadScans();
+          onCommitted?.();
+        }} />
+      )}
+      {sheet?.type === "truth" && (
+        <TruthSheet entry={sheet.entry} onClose={() => setSheet(null)}
+          onDone={(msg) => { setSheet(null); setToast({ text: msg }); }}
+          onPickNeeded={(finish) => openPickerFor(sheet.entry.scan, sheet.entry.result, { truthFinish: finish, payload: sheet.entry.payload })} />
+      )}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite">
+          <span>{toast.text}</span>
+          <button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setToast(null)} style={{ textDecoration: "none" }}><Icon.close /></button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResultCard({ busy, last, onPick, onConfirm, onIncrement, onForce, onResend, onUndo, onRetry, onSearch }) {
+  if (busy) {
+    return (
+      <div className="result st-busy" role="status" aria-live="polite">
+        {last?.preview ? <img className="th" src={last.preview} alt="" /> : <span className="th" />}
+        <div className="body"><span className="nm">Identifying…</span><span className="small muted">Reading the collector line and matching the art.</span><div className="progress" aria-hidden="true" /></div>
+      </div>
+    );
+  }
+  if (!last) return null;
+  const { kind, scan, result: r = {} } = last;
+  if (kind === "error") {
+    return (
+      <div className="result st-error" role="alert">
+        {last.preview ? <img className="th" src={last.preview} alt="" /> : <span className="th" />}
+        <div className="body"><span className="nm">Scan failed</span><span className="small">{last.error}</span></div>
+        <div className="actions">
+          {last.payload && <button type="button" className="btn sm" onClick={onResend}>Send again</button>}
+          <button type="button" className="btn sm" onClick={onRetry}><Icon.camera /> Rescan</button>
+        </div>
+      </div>
+    );
+  }
+  const store_ = normPrinting(r.store || r.printing) || (scan ? normPrinting({ ...scan, id: scan.store_printing_id || scan.printing_id }) : null);
+  const name = scan?.name || store_?.name || "Unknown card";
+  const thumb = (scan && scanThumb(scan)) || store_?.imgSmall || last.preview;
+  const ld = (r.lang_detected || scan?.lang_detected || "").toUpperCase(), ls = (scan?.store_lang || r.store?.lang || "").toUpperCase();
+  const finish = normFinish(r.finish || scan?.finish);
+  return (
+    <div className={`result st-${kind}`} role="status" aria-live="polite">
+      {thumb ? <img className="th" src={thumb} alt="" /> : <span className="th" />}
+      <div className="body">
+        <span className="row" style={{ gap: 6 }}><span className={`badge st-chip ${kind}`}>{STATUS_LABEL[kind] || kind}</span>{r.claude_used && <span className="badge accent">✦ Claude</span>}</span>
+        <span className="nm">{kind === "failed" && !scan ? "Card not recognised" : name}</span>
+        {store_ && (scan || kind !== "failed") && (
+          <span className="small muted">{printingLabel(store_)}{ld && ls && ld !== ls ? ` · read ${ld}, stored ${ls}` : ""} · {FINISH_LABEL[finish] || finish}</span>
+        )}
+        {kind === "duplicate" && <span className="small">Same printing as your last scan, so it was not added again.</span>}
+        {kind === "suggest" && <span className="small">Probably right: please confirm.</span>}
+        {kind === "review" && <span className="small">Not sure: pick the right printing.</span>}
+      </div>
+      <div className="actions">
+        {kind === "duplicate" && scan?.id && <button type="button" className="btn sm primary" onClick={onIncrement}><Icon.plus /> +1 copy</button>}
+        {kind === "duplicate" && last.payload && <button type="button" className="btn sm" onClick={onForce}>Different card, add it</button>}
+        {kind === "suggest" && scan?.id && <button type="button" className="btn sm primary" onClick={onConfirm}><Icon.check /> Confirm</button>}
+        {(kind === "suggest" || kind === "review" || ((kind === "auto") && jsonArr(r.variants || scan?.variants).length > 0)) && (
+          <button type="button" className={`btn sm${kind === "review" ? " primary" : ""}`} onClick={onPick}>{kind === "auto" ? "variant?" : "Pick printing"}</button>
+        )}
+        {kind === "failed" && <button type="button" className="btn sm primary" onClick={onSearch}><Icon.search /> Find by name</button>}
+        {(kind === "failed" || kind === "review") && <button type="button" className="btn sm" onClick={onRetry}><Icon.camera /> Rescan</button>}
+        {(kind === "auto" || kind === "suggest") && scan?.id && <button type="button" className="btn sm" onClick={onIncrement}><Icon.plus /> +1</button>}
+        {scan?.id && kind !== "duplicate" && <button type="button" className="btn sm danger undo-btn" onClick={onUndo} style={{ marginLeft: "auto" }}><Icon.undo /> Undo</button>}
+      </div>
+    </div>
+  );
+}
+
+// ===========================================================================
+// Binders (collection tab) and scanner index (import tab)
+// ===========================================================================
+
+function BinderBar({ dataVersion, tokens, onToggle, onChanged }) {
+  const [binders, setBinders] = useState(null);
+  const [error, setError] = useState(null);
+  const [editing, setEditing] = useState(null); // {name, value}
+  const load = useCallback(() => {
+    api("/api/binders").then((d) => { setBinders(asList(d, "binders")); setError(null); })
+      .catch((e) => { setBinders(null); setError(e.status === 404 ? null : e.message); });
+  }, []);
+  useEffect(load, [load, dataVersion]);
+  if (!binders || binders.length === 0) return error ? <ErrorNotice error={`Could not load binders: ${error}`} onRetry={load} /> : null;
+  const named = binders.filter((b) => b.name);
+  const term = (name) => `b:"${name}"`;
+  const rename = async (e) => {
+    e.preventDefault();
+    const to = editing.value.trim();
+    if (!to || to === editing.name) { setEditing(null); return; }
+    try {
+      await api(`/api/binders/${encodeURIComponent(editing.name)}`, { method: "PATCH", json: { name: to } });
+      setEditing(null);
+      onChanged?.();
+      load();
+    } catch (err) { setError(err.message); }
+  };
+  const removeScanned = async (b) => {
+    if (!window.confirm(`Remove the scanned cards from the binder "${b.name}"? Cards imported from ManaBox stay.`)) return;
+    try {
+      await api(`/api/binders/${encodeURIComponent(b.name)}?source=scan`, { method: "DELETE" });
+      onChanged?.();
+      load();
+    } catch (err) { setError(err.message); }
+  };
+  return (
+    <div className="binder-bar">
+      {named.length > 0 && (
+        <div className="chips" role="group" aria-label="Binders">
+          {named.map((b) => (
+            <button key={b.name} type="button" className="chip" aria-pressed={tokens.some((t) => t.toLowerCase() === term(b.name).toLowerCase())}
+              onClick={() => onToggle(term(b.name))}>
+              <Icon.collection /> {b.name} <span className="muted" style={{ fontWeight: 600 }}>{fmtInt(b.copies ?? b.cards)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <details className="disclosure">
+        <summary>Manage binders</summary>
+        {error && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
+        <div style={{ marginTop: 6 }}>
+          {binders.map((b) => {
+            const sources = [].concat(b.sources || []).flatMap((x) => String(x).split(",")).filter(Boolean);
+            return (
+              <div key={b.name || "(none)"} className="binder-row">
+                {editing?.name === b.name ? (
+                  <form className="row grow" onSubmit={rename}>
+                    <input className="input grow" style={{ flexBasis: 160 }} aria-label="New binder name" autoFocus maxLength={120}
+                      value={editing.value} onChange={(e) => setEditing({ ...editing, value: e.target.value })} />
+                    <button type="submit" className="btn sm primary">Save</button>
+                    <button type="button" className="btn sm ghost" onClick={() => setEditing(null)}>Cancel</button>
+                  </form>
+                ) : (
+                  <>
+                    <span className="grow"><b>{b.name || "(no binder)"}</b> <span className="muted small">{plural(b.copies ?? 0, "copy", "copies")} · {plural(b.cards ?? 0, "card")}</span></span>
+                    {sources.map((s) => <SourceBadge key={s} source={s} />)}
+                    {b.name && !sources.includes("manabox") && <button type="button" className="btn sm ghost" onClick={() => setEditing({ name: b.name, value: b.name })}><Icon.edit /> Rename</button>}
+                    {b.name && sources.includes("scan") && <button type="button" className="btn sm danger" onClick={() => removeScanned(b)}><Icon.trash /> Scanned</button>}
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function JobLine({ label, job }) {
+  if (!job || typeof job !== "object") return null;
+  const state = job.state || job.status || (job.running ? "running" : job.error ? "error" : job.finished_at || job.done_at ? "done" : "idle");
+  const done = job.done ?? job.processed ?? job.progress ?? null, total = job.total ?? null;
+  const pct = total ? Math.min(100, Math.round((Number(done) || 0) * 100 / total)) : null;
+  return (
+    <div className="stack" style={{ gap: 4 }}>
+      <div className="row between small">
+        <span><b>{label}</b> <span className={`badge ${state === "running" || state === "queued" ? "accent" : state === "error" || state === "failed" ? "bad" : state === "done" ? "ok" : ""}`}>{state}</span></span>
+        {total ? <span className="muted">{fmtInt(done)} / {fmtInt(total)}{job.phase ? ` · ${job.phase}` : ""}</span> : job.phase ? <span className="muted">{job.phase}</span> : null}
+      </div>
+      {pct != null && <div className="meter" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label={`${label} progress`}><span style={{ width: `${pct}%` }} /></div>}
+      {job.error && <span className="small" style={{ color: "var(--bad)" }}>{String(job.error)}</span>}
+    </div>
+  );
+}
+
+/** Short text for a scheduler step result ({ran}, {skipped}, {error}, ...). */
+function schedResult(x) {
+  if (x == null) return null;
+  if (typeof x !== "object") return String(x);
+  if (x.error) return `error: ${x.error}`;
+  if (x.skipped) return `skipped (${x.skipped})`;
+  if (x.ran || x.started) return "ran";
+  if (x.status) return String(x.status);
+  return null;
+}
+
+/**
+ * Scheduler block of /api/index/status: {enabled, hour, next_run,
+ * last_index_refresh, last_index_check, last_index_result, last_price_refresh,
+ * last_run: {at, index, prices}, running}. Read defensively: missing fields hide.
+ */
+function readScheduler(st) {
+  const sch = st?.scheduler;
+  if (!sch || typeof sch !== "object") return null;
+  const lasts = [];
+  const add = (label, at, note = null) => { if (at != null && at !== "") lasts.push({ label, at, note }); };
+  add("Card data refreshed", sch.last_index_refresh);
+  add("Scryfall bulk data checked", sch.last_index_check, schedResult(sch.last_index_result));
+  add("Prices refreshed", sch.last_price_refresh);
+  const lr = sch.last_run && typeof sch.last_run === "object" ? sch.last_run : null;
+  if (lr) {
+    const parts = [["card data", lr.index], ["prices", lr.prices]].map(([k, v]) => (schedResult(v) ? `${k}: ${schedResult(v)}` : null)).filter(Boolean);
+    add("Last nightly run", lr.at, parts.join(" · ") || null);
+  }
+  return {
+    enabled: sch.enabled !== false, hour: sch.hour ?? null, next: sch.next_run ?? null,
+    running: typeof sch.running === "string" ? sch.running : sch.running ? "running" : null, lasts,
+  };
+}
+
+function SchedulerInfo({ st }) {
+  const sc = readScheduler(st);
+  if (!sc) return null;
+  return (
+    <div className="sched" aria-label="Automatic refresh">
+      <div className="row">
+        <b>Automatic refresh</b>
+        <span className={`badge ${sc.enabled ? "ok" : ""}`}>{sc.enabled ? "on" : "off"}</span>
+        {sc.running && <span className="badge accent">running: {sc.running}</span>}
+        {sc.enabled && sc.hour != null && <span className="muted small">nightly at {String(sc.hour).padStart(2, "0")}:00 server time</span>}
+      </div>
+      {sc.enabled && sc.next && (
+        <div className="row"><span className="muted">Next scheduled check</span> <b title={fmtDate(sc.next)}>{fmtAgo(sc.next)}</b></div>
+      )}
+      {sc.lasts.map((l) => (
+        <div key={l.label} className="row">
+          <span className="muted">{l.label}</span>
+          <b title={fmtDate(l.at)}>{fmtAgo(l.at)}</b>
+          {l.note && <span className={`small ${/^error|error:/.test(l.note) ? "" : "muted"}`} style={{ overflowWrap: "anywhere", color: /error/.test(l.note) ? "var(--bad)" : undefined }}>{l.note}</span>}
+        </div>
+      ))}
+      {!sc.enabled && <span className="small muted">The nightly index and price refresh is turned off on the server (SCHEDULER_ENABLED=false).</span>}
+    </div>
+  );
+}
+
+function ScannerIndexPanel({ health }) {
+  const [st, setSt] = useState(null);
+  const [error, setError] = useState(null);
+  const [missing, setMissing] = useState(false);
+  const [busy, setBusy] = useState(null);
+  const load = useCallback(async () => {
+    try { setSt(await api("/api/index/status")); setError(null); }
+    catch (e) { if (e.status === 404) setMissing(true); else setError(e.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const jobs = st ? [["Card index", st.refresh_job || st.index_job || st.metadata_job || st.job], ["Fingerprints", st.fingerprint_job]] : [];
+  const running = jobs.some(([, j]) => j && (j.running || ["running", "queued"].includes(j.state || j.status)));
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, [running, load]);
+  const start = async (path, label) => {
+    setBusy(label); setError(null);
+    try { await api(path, { method: "POST", json: {} }); await load(); }
+    catch (e) { setError(e.message); } finally { setBusy(null); }
+  };
+  if (missing) return null;
+  const sc = health?.scanner;
+  return (
+    <section className="card stack" aria-labelledby="index-title">
+      <h2 id="index-title">Scanner index</h2>
+      <p className="small muted" style={{ margin: 0 }}>The scanner identifies cards against a local copy of Scryfall's card data and art fingerprints. It refreshes on its own at night; use the buttons after a new set comes out.</p>
+      <ErrorNotice error={error} onRetry={load} />
+      {!st && !error && <Spinner />}
+      {st && (
+        <>
+          <div className="summary-grid">
+            <div className="stat"><div className="v">{fmtInt(st.printings)}</div><div className="k">Printings</div></div>
+            <div className="stat"><div className="v">{fmtInt(st.sets)}</div><div className="k">Sets</div></div>
+            <div className="stat"><div className="v">{fmtInt(typeof st.fingerprints === "object" ? st.fingerprints?.count : st.fingerprints)}</div><div className="k">Fingerprints</div></div>
+            <div className="stat"><div className="v" style={{ fontSize: "1rem" }} title={st.last_refresh ? fmtDate(st.last_refresh) : undefined}>{st.last_refresh ? fmtAgo(st.last_refresh) : "never"}</div><div className="k">Last refresh</div></div>
+          </div>
+          {jobs.map(([label, job]) => <JobLine key={label} label={label} job={job} />)}
+          <SchedulerInfo st={st} />
+        </>
+      )}
+      {sc && (
+        <div className="kv-inline">
+          <span>OCR <span className={`badge ${sc.tesseract ? "ok" : "bad"}`}>{sc.tesseract ? "✓ tesseract" : "✗ tesseract"}</span></span>
+          <span>JPEG <span className={`badge ${sc.djpeg ? "ok" : "bad"}`}>{sc.djpeg ? "✓ djpeg" : "✗ djpeg"}</span></span>
+        </div>
+      )}
+      <div className="row">
+        <button type="button" className="btn" disabled={Boolean(busy) || running} onClick={() => start("/api/index/refresh", "refresh")}>
+          {busy === "refresh" ? <><span className="spinner" aria-hidden="true" /> Starting…</> : <><Icon.refresh /> Refresh index</>}
+        </button>
+        <button type="button" className="btn" disabled={Boolean(busy) || running} onClick={() => start("/api/index/fingerprints", "fp")}>
+          {busy === "fp" ? <><span className="spinner" aria-hidden="true" /> Starting…</> : <><Icon.sparkle /> Build fingerprints</>}
+        </button>
+      </div>
+      <details className="disclosure">
+        <summary>Calibration data</summary>
+        <div className="stack" style={{ marginTop: 6 }}>
+          <p className="small muted" style={{ margin: 0 }}>Scans made in calibration mode keep their scores, OCR output and the printing you confirmed. Export them to tune the scanner thresholds.</p>
+          <a className="btn" href="/api/calibration/export" download="mtg-scan-calibration.json" style={{ justifySelf: "start" }}><Icon.download /> Export calibration (JSON)</a>
+        </div>
+      </details>
+    </section>
+  );
+}
+
+// ===========================================================================
 // App shell
 // ===========================================================================
 
 const TABS = [
+  { id: "scan", label: "Scan", icon: Icon.scan },
   { id: "collection", label: "Collection", icon: Icon.collection },
   { id: "decks", label: "Decks", icon: Icon.decks },
   { id: "planner", label: "Planner", icon: Icon.planner },
@@ -2311,7 +4153,9 @@ function App() {
         </nav>
       </header>
       <main>
-        {panel("collection", <CollectionTab dataVersion={dataVersion} onOpenCard={setCardId} onGoImport={() => switchTab("import")} />)}
+        {panel("scan", <ScanTab active={tab === "scan"} health={health} onCommitted={onImported} />)}
+        {panel("collection", <CollectionTab dataVersion={dataVersion} onOpenCard={setCardId} onGoImport={() => switchTab("import")}
+          onGoScan={() => switchTab("scan")} onChanged={onImported} />)}
         {panel("decks", <DecksTab dataVersion={deckVersion} deckId={deck.id} deckNotice={deck.notice} onOpenDeck={openDeck}
           onOpenCard={setCardId} onAsk={askAboutDeck} onChanged={bumpDecks} />)}
         {panel("planner", <PlannerTab active={tab === "planner"} health={health} request={plannerRequest}

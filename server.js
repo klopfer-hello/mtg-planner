@@ -1,19 +1,33 @@
 // mtg-planner web server: JSON API, ManaBox CSV import, decks, Claude chat
-// (Server-Sent Events) and the static single-page app. Node stdlib only.
+// (Server-Sent Events), the card scanner (identify + staging + commit, local
+// card index jobs) and the static single-page app. Node stdlib only.
 //
 // Unauthenticated by design: meant for a trusted LAN (see README "Security").
 
 import http from "node:http";
 import crypto from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
-import { cardPrice, openDb, stats } from "./lib/db.js";
+import { cardPrice, getAppMeta, openDb, setAppMeta, stats } from "./lib/db.js";
 import { QUERY_HELP, searchCollection } from "./lib/query.js";
 import { importManaBoxCsv, refreshOwnedCards } from "./lib/manabox.js";
-import { deckDetail, exportDeck, listDecks, parseDecklist, saveDeck } from "./lib/decks.js";
-import { MAX_CONCURRENT, claudeConfigured, killAll, prepareMcpConfig, runTurn } from "./lib/claude.js";
+import { DeckError, deckDetail, exportDeck, listDecks, normalizeFormat, parseDecklist, saveDeck, setCommander, updateDeckCard } from "./lib/decks.js";
+import * as claudeLib from "./lib/claude.js";
+import { MAX_CONCURRENT, activeClaudeRuns, claudeConfigured, killAll, prepareMcpConfig, runTurn, runVision, visionCap } from "./lib/claude.js";
+import {
+  checkpointIndex, fetchBulkInfo, getMeta, getPrinting, indexStatus, openIndex, printingsOf, refreshIndex, refreshIndexInWorker, searchTitle,
+  setMeta, storagePrinting, variantsOf,
+} from "./lib/cardindex.js";
+import { createScheduler, schedulerConfig } from "./lib/scheduler.js";
+import { Matcher, buildFingerprints, checkJpegSize } from "./lib/fingerprint.js";
+import { ocrTools } from "./lib/ocr.js";
+import { decideFinish, identify, printingSummary } from "./lib/scanner.js";
+import {
+  CONDITIONS, ScanError, commitScans, normFinish, deleteBinder, deleteScan, exportCalibration, getScan, incrementScan, listBinders,
+  listScans, recordTruth, renameBinder, scanImagePath, scanStripPath, stageScan, undoLast, updateScan,
+} from "./lib/scans.js";
 
 const PORT = Number(process.env.PORT) || 8080;
 const STATIC_DIR = path.resolve(process.env.STATIC_DIR || "/app/public");
@@ -21,8 +35,30 @@ const VERSION = process.env.APP_VERSION || "dev";
 const JSON_LIMIT = 1024 * 1024;
 const CSV_LIMIT = 25 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 20000;
+const SCAN_LIMIT = 12 * 1024 * 1024;
+const SCAN_MAX_CONCURRENT = Math.max(1, Number(process.env.SCAN_MAX_CONCURRENT) || 2);
+const STORAGE_LANGS = ["en", "de", "fr", "it", "es", "pt", "ja", "ko", "ru", "zhs", "zht"];
+const INDEX_FILE = process.env.INDEX_DB_FILE || "/data/cardindex.db";
+// Declared JPEG size caps for uploads (djpeg writes the full declared raster).
+const MAX_CARD_PIXELS = 6_000_000; // the browser sends 1000x1400
+const MAX_STRIP_PIXELS = 20_000_000;
 
 const db = openDb();
+
+// The scanner's card index lives in its own SQLite file; the app keeps
+// working (minus scanning) if it can't be opened.
+let idx = null;
+let matcher = null;
+try {
+  idx = openIndex(INDEX_FILE);
+  matcher = new Matcher(idx);
+  // The hourly Claude vision cap survives restarts (best effort).
+  try { visionCap.restore(JSON.parse(getMeta(idx, "vision_calls") || "[]")); } catch { /* fresh window */ }
+  // Skipped while the refresh worker holds the index's write lock (a busy wait would block the event loop).
+  visionCap.persistWith((stamps) => { if (indexJob.running?.kind !== "refresh") setMeta(idx, "vision_calls", JSON.stringify(stamps)); });
+} catch (err) {
+  console.warn(`[scanner] card index unavailable: ${err.message}`);
+}
 
 // ---------------------------------------------------------------------------
 // HTTP helpers
@@ -87,9 +123,9 @@ function readBody(req, limit) {
   });
 }
 
-async function readJson(req) {
+async function readJson(req, limit = JSON_LIMIT) {
   requireContentType(req, "application/json");
-  const buf = await readBody(req, JSON_LIMIT);
+  const buf = await readBody(req, limit);
   if (buf.length === 0) return {};
   let body;
   try { body = JSON.parse(buf.toString("utf8")); } catch { throw new HttpError(400, "Invalid JSON body"); }
@@ -201,7 +237,7 @@ async function createDeck(req) {
   try {
     saved = await saveDeck(db, {
       name,
-      format: optString(body.format, "format", 50) || null,
+      format: normalizeFormat(optString(body.format, "format", 50)),
       description: optString(body.description, "description", 5000) || null,
       source: "manual",
       items,
@@ -218,11 +254,29 @@ async function patchDeck(req, id) {
   const body = await readJson(req);
   const name = body.name === undefined ? deck.name : optString(body.name, "name", 200);
   if (!name) throw new HttpError(400, "name must not be empty");
-  const format = body.format === undefined ? deck.format : optString(body.format, "format", 50) || null;
+  const format = body.format === undefined ? deck.format : normalizeFormat(optString(body.format, "format", 50));
   const description = body.description === undefined ? deck.description : optString(body.description, "description", 5000) || null;
   db.prepare("UPDATE decks SET name = ?, format = ?, description = ?, updated_at = datetime('now') WHERE id = ?")
     .run(name, format, description, id);
   return db.prepare("SELECT * FROM decks WHERE id = ?").get(id);
+}
+
+const deckCall = (fn) => { try { return fn(); } catch (err) { throw err instanceof DeckError ? new HttpError(err.status, err.message) : err; } };
+
+/** PATCH /api/decks/:id/cards {name, board, to_board?, quantity?} -> deck detail + change. */
+async function patchDeckCard(req, id) {
+  const body = await readJson(req);
+  const change = deckCall(() => updateDeckCard(db, id, {
+    name: optString(body.name, "name", 300), board: body.board, to_board: body.to_board ?? null, quantity: body.quantity ?? null,
+  }));
+  return { ...getDeckOr404(id), change };
+}
+
+/** POST /api/decks/:id/commander {name, replace?} -> deck detail + change. */
+async function postCommander(req, id) {
+  const body = await readJson(req);
+  const change = deckCall(() => setCommander(db, id, { name: optString(body.name, "name", 300), replace: optString(body.replace, "replace", 300) }));
+  return { ...getDeckOr404(id), change };
 }
 
 function exportFilename(name) {
@@ -269,7 +323,7 @@ async function postMessage(req, res, chatId) {
   if (!text) throw new HttpError(400, "text is required");
   if (!claudeConfigured()) throw new HttpError(503, "Claude is not configured: set CLAUDE_CODE_OAUTH_TOKEN");
   if (runs.has(chatId)) throw new HttpError(409, "This chat is already answering; wait for it to finish");
-  if (runs.size >= MAX_CONCURRENT) throw new HttpError(429, `Too many Claude runs in progress (max ${MAX_CONCURRENT}); try again shortly`);
+  if (runs.size + activeClaudeRuns().vision >= MAX_CONCURRENT) throw new HttpError(429, `Too many Claude runs in progress (max ${MAX_CONCURRENT}); try again shortly`);
 
   const controller = new AbortController();
   runs.set(chatId, controller);
@@ -343,6 +397,366 @@ async function postMessage(req, res, chatId) {
 }
 
 // ---------------------------------------------------------------------------
+// Scanner: card index jobs, identification, staging list, binders
+
+/** ScanError (lib/scans.js) -> HttpError; everything else passes through. */
+function scanErr(err) {
+  if (err instanceof ScanError) return new HttpError(err.status, err.message);
+  return err;
+}
+const scanCall = (fn) => { try { return fn(); } catch (err) { throw scanErr(err); } };
+
+function requireIndex() {
+  if (!idx) throw new HttpError(503, "The card index is not available");
+  return idx;
+}
+
+let indexReadyCache = false;
+function indexReady() {
+  if (!idx) return false;
+  if (indexReadyCache) return true;
+  try { indexReadyCache = Boolean(idx.prepare("SELECT 1 FROM printings LIMIT 1").get()); } catch { indexReadyCache = false; }
+  return indexReadyCache;
+}
+
+/** The matcher, only once it has fingerprints (else hashing a scan is wasted work). */
+function readyMatcher() {
+  if (!matcher) return null;
+  try {
+    matcher.ensureLoaded();
+    return matcher.size > 0 ? matcher : null;
+  } catch (err) {
+    console.warn(`[scanner] fingerprints unavailable: ${err.message}`);
+    return null;
+  }
+}
+
+// Background index jobs, one at a time, in-process.
+const indexJob = { running: null, last: null, controller: null };
+
+function startIndexJob(kind, { then = null } = {}) {
+  requireIndex();
+  if (indexJob.running) throw new HttpError(409, `The ${indexJob.running.kind} job is already running`);
+  const controller = new AbortController();
+  const state = { kind, state: "running", running: true, started_at: new Date().toISOString(), progress: null };
+  indexJob.running = state;
+  indexJob.controller = controller;
+  // Progress objects (done/total/phase/...) are flattened for the UI.
+  const onProgress = (p) => {
+    state.progress = p;
+    if (p && typeof p === "object") for (const [k, v] of Object.entries(p)) if (!["kind", "state", "running"].includes(k)) state[k] = v;
+  };
+  // The refresh runs in a worker thread (its finalize step is seconds of
+  // synchronous SQLite work); an in-memory index can only refresh in-process.
+  const source = process.env.INDEX_BULK_SOURCE || undefined;
+  const work = kind === "refresh"
+    ? (INDEX_FILE === ":memory:"
+      ? refreshIndex(idx, { signal: controller.signal, onProgress, source })
+      : refreshIndexInWorker(INDEX_FILE, { signal: controller.signal, onProgress, source }))
+    : buildFingerprints(idx, { signal: controller.signal, onProgress });
+  console.log(`[scanner] ${kind} job started`);
+  const finished = work.then(
+    (result) => {
+      indexJob.last = { kind, ok: true, state: "done", finished_at: new Date().toISOString(), result: result ?? null };
+      console.log(`[scanner] ${kind} job finished`);
+      return indexJob.last;
+    },
+    (err) => {
+      indexJob.last = { kind, ok: false, state: "error", finished_at: new Date().toISOString(), error: err.message };
+      console.warn(`[scanner] ${kind} job failed: ${err.message}`);
+      return indexJob.last;
+    },
+  ).finally(() => {
+    indexJob.running = null;
+    indexJob.controller = null;
+    indexReadyCache = false;
+  });
+  // `done` settles when this job and its follow-up (`then`) are finished; it
+  // rejects when either fails. Not enumerable: state is sent to the UI as JSON.
+  const done = finished.then((last) => {
+    if (!last.ok) throw new Error(`${kind}: ${last.error}`);
+    if (kind === "refresh" && then && !shuttingDown) {
+      let next;
+      try { next = startIndexJob(then); } catch (err) { console.warn(`[scanner] could not start ${then}: ${err.message}`); throw err; }
+      return next.done;
+    }
+    return last;
+  });
+  done.catch(() => { /* reported via indexJob.last */ });
+  Object.defineProperty(state, "done", { value: done, enumerable: false });
+  return state;
+}
+
+function autoIndex() {
+  if (!idx || process.env.SCAN_AUTO_INDEX === "false") return;
+  try {
+    const st = indexStatus(idx);
+    if (!st.printings) startIndexJob("refresh", { then: "fingerprints" });
+    // Not finished (interrupted by a restart or redeploy, which leaves it
+    // 'paused' or 'running', stopped by errors, or never started): resume.
+    // Already-hashed groups are skipped, so this is cheap when little is left.
+    else if (st.fingerprint_job?.state !== "done") startIndexJob("fingerprints");
+  } catch (err) {
+    console.warn(`[scanner] automatic index build not started: ${err.message}`);
+  }
+}
+
+function decodeImage(v, field, { required = true, maxPixels } = {}) {
+  if (v == null || v === "") {
+    if (required) throw new HttpError(400, `${field} is required (base64 JPEG)`);
+    return null;
+  }
+  if (typeof v !== "string") throw new HttpError(400, `${field} must be a base64 string`);
+  const buf = Buffer.from(v.replace(/^data:image\/jpeg;base64,/, ""), "base64");
+  if (buf.length < 100 || buf[0] !== 0xff || buf[1] !== 0xd8) throw new HttpError(400, `${field} is not a JPEG image`);
+  try {
+    checkJpegSize(buf, maxPixels);
+  } catch (err) {
+    throw new HttpError(400, `${field}: ${err.message}`);
+  }
+  return buf;
+}
+
+function scanSettings(raw = {}) {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) throw new HttpError(400, "settings must be an object");
+  const storageLang = raw.storageLang ?? "en";
+  if (!STORAGE_LANGS.includes(storageLang)) throw new HttpError(400, `settings.storageLang must be one of ${STORAGE_LANGS.join(", ")}`);
+  const foil = raw.foil ?? "auto";
+  if (!["auto", "foil", "nonfoil"].includes(foil)) throw new HttpError(400, "settings.foil must be auto, foil or nonfoil");
+  const setHint = raw.setHint ? String(raw.setHint).trim().toLowerCase() : null;
+  if (setHint && !/^[a-z0-9]{2,8}$/.test(setHint)) throw new HttpError(400, "settings.setHint must be a set code");
+  const condition = raw.condition ?? "near_mint";
+  if (!CONDITIONS.includes(condition)) throw new HttpError(400, `settings.condition must be one of ${CONDITIONS.join(", ")}`);
+  return { storageLang, foil, setHint, condition };
+}
+
+/** identify() result without the bulky calibration features. */
+function resultSummary(r) {
+  return {
+    status: r.status,
+    method: r.method,
+    confidence: r.confidence,
+    finish: r.finish,
+    finishSource: r.finishSource,
+    lang_detected: r.lang_detected,
+    printing: printingSummary(r.printing),
+    store: printingSummary(r.store),
+    candidates: r.candidates,
+    variants: r.variants,
+    claude_used: r.claude_used,
+    claude: r.features?.claude ? { skipped: r.features.claude.skipped ?? null, verdict: r.features.claude.verdict ?? null } : null,
+    reasons: r.features?.local?.reasons ?? [],
+    errors: r.features?.errors ?? [],
+    timings: r.timings,
+  };
+}
+
+let scansInFlight = 0;
+
+async function postScan(req) {
+  const body = await readJson(req, SCAN_LIMIT);
+  requireIndex();
+  if (!indexReady()) throw new HttpError(503, "The card index is still being built; try again when it is ready");
+  const card = decodeImage(body.card, "card", { maxPixels: MAX_CARD_PIXELS });
+  const strip = decodeImage(body.strip, "strip", { required: false, maxPixels: MAX_STRIP_PIXELS });
+  const replaceId = body.replace_id == null ? null : Number(body.replace_id);
+  if (replaceId != null && !(Number.isInteger(replaceId) && replaceId > 0)) throw new HttpError(400, "replace_id must be a scan id");
+  const settings = scanSettings(body.settings ?? {});
+  if (scansInFlight >= SCAN_MAX_CONCURRENT) throw new HttpError(429, "Still identifying the previous scans; try again shortly");
+  scansInFlight++;
+  let result;
+  try {
+    result = await identify(
+      { db, idx, matcher: readyMatcher(), claude: { runVision: claudeConfigured() ? runVision : null, cap: visionCap } },
+      { card, strip, settings: { ...settings, allowClaude: body.allowClaude !== false } },
+    );
+  } finally {
+    scansInFlight--;
+  }
+  const staged = stageScan(db, result, {
+    image: card, strip, force: body.force === true, condition: settings.condition, calibration: body.calibration === true, replaceId,
+  });
+  return { scan: staged.scan, duplicate: staged.duplicate, result: resultSummary(result) };
+}
+
+async function postManualScan(req) {
+  const body = await readJson(req);
+  requireIndex();
+  const printingId = optString(body.printing_id, "printing_id", 64);
+  if (!printingId) throw new HttpError(400, "printing_id is required");
+  const printing = getPrinting(idx, printingId);
+  if (!printing) throw new HttpError(404, "Printing not found");
+  const wanted = normFinish(body.finish);
+  const settings = scanSettings({ storageLang: body.storageLang, condition: body.condition, foil: wanted === "foil" ? "foil" : "auto" });
+  const store = storagePrinting(idx, printing, settings.storageLang) || printing;
+  let finish = decideFinish(store, { foilMode: settings.foil }).finish;
+  if (wanted != null) {
+    if (!["normal", "foil", "etched"].includes(wanted)) throw new HttpError(400, "finish must be normal, foil or etched");
+    finish = wanted;
+  }
+  const quantity = body.quantity == null ? 1 : Number(body.quantity);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) throw new HttpError(400, "quantity must be 1-999");
+  let variants = [];
+  try { variants = variantsOf(idx, printing).map((p) => printingSummary(p)); } catch { variants = []; }
+  const result = {
+    status: "manual", printing, store, finish, finishSource: "user", method: "manual", confidence: 1,
+    candidates: [], variants, quantity, features: { manual: true },
+  };
+  const staged = scanCall(() => stageScan(db, result, { force: true, condition: settings.condition }));
+  // Keep the chosen finish even when it is not listed (the row is the user's call).
+  if (staged.scan && staged.scan.finish !== finish) db.prepare("UPDATE scans SET finish = ? WHERE id = ?").run(finish, staged.scan.id);
+  return getScan(db, staged.scan.id);
+}
+
+function sendScanImage(res, id, kind = "image") {
+  const file = kind === "strip" ? scanStripPath(db, id) : scanImagePath(db, id);
+  if (!file) throw new HttpError(404, `No ${kind} stored for this scan`);
+  return stat(file).then((info) => {
+    res.writeHead(200, { "Content-Type": "image/jpeg", "Content-Length": info.size, "Cache-Control": "private, max-age=3600" });
+    const stream = createReadStream(file);
+    stream.on("error", () => res.destroy());
+    stream.pipe(res);
+  }, () => { throw new HttpError(404, `No ${kind} stored for this scan`); });
+}
+
+async function handleScanApi(req, res, url) {
+  const { pathname, searchParams: query } = url;
+  const method = req.method;
+  let m;
+
+  if (pathname === "/api/scan" && method === "POST") return sendJson(res, 200, await postScan(req));
+  if (pathname === "/api/scans" && method === "GET") {
+    const status = query.get("status") || "staged";
+    if (!["staged", "committed", "all"].includes(status)) throw new HttpError(400, "status must be staged, committed or all");
+    return sendJson(res, 200, listScans(db, { status }));
+  }
+  if (pathname === "/api/scans/undo" && method === "POST") return sendJson(res, 200, undoLast(db));
+  if (pathname === "/api/scans/manual" && method === "POST") return sendJson(res, 201, await postManualScan(req));
+  if (pathname === "/api/scans/commit" && method === "POST") {
+    const body = await readJson(req);
+    const result = await exclusive(() => commitScans(db, body.ids, body.target, { idx }).catch((err) => {
+      throw err instanceof ScanError ? scanErr(err) : importError(err);
+    }));
+    return sendJson(res, 200, result);
+  }
+  if ((m = /^\/api\/scans\/(\d+)(?:\/(image|strip|increment|truth))?$/.exec(pathname))) {
+    const id = Number(m[1]);
+    if (m[2] === "image" || m[2] === "strip") {
+      if (method !== "GET") throw new HttpError(405, "Method not allowed");
+      return sendScanImage(res, id, m[2]);
+    }
+    if (m[2] === "increment") {
+      if (method !== "POST") throw new HttpError(405, "Method not allowed");
+      return sendJson(res, 200, scanCall(() => incrementScan(db, id)));
+    }
+    if (m[2] === "truth") {
+      if (method !== "POST") throw new HttpError(405, "Method not allowed");
+      const body = await readJson(req);
+      return sendJson(res, 200, scanCall(() => recordTruth(db, id, { printing_id: body.printing_id, finish: body.finish }, { idx })));
+    }
+    if (method === "GET") {
+      const scan = getScan(db, id, { features: query.get("features") === "1" });
+      if (!scan) throw new HttpError(404, "Scan not found");
+      return sendJson(res, 200, scan);
+    }
+    if (method === "PATCH") {
+      const body = await readJson(req);
+      const patch = {};
+      for (const k of ["printing_id", "finish", "quantity", "condition", "store_lang", "confirm"]) if (body[k] !== undefined) patch[k] = body[k];
+      return sendJson(res, 200, scanCall(() => updateScan(db, id, patch, { idx })));
+    }
+    if (method === "DELETE") {
+      scanCall(() => deleteScan(db, id));
+      return sendEmpty(res);
+    }
+    throw new HttpError(405, "Method not allowed");
+  }
+
+  if (pathname === "/api/printings" && method === "GET") {
+    requireIndex();
+    const oracleId = query.get("oracle_id");
+    if (!oracleId) throw new HttpError(400, "oracle_id is required");
+    const lang = query.get("lang") || undefined;
+    return sendJson(res, 200, printingsOf(idx, oracleId, { lang }).slice(0, 400).map((p) => printingSummary(p)));
+  }
+  if (pathname === "/api/printings/search" && method === "GET") {
+    requireIndex();
+    const q = (query.get("q") || "").trim().slice(0, 200);
+    if (q.length < 2) return sendJson(res, 200, []);
+    const lang = query.get("lang") || undefined;
+    const hits = searchTitle(idx, q, { lang, limit: 12 });
+    return sendJson(res, 200, hits.map((h) => ({ ...h, printing: printingSummary(getPrinting(idx, h.id)) })));
+  }
+
+  if (pathname === "/api/binders" && method === "GET") return sendJson(res, 200, listBinders(db));
+  if ((m = /^\/api\/binders\/(.+)$/.exec(pathname))) {
+    let name;
+    try { name = decodeURIComponent(m[1]); } catch { throw new HttpError(400, "Bad binder name"); }
+    if (method === "PATCH") {
+      const body = await readJson(req);
+      return sendJson(res, 200, await exclusive(async () => scanCall(() => renameBinder(db, name, body.name))));
+    }
+    if (method === "DELETE") {
+      const source = query.get("source") || "scan";
+      if (source !== "scan") throw new HttpError(400, "Only scanned rows (source=scan) can be deleted here; ManaBox rows follow the ManaBox import");
+      return sendJson(res, 200, await exclusive(async () => deleteBinder(db, name, { source })));
+    }
+    throw new HttpError(405, "Method not allowed");
+  }
+
+  if (pathname === "/api/index/status" && method === "GET") {
+    requireIndex();
+    return sendJson(res, 200, {
+      ...indexStatus(idx),
+      job: indexJob.running,
+      last_job: indexJob.last,
+      refresh_job: indexJob.running?.kind === "refresh" ? indexJob.running : indexJob.last?.kind === "refresh" ? indexJob.last : null,
+      claude: { configured: claudeConfigured(), per_hour: visionCap.limit, remaining: visionCap.remaining() },
+      scheduler: scheduler.status(),
+    });
+  }
+  if (pathname === "/api/index/refresh" && method === "POST") return sendJson(res, 202, { started: startIndexJob("refresh") });
+  if (pathname === "/api/index/fingerprints" && method === "POST") return sendJson(res, 202, { started: startIndexJob("fingerprints") });
+
+  if (pathname === "/api/calibration/export" && method === "GET") {
+    const data = JSON.stringify({ exported_at: new Date().toISOString(), version: VERSION, scans: exportCalibration(db) }, null, 1);
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": 'attachment; filename="scanner-calibration.json"',
+      "Cache-Control": "no-store",
+    });
+    return res.end(data);
+  }
+  return null;
+}
+
+/**
+ * Claude CLI presence for /healthz: lib/claude.js's claudeCliStatus() when it
+ * provides one, else whether CLAUDE_BIN (set by the image's entrypoint) exists.
+ */
+function claudeCliHealth() {
+  try {
+    if (typeof claudeLib.claudeCliStatus === "function") return claudeLib.claudeCliStatus();
+  } catch (err) {
+    return { status: "missing", version: null, error: err.message };
+  }
+  const bin = process.env.CLAUDE_BIN;
+  if (!bin) return { status: "unknown", version: null };
+  return { status: existsSync(bin) ? "installed" : "missing", version: process.env.CLAUDE_CODE_VERSION || null };
+}
+
+let healthCache = null;
+async function scannerHealth() {
+  if (healthCache && Date.now() - healthCache.at < 30000) return healthCache.value;
+  const tools = await ocrTools().catch(() => ({ tesseract: false, djpeg: false }));
+  let st = null;
+  try { st = idx ? indexStatus(idx) : null; } catch { st = null; }
+  const value = { index_ready: Boolean(st?.printings), fingerprints: st?.fingerprints ?? 0, tesseract: tools.tesseract, djpeg: tools.djpeg };
+  healthCache = { at: Date.now(), value };
+  return value;
+}
+
+// ---------------------------------------------------------------------------
 // Cross-site request guard
 //
 // No auth (LAN-only), but any web page open in a LAN browser could still fire
@@ -406,6 +820,7 @@ async function handleApi(req, res, url) {
   }
   if (pathname === "/api/refresh-prices" && method === "POST") {
     const result = await exclusive(() => refreshOwnedCards(db).catch((err) => { throw importError(err); }));
+    setAppMeta(db, "last_price_refresh", new Date().toISOString());
     return sendJson(res, 200, result);
   }
   if (pathname === "/api/imports" && method === "GET") {
@@ -416,6 +831,12 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/decks") {
     if (method === "GET") return sendJson(res, 200, listDecks(db));
     if (method === "POST") return sendJson(res, 201, await createDeck(req));
+  }
+  if ((m = /^\/api\/decks\/(\d+)\/(cards|commander)$/.exec(pathname))) {
+    const id = Number(m[1]);
+    if (m[2] === "cards" && method === "PATCH") return sendJson(res, 200, await patchDeckCard(req, id));
+    if (m[2] === "commander" && method === "POST") return sendJson(res, 200, await postCommander(req, id));
+    throw new HttpError(405, "Method not allowed");
   }
   if ((m = /^\/api\/decks\/(\d+)(\/export)?$/.exec(pathname))) {
     const id = Number(m[1]);
@@ -470,6 +891,11 @@ async function handleApi(req, res, url) {
     }
   }
   if (pathname.startsWith("/api/chats/")) throw new HttpError(404, "Chat not found");
+
+  if (/^\/api\/(scan|scans|printings|binders|index|calibration)(\/|$)/.test(pathname)) {
+    const handled = await handleScanApi(req, res, url);
+    if (handled !== null) return handled;
+  }
 
   throw new HttpError(404, "Not found");
 }
@@ -561,7 +987,9 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (url.pathname === "/healthz") {
-      return sendJson(res, 200, { ok: true, version: VERSION, claude_configured: claudeConfigured() });
+      return sendJson(res, 200, {
+        ok: true, version: VERSION, claude_configured: claudeConfigured(), claude_cli: claudeCliHealth(), scanner: await scannerHealth(),
+      });
     }
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return await handleApi(req, res, url);
     if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "Method not allowed");
@@ -585,7 +1013,27 @@ server.requestTimeout = 0; // SSE turns and large imports can take minutes
 server.headersTimeout = 60000;
 server.keepAliveTimeout = 5000;
 
+// ---------------------------------------------------------------------------
+// Nightly maintenance (lib/scheduler.js): index refresh + fingerprints, prices.
+
+const scheduler = createScheduler({
+  config: schedulerConfig(),
+  meta: { get: (k) => getAppMeta(db, k), set: (k, v) => setAppMeta(db, k, v) },
+  indexInfo: () => {
+    if (!idx) return null;
+    const st = indexStatus(idx);
+    return { printings: st.printings, last_refresh: st.last_refresh, bulk_updated_at: st.bulk_updated_at };
+  },
+  indexBusy: () => Boolean(indexJob.running),
+  remoteBulkUpdatedAt: async () => (await fetchBulkInfo()).updated_at,
+  runIndexRefresh: async () => { await startIndexJob("refresh", { then: "fingerprints" }).done; },
+  runPriceRefresh: () => exclusive(() => refreshOwnedCards(db)),
+  checkpoint: () => { if (idx && !indexJob.running) checkpointIndex(idx); },
+});
+
 prepareMcpConfig();
+autoIndex();
+scheduler.start();
 server.listen(PORT, () => {
   console.log(`mtg-planner ${VERSION} listening on :${PORT} (static: ${STATIC_DIR}, claude: ${claudeConfigured() ? "configured" : "not configured"})`);
 });
@@ -596,7 +1044,9 @@ function shutdown(signal) {
   shuttingDown = true;
   console.log(`${signal} received, shutting down`);
   server.close();
+  scheduler.stop();
   for (const controller of runs.values()) controller.abort();
+  indexJob.controller?.abort();
   killAll();
   // Give aborted runs a moment to store their partial answers, then close.
   const deadline = Date.now() + 8000;
@@ -605,6 +1055,7 @@ function shutdown(signal) {
       clearInterval(timer);
       server.closeAllConnections();
       try { db.close(); } catch { /* ignore */ }
+      try { idx?.close(); } catch { /* ignore */ }
       process.exit(0);
     }
   }, 100);

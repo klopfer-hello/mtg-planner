@@ -28,7 +28,19 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: mtg-planner:ci
           build-args: |
             VERSION=ci+${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # The image has tesseract + djpeg: run the whole suite there so the OCR
+      # and JPEG tests (skipped on the bare runner) are exercised too.
+      - name: Tests in the image (OCR, djpeg)
+        run: docker run --rm -v "$PWD":/app -w /app --entrypoint npm mtg-planner:ci test
+      # The Claude Code CLI is proprietary: it is installed at runtime into the
+      # /claude volume and must never end up in the published image.
+      - name: Image contains no Claude Code CLI
+        run: |
+          found=$(docker run --rm --user root --entrypoint sh mtg-planner:ci -c 'find / \( -path /proc -o -path /sys \) -prune -o -iname "*claude-code*" -print')
+          if [ -n "$found" ]; then echo "$found"; exit 1; fi

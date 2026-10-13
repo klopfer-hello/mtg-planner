@@ -12,6 +12,7 @@ import { createInterface } from "node:readline";
 import { cardPrice, formatPrice, openDb, stats } from "./lib/db.js";
 import { QUERY_HELP, searchCollection } from "./lib/query.js";
 import { BOARDS, deckDetail, deckToText, findDeck, listDecks, saveDeck } from "./lib/decks.js";
+import { listBinders } from "./lib/scans.js";
 
 const VERSION = process.env.APP_VERSION || "dev";
 const DEFAULT_PROTOCOL = "2025-06-18";
@@ -76,7 +77,8 @@ const SEARCH_EXAMPLES = [
   'o:"draw a card" mv=2 c<=ub       two-drops that draw, castable in Dimir',
   's:mh3 is:foil                    foils from Modern Horizons 3',
   'qty>=4 t:land                    lands owned in 4+ copies',
-  'b:"trade binder"                 everything in a ManaBox binder',
+  'b:"trade binder"                 everything in a binder (see list_binders)',
+  'src:scan                         copies added with the in-app scanner (src:manabox = synced from ManaBox)',
   'lightning                        names containing "lightning"',
 ];
 
@@ -100,10 +102,10 @@ const TOOLS = [
       "Notes: c: is the card's colors (c:wu = at least white and blue, c=wu exactly, c<=wu within); id: is color " +
       "identity and means 'within' (what fits a commander of that identity); f:<format> = legal in that format " +
       "(commander, modern, standard, pioneer, legacy, pauper, ...); is:commander = can be a commander; eur/usd are per-copy " +
-      "prices; qty counts owned copies; b: matches the ManaBox binder name.\n" +
+      "prices; qty counts owned copies; b: matches the binder name; src: is manabox (synced from ManaBox) or scan (added with the app's scanner).\n" +
       `Examples:\n${SEARCH_EXAMPLES.map((e) => `  ${e}`).join("\n")}\n` +
       "Output: header 'N matches (showing a-b)' then one line per card: " +
-      "'<qty>x <name> | <mana cost> | <type line> | <SET #number, or N printings> | <price> | <finishes>'. " +
+      "'<qty>x <name> | <mana cost> | <type line> | <SET #number, or N printings> | <price> | <finishes> | binders: ... | source: ...'. " +
       "Page through large results with offset. Set include_text to also get oracle text (costs more tokens).",
     inputSchema: {
       type: "object",
@@ -164,10 +166,20 @@ const TOOLS = [
     run: getCard,
   },
   {
+    name: "list_binders",
+    description:
+      "List the user's binders (storage groups of owned cards): name, number of printings, total copies, and where " +
+      "the copies came from (manabox = synced from the ManaBox app, scan = added with the app's camera scanner). " +
+      "Search a binder's contents with search_collection and b:\"<name>\".",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { title: "List binders", readOnlyHint: true, openWorldHint: false },
+    run: listBindersTool,
+  },
+  {
     name: "list_decks",
     description:
       "List the user's decks: id, name, format, source (manabox = synced from a ManaBox deck binder, manual = entered " +
-      "in the app, claude = saved by you), card count and last update.",
+      "in the app, scan = filled with the app's camera scanner, claude = saved by you), card count, value in EUR (commander+main+side) and last update.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { title: "List decks", readOnlyHint: true, openWorldHint: false },
     run: listDecksTool,
@@ -176,7 +188,7 @@ const TOOLS = [
     name: "get_deck",
     description:
       "Show one deck with every card, its board, and ownership against the collection (owned / MISSING n / basic), " +
-      "per-card prices and the estimated cost of the missing cards.",
+      "per-card prices, the deck value in EUR (owned / to buy) and the estimated cost of the missing cards.",
     inputSchema: {
       type: "object",
       properties: {
@@ -283,6 +295,13 @@ function collectionOverview() {
     }
   }
 
+  const binders = listBinders(d);
+  if (binders.length) {
+    lines.push("", `Binders (${binders.length}; printings / copies / source):`);
+    for (const b of binders.slice(0, 40)) lines.push(`  ${b.name || "(no binder)"}: ${b.cards} / ${b.copies} / ${b.sources.join("+")}`);
+    if (binders.length > 40) lines.push(`  ... ${binders.length - 40} more (list_binders)`);
+  }
+
   const decks = listDecks(d);
   lines.push("", decks.length ? `Decks (${decks.length}):` : "Decks: none yet.");
   for (const k of decks) lines.push(`  ${deckLine(k)}`);
@@ -310,7 +329,8 @@ function searchTool(args) {
     const finishes = String(r.finishes || "normal").split(",");
     const price = cardPrice(r, r.finish || "normal"); // most valuable owned printing
     const where = group === "card" && r.printing_count > 1 ? `${r.printing_count} printings` : setNum(r);
-    lines.push(`${r.qty}x ${r.name} | ${r.mana_cost || ""} | ${r.type_line || ""} | ${where} | ${formatPrice(price)} | ${finishes.join(",")}`);
+    const extra = `${r.binders ? ` | binders: ${r.binders}` : ""}${r.sources ? ` | source: ${r.sources}` : ""}`;
+    lines.push(`${r.qty}x ${r.name} | ${r.mana_cost || ""} | ${r.type_line || ""} | ${where} | ${formatPrice(price)} | ${finishes.join(",")}${extra}`);
     if (args.include_text && r.oracle_text) lines.push(`    ${oneLine(r.oracle_text)}`);
   }
   return lines.join("\n");
@@ -387,14 +407,14 @@ function getCard(args) {
   lines.push(`Prices: ${priceParts.join(", ") || "n/a"}`);
 
   const owned = d.prepare(
-    `SELECT c.set_code, c.collector_number, col.finish, col.language, col.condition, col.binder, col.quantity
+    `SELECT c.set_code, c.collector_number, col.finish, col.language, col.condition, col.binder, col.quantity, col.source
        FROM collection col JOIN cards c ON c.scryfall_id = col.scryfall_id
       WHERE c.oracle_id = ? ORDER BY col.quantity DESC`,
   ).all(card.oracle_id);
   const total = owned.reduce((a, r) => a + r.quantity, 0);
   lines.push("", total ? `Owned: ${total} copies` : "Owned: none");
   for (const r of owned) {
-    lines.push(`  ${r.quantity}x ${setNum(r)} ${r.finish} ${r.language} ${r.condition}${r.binder ? ` [binder: ${r.binder}]` : ""}`);
+    lines.push(`  ${r.quantity}x ${setNum(r)} ${r.finish} ${r.language} ${r.condition}${r.binder ? ` [binder: ${r.binder}]` : ""}${r.source === "scan" ? " (scanned)" : ""}`);
   }
   const decks = d.prepare(
     `SELECT d.id, d.name, dc.board, SUM(dc.quantity) AS quantity
@@ -407,8 +427,14 @@ function getCard(args) {
   return lines.join("\n");
 }
 
+function listBindersTool() {
+  const binders = listBinders(getDb());
+  if (!binders.length) return "The user has no cards in the collection yet.";
+  return binders.map((b) => `${b.name || "(no binder)"}: ${b.cards} printings, ${b.copies} copies, source ${b.sources.join("+")}`).join("\n");
+}
+
 const deckLine = (k) =>
-  `#${k.id} ${k.name}${k.format ? ` [${k.format}]` : ""} — ${k.card_count} cards, source ${k.source}, updated ${k.updated_at}`;
+  `#${k.id} ${k.name}${k.format ? ` [${k.format}]` : ""} — ${k.card_count} cards, value €${(k.value_eur ?? 0).toFixed(2)}, source ${k.source}, updated ${k.updated_at}`;
 
 function listDecksTool() {
   const decks = listDecks(getDb());

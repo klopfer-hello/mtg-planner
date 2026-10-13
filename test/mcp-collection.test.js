@@ -74,7 +74,7 @@ describe("mcp-collection.js", () => {
   test("lists exactly the documented, non-destructive tools", async () => {
     const { result } = await mcp.request("tools/list", {});
     const names = result.tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["check_owned", "collection_overview", "get_card", "get_deck", "list_decks", "save_deck", "search_collection"]);
+    assert.deepEqual(names, ["check_owned", "collection_overview", "get_card", "get_deck", "list_binders", "list_decks", "save_deck", "search_collection"]);
     for (const t of result.tools) {
       assert.equal(typeof t.description, "string");
       assert.equal(t.inputSchema?.type, "object", `${t.name} needs an object inputSchema`);
@@ -103,6 +103,16 @@ describe("mcp-collection.js", () => {
     const bad = await mcp.call("search_collection", { query: "foo:bar" });
     assert.equal(bad.isError, true);
     assert.match(bad.text, /Unknown search key/);
+  });
+
+  test("list_binders and binder/source details", async () => {
+    const { text, isError } = await mcp.call("list_binders");
+    assert.equal(isError, false);
+    assert.match(text, /source manabox/);
+    const overview = await mcp.call("collection_overview");
+    assert.match(overview.text, /Binders \(/);
+    const search = await mcp.call("search_collection", { query: "bolt" });
+    assert.match(search.text, /source: manabox/);
   });
 
   test("check_owned: case-insensitive, DFC front faces, not owned", async () => {
@@ -141,7 +151,9 @@ describe("mcp-collection.js", () => {
 
     const list = await mcp.call("list_decks");
     assert.match(list.text, /Izzet Test/);
+    assert.match(list.text, /value €\d+\.\d\d/);
     const got = await mcp.call("get_deck", { deck: "izzet test" });
+    assert.match(got.text, /Value: €\d+\.\d\d \(owned €\d+\.\d\d, to buy €\d+\.\d\d/);
     assert.match(got.text, /4x Counterspell .*owned 3|4x Counterspell .*MISSING 1/);
     const byId = await mcp.call("get_deck", { deck: id });
     assert.match(byId.text, /Izzet Test/);

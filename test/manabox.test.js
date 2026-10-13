@@ -2,8 +2,9 @@
 
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { importManaBoxCsv, parseCsv, refreshOwnedCards } from "../lib/manabox.js";
-import { deckDetail, listDecks } from "../lib/decks.js";
+import { fetchCollectionPolitely, importManaBoxCsv, parseCsv, refreshOwnedCards } from "../lib/manabox.js";
+import { LIMITED_INTERVAL_MS, fetchCollection } from "../lib/scryfall.js";
+import { deckDetail, listDecks, setCommander, updateDeckCard } from "../lib/decks.js";
 import { ID, stubScryfall, tempDb } from "./fixtures.js";
 
 describe("parseCsv", () => {
@@ -230,5 +231,51 @@ describe("importManaBoxCsv", () => {
     const res = await refreshOwnedCards(ctx.db);
     assert.deepEqual(res, { refreshed: 1, not_found: 0 });
     assert.equal(JSON.parse(ctx.db.prepare("SELECT prices FROM cards WHERE scryfall_id = ?").get(ID.sol).prices).eur, "1.50");
+  });
+
+  test("a replace re-sync keeps the user's board assignments for cards still in the binder", async () => {
+    const binder = (...extra) => csv(
+      row("EDH", "deck", "Atraxa, Praetors' Voice", "2xm", "190", "normal", "1", ID.atraxa),
+      row("EDH", "deck", "Sol Ring", "c21", "263", "normal", "1", ID.sol),
+      row("EDH", "deck", "Lightning Bolt", "m10", "146", "normal", "2", ID.lightning),
+      ...extra,
+    );
+    await importManaBoxCsv(ctx.db, binder(row("EDH", "deck", "Serra Angel", "dmu", "33", "normal", "1", ID.serra)));
+    const id = listDecks(ctx.db)[0].id;
+    ctx.db.prepare("UPDATE decks SET format = 'commander' WHERE id = ?").run(id);
+    setCommander(ctx.db, id, { name: "Atraxa, Praetors' Voice" });
+    updateDeckCard(ctx.db, id, { name: "Lightning Bolt", board: "main", to_board: "side", quantity: 1 });
+    updateDeckCard(ctx.db, id, { name: "Serra Angel", board: "main", to_board: "maybe" });
+
+    // Serra Angel left the binder; everything else stays where the user put it.
+    await importManaBoxCsv(ctx.db, binder());
+    const boards = Object.fromEntries(deckDetail(ctx.db, id).cards.map((c) => [`${c.board}:${c.name}`, c.quantity]));
+    assert.deepEqual(boards, {
+      "commander:Atraxa, Praetors' Voice": 1, "main:Sol Ring": 1, "main:Lightning Bolt": 1, "side:Lightning Bolt": 1,
+    });
+    assert.equal(listDecks(ctx.db)[0].id, id, "same deck");
+  });
+
+  test("fetchCollectionPolitely batches by 75 and spaces requests", async () => {
+    const ids = Array.from({ length: 160 }, (_, i) => ({ id: `00000000-0000-0000-0000-${String(1000 + i).padStart(12, "0")}` }));
+    const t0 = Date.now();
+    const res = await fetchCollectionPolitely(ids, { intervalMs: 50 });
+    assert.deepEqual(stub.calls.map((c) => c.length), [75, 75, 10]);
+    assert.equal(res.notFound.length, 160);
+    assert.ok(Date.now() - t0 >= 100, "two gaps between three requests");
+  });
+
+  test("plain fetchCollection (saveDeck, resolveDeckItems) also keeps /cards/collection at 2 req/s", async () => {
+    const ids = Array.from({ length: 160 }, (_, i) => ({ id: `00000000-0000-0000-0000-${String(2000 + i).padStart(12, "0")}` }));
+    const inner = globalThis.fetch;
+    const times = [];
+    globalThis.fetch = (url, init) => { times.push(Date.now()); return inner(url, init); };
+    try {
+      await fetchCollection(ids);
+    } finally {
+      globalThis.fetch = inner;
+    }
+    assert.equal(times.length, 3);
+    for (let i = 1; i < times.length; i++) assert.ok(times[i] - times[i - 1] >= LIMITED_INTERVAL_MS - 5, `gap ${times[i] - times[i - 1]} ms`);
   });
 });
