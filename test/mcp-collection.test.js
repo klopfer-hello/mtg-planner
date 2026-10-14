@@ -81,6 +81,15 @@ describe("mcp-collection.js", () => {
     }
   });
 
+  test("has no backup/restore tools (backups are UI-only)", async () => {
+    const { result } = await mcp.request("tools/list", {});
+    const hits = result.tools.filter((t) => /backup|restore|snapshot|dump/i.test(`${t.name} ${t.description}`)).map((t) => t.name);
+    assert.deepEqual(hits, []);
+    for (const name of ["create_backup", "list_backups", "restore_backup", "delete_backup"]) {
+      assert.ok((await mcp.request("tools/call", { name, arguments: {} })).error, `${name} must not exist`);
+    }
+  });
+
   test("unknown method and unknown tool are JSON-RPC errors", async () => {
     assert.equal((await mcp.request("nope/nothing", {})).error.code, -32601);
     assert.ok((await mcp.request("tools/call", { name: "delete_everything", arguments: {} })).error);

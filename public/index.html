@@ -178,6 +178,7 @@ main > [role="tabpanel"] { min-width: 0; max-width: 100%; }
 .btn.ghost:hover { background: var(--surface-2); }
 .btn.icon { padding: 0; width: 44px; }
 label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.btn.disabled { opacity: .55; cursor: not-allowed; pointer-events: none; }
 .btn.sm { min-height: 36px; padding: 0 12px; font-size: .88rem; }
 .btn svg { width: 20px; height: 20px; flex: none; }
 .input, .select, .textarea {
@@ -549,6 +550,7 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
 .history-item { display: grid; gap: 4px; padding: 12px 0; border-top: 1px solid var(--border); }
 .history-item:first-child { border-top: 0; padding-top: 0; }
+.backup-item .row.between > b { min-width: 0; }
 .page-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .page-title h1 { font-size: 1.45rem; }
 .footer-note { text-align: center; font-size: .78rem; color: var(--muted); padding-top: 8px; }
@@ -3312,7 +3314,7 @@ function MasterPanel({ master, busy, error, onSwitch }) {
       <ErrorNotice error={error} />
       {master && (
         <div className="row">
-          <button type="button" className="btn" disabled={busy} onClick={() => onSwitch(master === "app" ? "manabox" : "app")}>
+          <button type="button" className="btn" style={{ whiteSpace: "normal", textAlign: "center" }} disabled={busy} onClick={() => onSwitch(master === "app" ? "manabox" : "app")}>
             {master === "app" ? "Switch back: ManaBox is the master" : "Make mtg-planner the master"}
           </button>
         </div>
@@ -3324,13 +3326,154 @@ function MasterPanel({ master, busy, error, onSwitch }) {
   );
 }
 
+const fmtBytes = (n) => (n == null ? "—" : n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const backupCounts = (c) => (c ? `${plural(c.copies, "copy", "copies")} · ${plural(c.decks, "deck")} · ${plural(c.binders, "binder")} · ${plural(c.chats, "chat")}` : "contents unknown");
+
+/** Asks before a restore and says exactly what gets replaced. `target` = {kind:'stored', backup} | {kind:'upload', file}. */
+function RestoreConfirmSheet({ target, current, busy, onConfirm, onCancel }) {
+  const b = target.kind === "stored" ? target.backup : null;
+  return (
+    <Sheet title="Restore this backup?" onClose={() => { if (!busy) onCancel(); }}>
+      <div className="stack">
+        <p style={{ margin: 0 }}>
+          {b ? <>Backup from <b>{fmtDate(b.created_at)}</b>{b.app_version ? <> (app {b.app_version})</> : null}</> : <>File <b style={{ overflowWrap: "anywhere" }}>{target.file.name}</b> ({fmtBytes(target.file.size)})</>}
+        </p>
+        <div className="notice warn" role="alert">
+          <span aria-hidden="true">⚠️</span>
+          <div className="grow">
+            <b>All app data is replaced</b> by the backup: your whole collection and binders, decks, the scan list (incl. calibration
+            data), planner chats and settings (collection master). Changes made since the backup are lost.
+          </div>
+        </div>
+        <ul className="small" style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 4 }}>
+          <li>Now: {current ? `${plural(current.total_cards, "copy", "copies")} · ${plural(current.decks, "deck")}` : "…"}</li>
+          <li>Backup: {b ? backupCounts(b.counts) : "checked on upload"}</li>
+          <li>A <b>safety backup</b> of the current data is taken first; you can restore it from the list if needed.</li>
+          <li>Not affected: the scanner's card index, fingerprints and scan photos.</li>
+        </ul>
+        <div className="row">
+          <button type="button" className="btn primary grow" disabled={busy} onClick={onConfirm}>
+            {busy ? <><span className="spinner" aria-hidden="true" style={{ borderTopColor: "var(--accent-ink)" }} /> Restoring…</> : <><Icon.undo /> Replace everything</>}
+          </button>
+          <button type="button" className="btn ghost" disabled={busy} onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+/** Import tab: manual backups of the app data (create, download, delete) and restore from a stored or uploaded one. */
+function BackupPanel({ dataVersion, onRestored }) {
+  const [list, setList] = useState(null);
+  const [listError, setListError] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState(null);
+  const [fresh, setFresh] = useState(null); // name of the backup just made
+  const [confirm, setConfirm] = useState(null); // RestoreConfirmSheet target
+  const [current, setCurrent] = useState(null);
+  const [restoring, setRestoring] = useState(false);
+  const fileInput = useRef(null);
+  const load = useCallback(() => {
+    setListError(null);
+    api("/api/backups").then((d) => setList(d.backups)).catch((e) => setListError(`Could not load backups: ${e.message}`));
+  }, []);
+  useEffect(load, [load, dataVersion]);
+
+  const create = async () => {
+    setCreating(true); setError(null);
+    try {
+      const b = await api("/api/backups", { method: "POST" });
+      setFresh(b.name);
+      load();
+    } catch (e) { setError(e.message); } finally { setCreating(false); }
+  };
+  const remove = async (b) => {
+    if (!window.confirm(`Delete the backup from ${fmtDate(b.created_at)}? This cannot be undone.`)) return;
+    setError(null);
+    try { await api(`/api/backups/${encodeURIComponent(b.name)}`, { method: "DELETE" }); load(); } catch (e) { setError(e.message); }
+  };
+  const askRestore = (t) => {
+    setError(null);
+    setConfirm(t);
+    setCurrent(null);
+    api("/api/stats").then(setCurrent).catch(() => setCurrent(null));
+  };
+  const restore = async () => {
+    setRestoring(true); setError(null);
+    try {
+      const r = confirm.kind === "stored"
+        ? await api(`/api/backups/${encodeURIComponent(confirm.backup.name)}/restore`, { method: "POST", json: { confirm: true } })
+        : await api("/api/backups/restore-upload?confirm=1", { method: "POST", body: confirm.file, headers: { "Content-Type": "application/gzip" } });
+      setConfirm(null);
+      onRestored(r);
+    } catch (e) {
+      setError(`Restore failed: ${e.message}`);
+      setConfirm(null);
+      load();
+    } finally {
+      setRestoring(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+  const busy = creating || restoring;
+
+  return (
+    <section className="card stack" aria-labelledby="backup-title" aria-busy={busy}>
+      <h2 id="backup-title">Backup &amp; restore</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        A backup holds all app data: collection, binders, decks, scan list, planner chats and settings. The scanner's card index and photos
+        are not included (they are rebuilt). Download one to keep a copy off this server.
+      </p>
+      <div className="row">
+        <button type="button" className="btn primary" onClick={create} disabled={busy}>
+          {creating ? <><span className="spinner" aria-hidden="true" style={{ borderTopColor: "var(--accent-ink)" }} /> Creating…</> : <><Icon.box /> Create backup</>}
+        </button>
+        <label className={`btn${busy ? " disabled" : ""}`} aria-disabled={busy}>
+          <Icon.file /> Restore from file
+          <input ref={fileInput} type="file" accept=".gz,application/gzip" disabled={busy} className="sr-only"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) askRestore({ kind: "upload", file: f }); }} />
+        </label>
+      </div>
+      <ErrorNotice error={error} onDismiss={() => setError(null)} />
+      <ErrorNotice error={listError} onRetry={load} />
+      {!list && !listError && <Spinner />}
+      {list && list.length === 0 && <p className="muted small" style={{ margin: 0 }}>No backups yet.</p>}
+      {list && list.length > 0 && (
+        <div>
+          {list.map((b) => (
+            <div key={b.name} className="history-item backup-item">
+              <div className="row between">
+                <b>{fmtDate(b.created_at)}</b>
+                <span className="row small" style={{ gap: 6 }}>
+                  {b.name === fresh && <span className="badge accent">new</span>}
+                  {b.kind === "pre-restore" && <span className="badge warn" title="Taken automatically right before a restore">before restore</span>}
+                  <span className="muted nowrap">{fmtBytes(b.size)}</span>
+                </span>
+              </div>
+              <span className="small muted">{backupCounts(b.counts)}{b.app_version ? ` · app ${b.app_version}` : ""}</span>
+              <div className="row" style={{ gap: 6 }}>
+                <a className="btn sm" href={`/api/backups/${encodeURIComponent(b.name)}/download`} download={b.name}><Icon.download /> Download</a>
+                <button type="button" className="btn sm" disabled={busy} onClick={() => askRestore({ kind: "stored", backup: b })}><Icon.undo /> Restore</button>
+                <button type="button" className="btn sm ghost danger" style={{ marginLeft: "auto", paddingInline: 8 }} disabled={busy} onClick={() => remove(b)}
+                  aria-label={`Delete backup from ${fmtDate(b.created_at)}`} title="Delete"><Icon.trash /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {confirm && <RestoreConfirmSheet target={confirm} current={current} busy={restoring} onConfirm={restore}
+        onCancel={() => { setConfirm(null); if (fileInput.current) fileInput.current.value = ""; }} />}
+    </section>
+  );
+}
+
 const IMPORT_MODE_HELP = {
   delta: "Compares the file with your last ManaBox export and adds only the copies that are new (into their ManaBox binder). Fewer copies in ManaBox are listed, never deleted. Importing the same file twice changes nothing.",
   add: "Adds every copy in the file on top of what's already here.",
   replace: "Cards imported from ManaBox become exactly what's in the file. Scanned cards and cards organised here are kept.",
 };
 
-function ImportTab({ dataVersion, health, onImported }) {
+function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDismissRestored }) {
   const [file, setFile] = useState(null);
   const [mode, setMode] = useState("replace");
   const modeTouched = useRef(false);
@@ -3430,6 +3573,16 @@ function ImportTab({ dataVersion, health, onImported }) {
   return (
     <div className="stack-lg" style={{ maxWidth: 760 }}>
       <div className="page-title"><h1>Import</h1></div>
+      {restored && (
+        <div className="notice ok" role="status">
+          <span aria-hidden="true">✓</span>
+          <div className="grow">
+            <b>Backup restored.</b> {backupCounts(restored.restored?.counts)}. Your previous data is kept as the safety backup
+            {restored.safety_backup ? ` from ${fmtDate(restored.safety_backup.created_at)}` : ""}.
+          </div>
+          <button type="button" className="btn ghost sm" onClick={onDismissRestored} aria-label="Dismiss"><Icon.close /></button>
+        </div>
+      )}
 
       <form className="card stack" onSubmit={submit} aria-labelledby="import-title" aria-busy={busy}>
         <h2 id="import-title">ManaBox collection CSV</h2>
@@ -3509,6 +3662,8 @@ function ImportTab({ dataVersion, health, onImported }) {
       </section>
 
       <ScannerIndexPanel health={health} />
+
+      <BackupPanel dataVersion={dataVersion} onRestored={onRestored} />
 
       <section className="card stack" aria-labelledby="history-title">
         <h2 id="history-title">Import history</h2>
@@ -5289,6 +5444,9 @@ function App() {
   const [dataVersion, bumpData] = useReducer((x) => x + 1, 0);
   const [deckVersion, bumpDecks] = useReducer((x) => x + 1, 0);
   const onImported = useCallback(() => { bumpData(); bumpDecks(); }, []);
+  // After a restore every tab remounts (epoch key) and reloads its data.
+  const [epoch, bumpEpoch] = useReducer((x) => x + 1, 0);
+  const [restored, setRestored] = useState(null);
   const [cardId, setCardId] = useState(null);
   const [deck, setDeck] = useState({ id: null, notice: null });
   const [plannerRequest, setPlannerRequest] = useState(null);
@@ -5354,7 +5512,7 @@ function App() {
 
   const panel = (id, content) => (
     <section key={id} id={`panel-${id}`} role="tabpanel" aria-labelledby={`tab-${id}`} hidden={tab !== id}>
-      {visited.has(id) && content}
+      {visited.has(id) && <React.Fragment key={epoch}>{content}</React.Fragment>}
     </section>
   );
 
@@ -5384,7 +5542,9 @@ function App() {
           onOpenCard={setCardId} onAsk={askAboutDeck} onChanged={bumpDecks} onCollectionChanged={onImported} />)}
         {panel("planner", <PlannerTab active={tab === "planner"} health={health} request={plannerRequest}
           onRequestHandled={() => setPlannerRequest(null)} onChanged={bumpDecks} />)}
-        {panel("import", <ImportTab dataVersion={dataVersion} health={health} onImported={onImported} />)}
+        {panel("import", <ImportTab dataVersion={dataVersion} health={health} onImported={onImported} restored={restored}
+          onDismissRestored={() => setRestored(null)}
+          onRestored={(r) => { setRestored(r); setCardId(null); setDeck({ id: null, notice: null }); bumpEpoch(); onImported(); window.scrollTo(0, 0); }} />)}
       </main>
       {cardId && <CardSheet id={cardId} onClose={() => setCardId(null)} onOpenCard={setCardId} onOpenDeck={(id) => openDeck(id)} onChanged={onImported} />}
     </>

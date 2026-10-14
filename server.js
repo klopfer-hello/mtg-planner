@@ -1,16 +1,17 @@
 // mtg-planner web server: JSON API, ManaBox CSV import, decks, Claude chat
 // (Server-Sent Events), the card scanner (identify + staging + commit, local
-// card index jobs) and the static single-page app. Node stdlib only.
+// card index jobs), manual backup/restore of the app database and the static
+// single-page app. Node stdlib only.
 //
 // Unauthenticated by design: meant for a trusted LAN (see README "Security").
 
 import http from "node:http";
 import crypto from "node:crypto";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
-import { cardPrice, getAppMeta, openDb, setAppMeta, stats } from "./lib/db.js";
+import { SCHEMA_VERSION, cardPrice, getAppMeta, openDb, setAppMeta, stats } from "./lib/db.js";
 import { QUERY_HELP, searchCollection } from "./lib/query.js";
 import { IMPORT_MODES, importManaBoxCsv, refreshOwnedCards } from "./lib/manabox.js";
 import {
@@ -28,7 +29,10 @@ import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker, c
 import { ocrTools } from "./lib/ocr.js";
 import { decideFinish, identify, printingSummary } from "./lib/scanner.js";
 import {
-  CONDITIONS, ScanError, commitScans, normFinish, deleteScan, exportCalibration, getScan, incrementScan,
+  BackupError, backupConfig, backupPath, createBackup, dbCounts, deleteBackup, gunzipToFile, listBackups, swapDatabase, validateBackupDb,
+} from "./lib/backups.js";
+import {
+  CONDITIONS, ScanError, commitScans, defaultImageDir, normFinish, deleteScan, exportCalibration, getScan, incrementScan,
   listScans, recordTruth, scanImagePath, scanStripPath, stageScan, undoLast, updateScan,
 } from "./lib/scans.js";
 import {
@@ -54,7 +58,13 @@ const MAX_STRIP_PIXELS = 20_000_000;
 const SCAN_MATCHER_WAIT_MS = Number(process.env.SCAN_MATCHER_WAIT_MS) >= 0 && process.env.SCAN_MATCHER_WAIT_MS !== ""
   ? Number(process.env.SCAN_MATCHER_WAIT_MS) : 30000;
 
-const db = openDb();
+const DB_FILE = path.resolve(process.env.DB_FILE || "/data/mtg-planner.db");
+const BACKUP = backupConfig();
+const BACKUP_UPLOAD_LIMIT = 50 * 1024 * 1024;
+
+// `let`: a restore (lib/backups.js swapDatabase) closes and reopens it; every
+// user below reads the binding at call time.
+let db = openDb(DB_FILE);
 
 // The scanner's card index lives in its own SQLite file; the app keeps
 // working (minus scanning) if it can't be opened.
@@ -908,6 +918,145 @@ function matcherHealth() {
 }
 
 // ---------------------------------------------------------------------------
+// Backups (lib/backups.js): manual snapshots of the app DB and restoring one.
+// UI only: the collection MCP server has no backup tools.
+
+let backupBusy = false; // one backup or restore at a time
+let restoring = false; // while true every other state-changing request gets 503
+
+const backupCall = async (fn) => {
+  try { return await fn(); } catch (err) { throw err instanceof BackupError ? new HttpError(err.status, err.message) : err; }
+};
+
+function backupName(raw) {
+  let name;
+  try { name = decodeURIComponent(raw); } catch { throw new HttpError(400, "Invalid backup name"); }
+  return name;
+}
+
+async function postBackup() {
+  if (backupBusy) throw new HttpError(409, "A backup or restore is already running");
+  backupBusy = true;
+  try {
+    return await backupCall(() => createBackup(db, { dir: BACKUP.dir, kind: "manual", version: VERSION, keep: BACKUP.keep }));
+  } finally { backupBusy = false; }
+}
+
+/** Why a restore can't run now (work that holds or writes the app DB), or null. */
+function restoreBlocker() {
+  if (backupBusy) return "a backup or restore is already running";
+  if (importBusy) return "an import, price refresh or collection change is running";
+  if (runs.size) return "the planner is answering a chat (its MCP server has the database open)";
+  if (scansInFlight) return "a scan is being identified";
+  return null;
+}
+
+/**
+ * Restore from a stored backup (`name`) or an uploaded .db.gz (`upload`
+ * Buffer): unpack + validate, take a pre-restore safety backup, swap the file,
+ * reopen (migrations upgrade older backups). The live DB stays untouched until
+ * the swap, and a failed swap rolls back to it.
+ */
+async function restoreBackup({ name = null, upload = null }) {
+  const blocker = restoreBlocker();
+  if (blocker) throw new HttpError(409, `Can't restore right now: ${blocker}. Try again when it has finished.`);
+  backupBusy = true;
+  restoring = true;
+  importBusy = true; // imports, moves and the scheduler's price refresh wait for us
+  const tmp = `${DB_FILE}.restore-${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+  try {
+    return await backupCall(async () => {
+      const source = name ? backupPath(BACKUP.dir, name) : upload;
+      const stored = name ? listBackups(BACKUP.dir).find((b) => b.name === name) ?? null : null;
+      await gunzipToFile(source, tmp);
+      const checked = validateBackupDb(tmp, { schemaVersion: SCHEMA_VERSION, imageDir: defaultImageDir() });
+      const safety = await createBackup(db, { dir: BACKUP.dir, kind: "pre-restore", version: VERSION, protect: name ? [name] : [] });
+      try {
+        db = swapDatabase({ dbFile: DB_FILE, newFile: tmp, close: () => db.close(), open: () => openDb(DB_FILE) });
+      } catch (err) {
+        if (err.db) db = err.db;
+        console.error(`[backup] restore failed, previous database ${err.db ? "restored" : "COULD NOT BE REOPENED"}:`, err);
+        if (!err.db) throw new HttpError(500, `Restore failed and the previous database could not be reopened: ${err.message}. Restart the app; safety backup: ${safety.name}`);
+        throw new HttpError(500, `Restore failed, nothing was changed: ${err.message}`);
+      }
+      const restored = {
+        name: name ?? null,
+        source: name ? "stored" : "upload",
+        restored_at: new Date().toISOString(),
+        backup: stored,
+        schema_version_before_upgrade: checked.schema_version,
+        schema_version: db.prepare("PRAGMA user_version").get().user_version,
+        counts: dbCounts(db),
+      };
+      try { setAppMeta(db, "last_restore", JSON.stringify({ at: new Date().toISOString(), from: name ?? "upload", safety_backup: safety.name })); } catch { /* informational */ }
+      console.log(`[backup] restored ${name ?? "an uploaded backup"} (schema v${checked.schema_version} → v${restored.schema_version}); safety backup ${safety.name}`);
+      return { restored, safety_backup: safety };
+    });
+  } finally {
+    rmSync(tmp, { force: true });
+    importBusy = false;
+    restoring = false;
+    backupBusy = false;
+  }
+}
+
+const restoreConfirmed = (req, query, body = null) =>
+  body?.confirm === true || query.get("confirm") === "1" || req.headers["x-confirm-restore"] === "1";
+
+async function handleBackupApi(req, res, url) {
+  const { pathname, searchParams: query } = url;
+  const method = req.method;
+  let m;
+  if (pathname === "/api/backups") {
+    if (method === "GET") return sendJson(res, 200, { backups: listBackups(BACKUP.dir), keep: BACKUP.keep });
+    if (method === "POST") return sendJson(res, 201, await postBackup());
+    throw new HttpError(405, "Method not allowed");
+  }
+  if (pathname === "/api/backups/restore-upload") {
+    if (method !== "POST") throw new HttpError(405, "Method not allowed");
+    const type = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    if (!["application/gzip", "application/x-gzip", "application/octet-stream"].includes(type)) {
+      throw new HttpError(415, "Content-Type must be application/gzip or application/octet-stream");
+    }
+    if (!restoreConfirmed(req, query)) throw new HttpError(400, "A restore replaces all app data; confirm with confirm=1");
+    const buf = await readBody(req, BACKUP_UPLOAD_LIMIT);
+    if (!buf.length) throw new HttpError(400, "The uploaded file is empty");
+    return sendJson(res, 200, await restoreBackup({ upload: buf }));
+  }
+  if ((m = /^\/api\/backups\/([^/]+)(?:\/(download|restore))?$/.exec(pathname))) {
+    const name = backupName(m[1]);
+    if (m[2] === "download") {
+      if (method !== "GET") throw new HttpError(405, "Method not allowed");
+      const file = await backupCall(async () => backupPath(BACKUP.dir, name));
+      const info = await stat(file);
+      res.writeHead(200, {
+        "Content-Type": "application/gzip",
+        "Content-Length": info.size,
+        "Content-Disposition": `attachment; filename="${name}"`,
+        "Cache-Control": "no-store",
+      });
+      const stream = createReadStream(file);
+      stream.on("error", () => res.destroy());
+      return stream.pipe(res);
+    }
+    if (m[2] === "restore") {
+      if (method !== "POST") throw new HttpError(405, "Method not allowed");
+      const body = await readJson(req);
+      await backupCall(async () => backupPath(BACKUP.dir, name));
+      if (!restoreConfirmed(req, query, body)) throw new HttpError(400, "A restore replaces all app data; confirm with {confirm: true}");
+      return sendJson(res, 200, await restoreBackup({ name }));
+    }
+    if (method === "DELETE") {
+      if (backupBusy) throw new HttpError(409, "A backup or restore is running");
+      await backupCall(async () => deleteBackup(BACKUP.dir, name));
+      return sendEmpty(res);
+    }
+    throw new HttpError(405, "Method not allowed");
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Cross-site request guard
 //
 // No auth (LAN-only), but any web page open in a LAN browser could still fire
@@ -944,6 +1093,11 @@ async function handleApi(req, res, url) {
   const method = req.method;
   let m;
   checkSameOrigin(req);
+  if (restoring && method !== "GET" && method !== "HEAD") throw new HttpError(503, "A backup is being restored; try again in a moment");
+  if (pathname === "/api/backups" || pathname.startsWith("/api/backups/")) {
+    const handled = await handleBackupApi(req, res, url);
+    if (handled !== null) return handled;
+  }
 
   if (pathname === "/api/stats" && method === "GET") return sendJson(res, 200, stats(db));
   if (pathname === "/api/query-help" && method === "GET") return sendJson(res, 200, { help: QUERY_HELP });

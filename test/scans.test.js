@@ -171,7 +171,7 @@ describe("staging", () => {
     const f = stage({ status: "failed", printing: null, features: { collector: { raw: "?" } } }, { calibration: true, image: JPEG, strip: JPEG });
     assert.equal(f.scan.match_status, "failed");
     assert.equal(f.scan.printing_id, null);
-    assert.ok(existsSync(path.join(imageDir, `scan-${f.scan.id}-strip.jpg`)));
+    assert.ok(existsSync(scanStripPath(ctx.db, f.scan.id, { imageDir })));
     await assert.rejects(commit([f.scan.id], { type: "binder", name: "X", create: true }), (e) => e.status === 409);
     recordTruth(ctx.db, f.scan.id, { printing_id: BOLT.id, finish: "normal" }, { idx, index });
     const row = exportCalibration(ctx.db).find((x) => x.id === f.scan.id);
@@ -408,11 +408,28 @@ describe("binders and ManaBox replace", () => {
   });
 });
 
+describe("scan image names", () => {
+  test("a reused scan id never overwrites or deletes an older scan's photo", async () => {
+    const a = stage(result(BOLT), { image: JPEG, strip: JPEG, calibration: true }).scan;
+    const oldImage = scanImagePath(ctx.db, a.id, { imageDir });
+    const oldStrip = scanStripPath(ctx.db, a.id, { imageDir });
+    assert.match(path.basename(oldImage), /^scan-\d+-[0-9a-f]{12}\.jpg$/);
+    assert.match(path.basename(oldStrip), /^scan-\d+-[0-9a-f]{12}-strip\.jpg$/);
+    // As after restoring an older backup: the row is gone, its files stay on disk.
+    ctx.db.prepare("DELETE FROM scans WHERE id = ?").run(a.id);
+    const b = stage(result(SOL), { image: JPEG, strip: JPEG }).scan;
+    assert.equal(b.id, a.id, "SQLite hands out the same id again");
+    assert.notEqual(scanImagePath(ctx.db, b.id, { imageDir }), oldImage);
+    await commit([b.id], { type: "binder", name: "X", create: true });
+    assert.ok(existsSync(oldImage) && existsSync(oldStrip), "committing the new scan leaves the old photos alone");
+  });
+});
+
 describe("calibration", () => {
   test("recordTruth corrects a staged scan; export lists truth vs detection; images kept on commit", async () => {
     const s = stage(result(BOLT), { image: JPEG, strip: JPEG, calibration: true }).scan;
     assert.equal(s.calibration, true);
-    assert.ok(existsSync(path.join(imageDir, `scan-${s.id}-strip.jpg`)));
+    assert.ok(existsSync(scanStripPath(ctx.db, s.id, { imageDir })));
     const u = recordTruth(ctx.db, s.id, { printing_id: SOL.id, finish: "foil" }, { idx, index });
     assert.equal(u.printing_id, SOL.id);
     assert.equal(u.finish, "foil");
@@ -427,7 +444,7 @@ describe("calibration", () => {
     assert.equal(rows[1].correct_printing, true);
     assert.ok(rows[0].features.collector);
     await commit([s.id, ok.id], { type: "binder", name: "Cal", create: true });
-    assert.ok(existsSync(path.join(imageDir, `scan-${s.id}.jpg`)), "calibration images survive the commit");
+    assert.ok(existsSync(scanImagePath(ctx.db, s.id, { imageDir })), "calibration images survive the commit");
     assert.throws(() => recordTruth(ctx.db, s.id, {}, { idx, index }), /printing_id/);
   });
 });

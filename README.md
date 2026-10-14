@@ -61,6 +61,9 @@ uses two system tools from Debian inside the image (tesseract OCR and `djpeg`).
   of another built deck's box; the box is remembered, also when the deck or
   the binder is renamed, and a ManaBox deck's own binder already counts as
   boxed).
+- **Backup & restore** (Import tab, see [Backups](#backups)): one tap makes a
+  compressed snapshot of all app data, which you can download, restore, or
+  restore from a downloaded file. A restore first takes a safety backup.
 - **Claude planner:** a chat that runs the
   [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) headless
   with exactly two MCP servers:
@@ -147,6 +150,8 @@ Set these in `.env`, which `docker-compose.yml` loads if it exists:
 | `INDEX_REFRESH_DAYS` | `7` | Minimum age of the card index before it is refreshed (only when Scryfall has newer bulk data). |
 | `PRICE_REFRESH_DAYS` | `7` | Minimum age of the last price refresh of owned and deck cards. |
 | `TZ` | *(UTC)* | Container time zone (IANA name, e.g. `Europe/Berlin`), used for `INDEX_REFRESH_HOUR`. |
+| `BACKUP_DIR` | `<database dir>/backups` (`/data/backups`) | Where manual backups and pre-restore safety backups are stored (see [Backups](#backups)). |
+| `BACKUP_KEEP` | `20` | Manual backups kept; older ones are deleted when a new one is made. Pre-restore safety backups are kept separately (the last 5). |
 | `SCAN_IMAGE_DIR` | `<database dir>/scans` | Where uploaded scan photos are kept until they are committed (calibration scans keep them). |
 
 These are set in the image and rarely need changing: `PORT=8080`,
@@ -161,7 +166,7 @@ Volumes:
 
 | Mount | Contents |
 | --- | --- |
-| `/data` | SQLite database (WAL mode), the scanner's card index (`cardindex.db`), reference images (`images/`, ~1.2 GB), stored scan photos, and the CLI's working directory |
+| `/data` | SQLite database (WAL mode), the scanner's card index (`cardindex.db`), reference images (`images/`, ~1.2 GB), stored scan photos, backups (`backups/`), and the CLI's working directory |
 | `/claude` | Claude Code config and chat sessions, so conversations can resume after a restart, plus the runtime-installed CLI in `/claude/cli` (about 250 MB) |
 
 ## Getting `CLAUDE_CODE_OAUTH_TOKEN`
@@ -550,6 +555,8 @@ flowchart LR
 - `lib/decks.js`: decklist parsing, name resolution (owned printings first),
   and ownership and missing-cost math.
 - `lib/scheduler.js`: the nightly index and price refresh.
+- `lib/backups.js`: manual backups (`VACUUM INTO` + gzip, manifest,
+  retention) and restore (validation, safety backup, file swap with rollback).
 - `lib/claude.js`: locates the runtime-installed CLI, spawns it per turn and
   turns `stream-json` into UI events. It also runs the scanner's one-shot vision call (no tools, no
   session) behind an hourly cap.
@@ -582,6 +589,38 @@ deleted without touching your collection. The web server and the MCP server
 open the same main database file, which runs in
 WAL mode with a busy timeout.
 
+## Backups
+
+The **Backup & restore** panel in the Import tab works by hand only: there are
+no scheduled backups, and Claude's MCP tools have no access to backups.
+
+- **Create backup** writes a consistent snapshot of the app database
+  (SQLite `VACUUM INTO`, safe while the app runs) as
+  `mtg-planner-YYYYMMDD-HHMMSS.db.gz` to `BACKUP_DIR`, plus a small `.json`
+  manifest (app version, schema version, time, and counts of copies, printings,
+  decks, binders, scans and chats). It holds the collection, binders, decks,
+  the scan list with calibration data, planner chats and settings. It doesn't
+  hold the scanner's card index, fingerprints, scan photos or Claude's sessions.
+  Those are rebuilt, or not worth keeping.
+- **Download** saves the `.db.gz` file. Store it somewhere other than the server.
+- **Restore** (from the list, or **Restore from file** with a downloaded
+  `.db.gz`, at most 50 MB) replaces **all** app data after a confirmation. The
+  file is unpacked and checked first (SQLite integrity check, the expected
+  tables, a schema not newer than the running app). Then a
+  `...-pre-restore.db.gz` safety backup of the current data is taken and the
+  database file is swapped. Backups from older app versions are upgraded by the
+  usual migrations. If anything fails, the current data stays as it was. The
+  backup being restored is never deleted by the safety backup's retention.
+  Scan photos stay in place on disk, so restoring the safety backup later brings
+  them back with their scans. A restore is
+  refused (409) while an import, a scan or a planner answer is running.
+
+API: `GET /api/backups`, `POST /api/backups`,
+`GET /api/backups/<name>/download`, `DELETE /api/backups/<name>`,
+`POST /api/backups/<name>/restore` with `{"confirm": true}`, and
+`POST /api/backups/restore-upload?confirm=1` with the `.db.gz` as an
+`application/gzip` body.
+
 ## Security
 
 **There is no authentication.** Anyone who can reach the app can read your
@@ -592,8 +631,9 @@ or basic auth in Caddy/nginx). Don't expose it to the internet as it is.
 
 State-changing API requests that a browser marks as cross-site (via
 `Sec-Fetch-Site` or an `Origin` that doesn't match the `Host`) are refused,
-and the API requires `application/json` / `text/csv` bodies, so other web pages
-open in a LAN browser can't trigger imports, scans or deck changes. This is not a
+and the API requires `application/json` / `text/csv` (backup upload:
+`application/gzip`) bodies, so other web pages open in a LAN browser can't
+trigger imports, restores, scans or deck changes. This is not a
 substitute for authentication.
 
 The Claude CLI runs without built-in tools or slash commands, but its two MCP
