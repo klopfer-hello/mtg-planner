@@ -8,6 +8,17 @@
 //
 // Images: gray = {w, h, d: Float32Array}; RGBA = {w, h, d: Uint8ClampedArray}.
 // Corners are always [TL, TR, BR, BL] as [x, y] in the image's pixel space.
+//
+// Two detector paths (v0.5.x): 'v2' (default) = detector A2 (det/detect.mjs)
+// anywhere in the frame + QuadTracker + a per-device learned box prior
+// (createDetAnalyzer, feeding capture.js CaptureController); 'v1' = the old
+// guide-frame finder (findCard, createAnalyzer, AutoCapture), kept unchanged as
+// the rollback (?det=v1 or localStorage mtg.scan.det = "v1", scanDetVersion()).
+// Also here: the scan sounds (Web Audio, synthesized, no files).
+
+import { detect, refine } from './det/detect.mjs';
+import { QuadTracker, BoxPrior, PRIOR_STORAGE_KEY, frameThumb, align } from './det/track.mjs';
+import { areaResample } from './fphash.js';
 
 /** Capture tuning. Values come from the synthetic-capture research; the UI may override. */
 export const CAPTURE_DEFAULTS = Object.freeze({
@@ -31,6 +42,8 @@ export const CAPTURE_DEFAULTS = Object.freeze({
   // black border can be detected instead of the outer edge.
   stripRegion: Object.freeze({ x0: -0.03, y0: 0.85, x1: 1.03, y1: 1.04 }),
   stripMaxWidth: 2400,
+  workShort: 480,         // v2: analysis canvas short side (detector A2 was tuned at 480)
+  photoLongSide: 1440,    // v2: takePhoto re-detect runs on a copy this long (long side)
 });
 
 const CARD_ASPECT = 63 / 88;
@@ -516,8 +529,8 @@ function makeCanvas(w, h) {
 const ctx2d = (c) => c.getContext("2d", { willReadFrequently: true });
 
 /** Draw a source rect of `src` scaled by k and return {img (RGBA), canvas}. */
-function grabRegion(src, rect, k) {
-  const c = makeCanvas(rect.w * k, rect.h * k), ctx = ctx2d(c);
+function grabRegion(src, rect, k, mk = makeCanvas) {
+  const c = mk(rect.w * k, rect.h * k), ctx = ctx2d(c);
   ctx.drawImage(src, rect.x, rect.y, rect.w, rect.h, 0, 0, c.width, c.height);
   const id = ctx.getImageData(0, 0, c.width, c.height);
   return { w: id.width, h: id.height, d: id.data };
@@ -569,46 +582,91 @@ function withTimeout(p, ms) {
 }
 
 /**
- * Try to refine the card corners inside a still photo whose framing differs
- * from the video (Android ImageCapture). Video is assumed to be the centred
- * crop of the photo at the same orientation; returns null if that fails.
+ * How a vw x vh video frame sits inside a pw x ph still: the video is assumed
+ * to be the centred crop of the photo at the same orientation. Returns
+ * {s, ox, oy} (photo = video * s + offset) or null when the orientations differ.
  */
-function mapToPhoto(bitmap, vw, vh, corners) {
-  const pw = bitmap.width, ph = bitmap.height;
-  if ((pw > ph) !== (vw > vh)) return null;
+export function photoMapping(pw, ph, vw, vh) {
+  if (!(pw > 0 && ph > 0 && vw > 0 && vh > 0) || (pw > ph) !== (vw > vh)) return null;
   let s, ox = 0, oy = 0;
   if (pw / ph < vw / vh) { s = pw / vw; oy = (ph - vh * s) / 2; } else { s = ph / vh; ox = (pw - vw * s) / 2; }
-  const mapped = scaleQuad(corners, s, s, ox, oy);
+  return { s, ox, oy };
+}
+
+/**
+ * Refine the card corners inside a still photo whose framing differs from the
+ * video (Android ImageCapture). The video corners are mapped with
+ * photoMapping(), then the card is re-detected in a downscaled copy of the
+ * photo: v1 = findCard at 720 px wide around the mapped quad, v2 = detector A2
+ * on a copy `photoLongSide` (1440) px long with the mapped quad as the temporal
+ * hint (corner order kept as the tracker had it). A re-detection more than
+ * maxDrift (8 %) of the card width away from the mapped quad is rejected:
+ * null = use the video frame instead.
+ * @param {{width:number,height:number}} bitmap the still (ImageBitmap, or any drawable for opts.grab)
+ * @param {object} [opts] {det 'v1'|'v2', detOpts (detect() options), grab(src, rect, k) → RGBA
+ *   (tests), photoLongSide, maxDrift, info (an object that receives {drift, reason, k})}
+ * @returns {number[][]|null} corners in photo pixels
+ */
+export function mapToPhoto(bitmap, vw, vh, corners, opts = {}) {
+  const { det = "v1", detOpts = {}, grab = grabRegion, photoLongSide = CAPTURE_DEFAULTS.photoLongSide, maxDrift = 0.08, info = {} } = opts;
+  const pw = bitmap.width, ph = bitmap.height;
+  const m = photoMapping(pw, ph, vw, vh);
+  if (!m) { info.reason = "orientation"; return null; }
+  const mapped = scaleQuad(corners, m.s, m.s, m.ox, m.oy);
   const b = quadBounds(mapped);
-  // Re-detect in a downscaled copy of the photo, using the mapped quad as the guide.
-  const k = Math.min(1, 720 / pw);
-  const small = grabRegion(bitmap, { x: 0, y: 0, w: pw, h: ph }, k);
-  const g = { x: b.x * k, y: b.y * k, w: b.w * k, h: b.h * k };
-  const fc = findCard(small, g, { work: 720 });
-  if (!fc || !fc.ok) return null;
-  const refined = scaleQuad(fc.corners, 1 / k);
-  if (cornerDrift(refined, mapped) > 0.08 * b.w) return null;
+  let refined = null;
+  if (det === "v2") {
+    const k = Math.min(1, photoLongSide / Math.max(pw, ph));
+    const small = grab(bitmap, { x: 0, y: 0, w: pw, h: ph }, k);
+    const kx = small.w / pw, ky = small.h / ph, short = Math.min(small.w, small.h);
+    info.k = k;
+    const prev = scaleQuad(mapped, kx, ky);
+    // gradient resolution like the 480-px work frame (k=2 there): integer box factor
+    const r = detect(small, { ...detOpts, prev, k: Math.max(2, Math.floor(short / 240)) });
+    if (!r.found || !r.corners) { info.reason = "not-found"; return null; }
+    const rf = refine(small, r.corners, { ...detOpts, scale: Math.max(1, short / 480) });
+    const q = rf.corners || r.corners, a = align(q, prev);
+    refined = scaleQuad([0, 1, 2, 3].map((i) => q[(i + a.s) & 3]), 1 / kx, 1 / ky);
+  } else {
+    // Re-detect in a downscaled copy of the photo, using the mapped quad as the guide.
+    const k = Math.min(1, 720 / pw);
+    const small = grab(bitmap, { x: 0, y: 0, w: pw, h: ph }, k);
+    info.k = k;
+    const g = { x: b.x * k, y: b.y * k, w: b.w * k, h: b.h * k };
+    const fc = findCard(small, g, { work: 720 });
+    if (!fc || !fc.ok) { info.reason = "not-found"; return null; }
+    refined = scaleQuad(fc.corners, 1 / k);
+  }
+  info.drift = cornerDrift(refined, mapped) / (b.w || 1);
+  if (info.drift > maxDrift) { info.reason = "drift"; return null; }
+  info.reason = null;
   return refined;
 }
 
 /**
  * Grab a still: ImageCapture.takePhoto() where available (Android Chrome, more
- * pixels), else the current video frame (iOS Safari). Returns
- * {source, w, h, corners, kind} with corners in the still's pixel space.
+ * pixels), else the current video frame (iOS Safari, or preferPhoto:false
+ * when the learned box prior makes the video corners exact). Returns
+ * {source, w, h, corners, kind, drift, reject} with corners in the still's
+ * pixel space (drift/reject: the photo re-detect, for the capture log).
  */
-export async function grabStill(video, track, corners, { preferPhoto = true, timeoutMs = 3500 } = {}) {
+export async function grabStill(video, track, corners, { preferPhoto = true, timeoutMs = 3500, det, detOpts } = {}) {
   const vw = video.videoWidth, vh = video.videoHeight;
+  let drift = null, reject = null;
   if (preferPhoto && track && typeof globalThis.ImageCapture === "function" && typeof createImageBitmap === "function") {
     try {
       const ic = new globalThis.ImageCapture(track);
       const blob = await withTimeout(ic.takePhoto(), timeoutMs);
       const bmp = await createImageBitmap(blob);
-      const q = mapToPhoto(bmp, vw, vh, corners);
-      if (q) return { source: bmp, w: bmp.width, h: bmp.height, corners: q, kind: "photo" };
+      const info = {};
+      const q = mapToPhoto(bmp, vw, vh, corners, { det: det || scanDetVersion(), detOpts, info });
+      drift = Number.isFinite(info.drift) ? Math.round(info.drift * 1e4) / 1e4 : null;
+      if (q) return { source: bmp, w: bmp.width, h: bmp.height, corners: q, kind: "photo", drift, reject: null };
+      reject = info.reason || "unknown";
       bmp.close?.();
-    } catch { /* fall back to the video frame */ }
+    } catch { reject = reject || "error"; /* fall back to the video frame */ }
   }
-  return { source: video, w: vw, h: vh, corners, kind: "video" };
+  return { source: video, w: vw, h: vh, corners, kind: "video", drift, reject };
 }
 
 /** Warp the region `region` (card fractions) of a still into an RGBA image. */
@@ -635,8 +693,10 @@ export function encodeJpeg(img, quality) {
 /**
  * Full capture: still -> rectified 1000x1400 card (q85) + high-res bottom
  * strip (q92). `corners` are the video-space corners from the analyser (or the
- * guide quad for a manual shot without a detected card).
- * Returns {card, strip, cardPreview (data URL), kind, stripSize}.
+ * guide quad for a manual shot without a detected card; v2: the tracker-smoothed
+ * corners). cfg: CAPTURE_DEFAULTS overrides plus grabStill options
+ * ({preferPhoto, det, detOpts}; v2 analyzers hand them out via captureOpts()).
+ * Returns {card, strip, cardPreview (data URL), kind, stripSize, drift, reject}.
  */
 export async function captureCard(video, track, corners, cfg = {}) {
   const c = { ...CAPTURE_DEFAULTS, ...cfg };
@@ -656,8 +716,532 @@ export async function captureCard(video, track, corners, cfg = {}) {
       cardPreview: `data:image/jpeg;base64,${cardB64}`,
       kind: still.kind,
       stripSize: [sw, sh],
+      drift: still.drift ?? null,
+      reject: still.reject ?? null,
     };
   } finally {
     if (still.source && still.source !== video) still.source.close?.();
   }
+}
+
+// ---------------------------------------------------------------------------
+// v2: detector A2 + tracker + learned box prior
+
+/** localStorage key that selects the detector path ("v1" | "v2"). */
+export const DET_STORAGE_KEY = "mtg.scan.det";
+
+function defaultStorage() {
+  try { return globalThis.localStorage || null; } catch { return null; }
+}
+
+/**
+ * Which detector path the scanner runs: ?det=v1|v2 in the URL (remembered in
+ * localStorage, because a home-screen PWA drops query parameters), else
+ * localStorage mtg.scan.det, else 'v2'.
+ * @param {{search?: string, storage?: Storage|null}} [env] overrides (tests)
+ * @returns {'v1'|'v2'}
+ */
+export function scanDetVersion(env = {}) {
+  const storage = "storage" in env ? env.storage : defaultStorage();
+  let q = null;
+  try {
+    const search = env.search ?? globalThis.location?.search ?? "";
+    q = new URLSearchParams(search).get("det");
+  } catch { q = null; }
+  if (q === "v1" || q === "v2") {
+    try { storage?.setItem(DET_STORAGE_KEY, q); } catch { /* private mode */ }
+    return q;
+  }
+  try {
+    const v = storage?.getItem(DET_STORAGE_KEY);
+    if (v === "v1" || v === "v2") return v;
+  } catch { /* blocked storage */ }
+  return "v2";
+}
+
+// bilinear luma sample of an RGBA image (continuous coords, edge clamped)
+function lumAt(img, x, y) {
+  const { w, h, d } = img;
+  x = Math.min(w - 1.001, Math.max(0, x - 0.5)); y = Math.min(h - 1.001, Math.max(0, y - 0.5));
+  const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0, i = (y0 * w + x0) * 4, j = i + w * 4;
+  const L = (o) => 0.299 * d[o] + 0.587 * d[o + 1] + 0.114 * d[o + 2];
+  return (L(i) * (1 - fx) + L(i + 4) * fx) * (1 - fy) + (L(j) * (1 - fx) + L(j + 4) * fx) * fy;
+}
+
+/**
+ * 12x16 luma thumbnail of a quad's region (4x4 bilinear samples per cell): the
+ * card-region motion signal of capture.js (cardMad).
+ */
+export function quadThumb(img, q, TW = 12, TH = 16) {
+  const t = new Float32Array(TW * TH);
+  for (let gy = 0; gy < TH; gy++) for (let gx = 0; gx < TW; gx++) {
+    let s = 0;
+    for (let k = 0; k < 16; k++) {
+      const u = (gx + ((k & 3) + 0.5) / 4) / TW, v = (gy + ((k >> 2) + 0.5) / 4) / TH;
+      const px = (1 - v) * ((1 - u) * q[0][0] + u * q[1][0]) + v * ((1 - u) * q[3][0] + u * q[2][0]);
+      const py = (1 - v) * ((1 - u) * q[0][1] + u * q[1][1]) + v * ((1 - u) * q[3][1] + u * q[2][1]);
+      s += lumAt(img, px, py);
+    }
+    t[gy * TW + gx] = s / 16;
+  }
+  return t;
+}
+
+/** Work-frame size for a vw x vh video at `short` px on the short side (never upscaled). */
+export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
+  const s = Math.min(1, short / Math.min(vw, vh));
+  return { W: Math.max(1, Math.round(vw * s)), H: Math.max(1, Math.round(vh * s)), s };
+}
+
+/**
+ * Frame analysis for the v2 path. Per analyze(now): the video is drawn at 480 px
+ * short side, detect(img, prior.opts(w, h)) → BoxPrior.noteFrame → QuadTracker;
+ * the prior observes each new stable outline while it is inactive (as in the
+ * research replay). Sharpness is measured on the tracked quad's bottom 14 % at
+ * full resolution. Glare (detection only, ~45 ms on a desktop CPU) runs on a
+ * rectified 500x700 card only once the track has been stable for glareDelayMs
+ * (800: a capture normally fires ~3 frames after stable, so the hint is for a
+ * card that sits still without being taken) and then every glareEveryMs (1500).
+ *
+ * FrameAnalysis (capture.js CaptureController.step() input): {vw, vh, found
+ * (a tracked outline this frame), weak (found, detection below the bar),
+ * accepted, stable, corners (smoothed, video px, TL,TR,BR,BL), rawCorners,
+ * jitter, drift, mode, score, orientConf, thumb (24x40), cardThumb (12x16),
+ * sharp, glare {advice, code, regions}, priorQuad (video px | null),
+ * priorLearned (box mode active), now, ms}.
+ *
+ * The learned box persists per device in localStorage mtg.scan.prior:
+ * loadPrior() on create, savePrior() after each accepted capture (it adds that
+ * capture to the prior first: the given video corners, else the last frame's
+ * accepted track, once per stable run).
+ *
+ * @param {HTMLVideoElement|{videoWidth:number, videoHeight:number}} video
+ * @param {object} [opts] {workShort, storage, makeCanvas (tests), prior/tracker (instances),
+ *   priorOpts, trackerOpts, glare (true), glareDelayMs (800), glareEveryMs (1500), now}
+ */
+export function createDetAnalyzer(video, opts = {}) {
+  const workShort = opts.workShort || CAPTURE_DEFAULTS.workShort;
+  const mk = opts.makeCanvas || makeCanvas;
+  const storage = "storage" in opts ? opts.storage : defaultStorage();
+  const clock = opts.now || (() => (globalThis.performance ? performance.now() : Date.now()));
+  const prior = opts.prior || new BoxPrior({ mode: "auto", ...(opts.priorOpts || {}) });
+  const tracker = opts.tracker || new QuadTracker(opts.trackerOpts || {});
+  const glareOn = opts.glare !== false, glareEveryMs = opts.glareEveryMs ?? 1500, glareDelayMs = opts.glareDelayMs ?? 800;
+  const noGlare = () => ({ advice: null, code: "ok", regions: null });
+  let work = null, strip = null, last = null, wasStable = false, runId = 0, addedRun = -1;
+  let glare = noGlare(), glareAt = -Infinity, stableSince = null;
+
+  const toVideo = (q, s) => (q ? q.map(([x, y]) => [x / s, y / s]) : null);
+
+  function sharpness(vw, vh, cornersV) {
+    const sr = quadBounds(regionQuad(cornersV, { x0: 0, y0: 0.86, x1: 1, y1: 1 }));
+    const sx = Math.max(0, sr.x), sy = Math.max(0, sr.y), sw = Math.min(vw - sx, sr.w), sh = Math.min(vh - sy, sr.h);
+    if (!(sw > 8 && sh > 4)) return 0;
+    const k = Math.min(1, 640 / sw), dw = Math.max(8, Math.round(sw * k)), dh = Math.max(4, Math.round(sh * k));
+    if (!strip || strip.width !== dw || strip.height !== dh) strip = mk(dw, dh);
+    const sctx = ctx2d(strip);
+    sctx.drawImage(video, sx, sy, sw, sh, 0, 0, dw, dh);
+    const sd = sctx.getImageData(0, 0, dw, dh);
+    return laplacianVariance(toGray({ w: dw, h: dh, d: sd.data }));
+  }
+
+  // full-res video region around `quad`, drawn so the card is ~targetW*1.3 wide, rectified to outW x outH
+  function rectify(quad, targetW, outW, outH) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const xs = quad.map((p) => p[0]), ys = quad.map((p) => p[1]);
+    const x = Math.max(0, Math.floor(Math.min(...xs))), y = Math.max(0, Math.floor(Math.min(...ys)));
+    const w = Math.min(vw, Math.ceil(Math.max(...xs))) - x, h = Math.min(vh, Math.ceil(Math.max(...ys))) - y;
+    if (!(w >= 4 && h >= 4)) return null;
+    const k = Math.min(1, (targetW * 1.3) / quadSize(quad).w);
+    const img = grabRegion(video, { x, y, w, h }, k, mk);
+    const kx = img.w / w, ky = img.h / h;
+    return warpQuad(img, quad.map(([a, b]) => [(a - x) * kx, (b - y) * ky]), outW, outH);
+  }
+
+  function analyze(now = clock()) {
+    const t0 = clock();
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return null;
+    const { W, H, s } = workSize(vw, vh, workShort);
+    if (!work || work.width !== W || work.height !== H) work = mk(W, H);
+    const wctx = ctx2d(work);
+    wctx.drawImage(video, 0, 0, W, H);
+    const id = wctx.getImageData(0, 0, W, H), img = { w: W, h: H, d: id.data };
+    const po = prior.opts(W, H);
+    let r;
+    try { r = detect(img, po); } catch { r = { found: false, weak: false, corners: null }; }
+    prior.noteFrame(r);
+    const tr = tracker.update(r);
+    if (tr.stable && !wasStable) {
+      runId++;
+      stableSince = now;
+      if (!prior.active && tr.corners) prior.observe(tr.corners, W, H);
+    }
+    wasStable = Boolean(tr.stable);
+    const seen = Boolean(tr.corners && tr.seen && tr.found);
+    const corners = seen ? toVideo(tr.corners, s) : null;
+    let sharp = null;
+    if (corners) { try { sharp = sharpness(vw, vh, corners); } catch { sharp = null; } }
+    const stable = Boolean(seen && tr.stable);
+    if (!seen) glare = noGlare();
+    else if (glareOn && stable && now - stableSince >= glareDelayMs && now - glareAt >= glareEveryMs) {
+      glareAt = now;
+      try {
+        const card = rectify(corners, 500, 500, 700);
+        if (card) {
+          const g = glareMap(card), code = captureAdvice(g, null);
+          glare = { advice: code === "ok" ? null : ADVICE_HINTS[code], code, regions: g.regions };
+        }
+      } catch { /* glare is advisory only */ }
+    }
+    const pq = (po.prior && po.prior.quad) || prior.learnedQuad(W, H);
+    last = { W, H, s, tr, seen, mode: r.mode || "free", runId };
+    return {
+      vw, vh, found: seen, weak: Boolean(seen && !tr.accepted), accepted: Boolean(seen && tr.accepted), stable,
+      corners, rawCorners: r.corners ? toVideo(r.corners, s) : null,
+      jitter: Number.isFinite(tr.jitter) ? tr.jitter : null, drift: Number.isFinite(tr.drift) ? tr.drift : null,
+      mode: r.mode || "free", score: Number.isFinite(r.score) ? r.score : null,
+      orientConf: Number.isFinite(r.orientConf) ? r.orientConf : null,
+      thumb: frameThumb(img), cardThumb: seen ? quadThumb(img, tr.corners) : null,
+      sharp, glare, priorQuad: pq ? toVideo(pq, s) : null, priorLearned: Boolean(prior.active),
+      now, ms: clock() - t0,
+    };
+  }
+
+  /** Hash source for capture.js: full-res crop around `quad` (~488x680 card) area-reduced to 244x340 (RGB, channels 3). */
+  function hashCrop(quad) {
+    if (!quad) return null;
+    const card = rectify(quad, 488, 488, 680);
+    if (!card) return null;
+    const data = areaResample({ width: 488, height: 680, channels: 4, data: card.d }, [0, 0, 1, 1], 244, 340);
+    return { width: 244, height: 340, channels: 3, data };
+  }
+
+  function loadPrior() {
+    try {
+      const raw = storage?.getItem(PRIOR_STORAGE_KEY);
+      return raw ? prior.restore(JSON.parse(raw)) : false;
+    } catch { return false; }
+  }
+
+  /**
+   * After an accepted capture: add it to the prior (video corners, else the last
+   * frame's accepted track once per stable run), then persist the learned box.
+   */
+  function savePrior(cornersV = null) {
+    const L = last;
+    if (L) {
+      let q = null;
+      if (cornersV) q = cornersV.map(([x, y]) => [x * L.s, y * L.s]);
+      else if (L.seen && L.tr.accepted && L.runId !== addedRun) q = L.tr.corners;
+      if (q) { prior.add(q, L.W, L.H, L.mode === "box"); addedRun = L.runId; }
+    }
+    try {
+      const j = prior.toJSON();
+      if (j) storage?.setItem(PRIOR_STORAGE_KEY, JSON.stringify(j));
+      else storage?.removeItem(PRIOR_STORAGE_KEY);
+    } catch { /* storage full or blocked */ }
+  }
+
+  /** New session (camera restart): tracker cleared, the learned box re-read from storage. */
+  function reset() {
+    tracker.reset();
+    prior.caps = []; prior.misses = 0; prior.dormant = false;
+    wasStable = false; last = null; addedRun = -1;
+    glare = noGlare(); glareAt = -Infinity; stableSince = null;
+    loadPrior();
+  }
+
+  /** Forget the learned box on this device. */
+  function forgetPrior() {
+    prior.forget();
+    try { storage?.removeItem(PRIOR_STORAGE_KEY); } catch { /* ignore */ }
+  }
+
+  /** captureCard/grabStill options: the video frame while the box prior is active (corners exact), else takePhoto + A2 re-detect. */
+  function captureOpts() {
+    return { det: "v2", preferPhoto: !prior.active };
+  }
+
+  /** The last analysed work frame (480 px short side) as base64 JPEG (record session), or null. */
+  function frameJpeg(quality = 0.7) {
+    if (!work || typeof work.toDataURL !== "function") return null;
+    const url = work.toDataURL("image/jpeg", quality);
+    return url.slice(url.indexOf(",") + 1);
+  }
+
+  loadPrior();
+  return { analyze, prior, tracker, reset, hashCrop, savePrior, loadPrior, forgetPrior, captureOpts, frameJpeg };
+}
+
+// ---------------------------------------------------------------------------
+// Glare (detection only), ported from the scanner research (glare.mjs): a
+// specular highlight on the collector line or the title is fatal for OCR, one
+// on the art hurts the fingerprint. Input: a rectified card {w, h, d RGBA}.
+
+/** Card layout (fractions of the rectified card). */
+export const CARD_REGIONS = Object.freeze({
+  title: Object.freeze({ x0: 0.05, y0: 0.035, x1: 0.95, y1: 0.105 }),
+  art: Object.freeze({ x0: 0.07, y0: 0.11, x1: 0.93, y1: 0.555 }),
+  typeLine: Object.freeze({ x0: 0.05, y0: 0.555, x1: 0.95, y1: 0.625 }),
+  textBox: Object.freeze({ x0: 0.07, y0: 0.625, x1: 0.93, y1: 0.92 }),
+  collector: Object.freeze({ x0: 0.03, y0: 0.925, x1: 0.97, y1: 0.995 }),
+});
+
+export const GLARE_DEFAULTS = Object.freeze({
+  workWidth: 500, border: 0.025, whitePct: 0.92, whiteMargin: 12, coreMin: 215, coreMax: 249, coreSat: 0.22,
+  growDrop: 28, growSat: 0.32, growAboveWhite: 6, openRadius: 2, minArea: 0.00012, ringNear: 3, ringFar: 9,
+  minContrast: 22, peakMin: 240, minFill: 0.2,
+});
+
+/** Per-region glare fraction that blocks a capture (research values; G3 validates them). */
+export const ADVICE_LIMITS = Object.freeze({ collector: 0.004, title: 0.02, art: 0.05, sharpFloor: 60 });
+
+export const ADVICE_HINTS = Object.freeze({
+  ok: "",
+  "glare-collector": "Reflection on the bottom line: tilt slightly",
+  "glare-title": "Reflection on the name: tilt slightly",
+  "glare-art": "Reflection on the picture: tilt slightly",
+  "too-blurry": "Too blurry: hold still or more light",
+});
+
+function glarePlanes(img, f) {
+  const mw = Math.floor(img.w / f), mh = Math.floor(img.h / f), n = mw * mh;
+  const Y = new Float32Array(n), S = new Float32Array(n), d = img.d, inv = 1 / (f * f);
+  for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+    let r = 0, g = 0, b = 0;
+    for (let yy = 0; yy < f; yy++) {
+      let p = ((y * f + yy) * img.w + x * f) * 4;
+      for (let xx = 0; xx < f; xx++, p += 4) { r += d[p]; g += d[p + 1]; b += d[p + 2]; }
+    }
+    r *= inv; g *= inv; b *= inv;
+    const i = y * mw + x, mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    Y[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+    S[i] = mx > 1 ? (mx - mn) / mx : 0;
+  }
+  return { Y, S, mw, mh };
+}
+
+// separable square erosion ('min') / dilation ('max') of a 0/1 mask; outside pixels are ignored
+function morph(mask, w, h, r, op) {
+  if (r <= 0) return mask.slice();
+  const pass = (src, horiz) => {
+    const dst = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let v = op === "min" ? 1 : 0;
+      for (let k = -r; k <= r; k++) {
+        const xx = horiz ? x + k : x, yy = horiz ? y : y + k;
+        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+        const m = src[yy * w + xx];
+        if (op === "min" ? !m : m) { v = op === "min" ? 0 : 1; break; }
+      }
+      dst[y * w + x] = v;
+    }
+    return dst;
+  };
+  return pass(pass(mask, true), false);
+}
+
+function percentileY(Y, w, inner, p) {
+  const hist = new Uint32Array(256);
+  let n = 0;
+  for (let y = inner.y0; y < inner.y1; y++) for (let x = inner.x0; x < inner.x1; x++) { hist[Math.min(255, Y[y * w + x] | 0)]++; n++; }
+  let acc = 0;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= p * n) return v; }
+  return 255;
+}
+
+/**
+ * Specular highlights on a rectified card: compact, near-saturated, low-saturation
+ * blobs brighter than the card's paper white and than their surroundings (white
+ * borders, thin white text and white frames do not fire).
+ * @returns {{mask:Uint8Array, mw:number, mh:number, fraction:number, regions:object, whiteRef:number, overexposed:boolean}}
+ */
+export function glareMap(rgba, opts = {}) {
+  const o = { ...GLARE_DEFAULTS, ...opts };
+  const f = Math.max(1, Math.round(rgba.w / o.workWidth));
+  const { Y, S, mw, mh } = glarePlanes(rgba, f);
+  const n = mw * mh, bx = Math.round(o.border * mw);
+  const inner = { x0: bx, y0: bx, x1: mw - bx, y1: mh - bx };
+  const whiteRef = percentileY(Y, mw, inner, o.whitePct);
+  const coreT = Math.min(o.coreMax, Math.max(o.coreMin, whiteRef + o.whiteMargin));
+  // never grow into paper white: that would swallow white text boxes next to a highlight
+  const growT = Math.max(coreT - o.growDrop, whiteRef + o.growAboveWhite);
+  const core = new Uint8Array(n), grow = new Uint8Array(n);
+  for (let y = inner.y0; y < inner.y1; y++) for (let x = inner.x0; x < inner.x1; x++) {
+    const i = y * mw + x;
+    if (Y[i] >= coreT && S[i] <= o.coreSat) core[i] = 1;
+    if (Y[i] >= growT && S[i] <= o.growSat) grow[i] = 1;
+  }
+  const opened = morph(morph(core, mw, mh, o.openRadius, "min"), mw, mh, o.openRadius, "max");
+  // hysteresis grow from the opened cores, then label components (4-connected)
+  const label = new Int32Array(n), queue = new Int32Array(n), comps = [];
+  for (let s0 = 0; s0 < n; s0++) {
+    if (!opened[s0] || !core[s0] || label[s0]) continue;
+    const id = comps.length + 1;
+    let qh = 0, qt = 0; queue[qt++] = s0; label[s0] = id;
+    let area = 0, sumY = 0, maxY = 0, x0 = mw, y0 = mh, x1 = 0, y1 = 0;
+    while (qh < qt) {
+      const i = queue[qh++], x = i % mw, y = (i / mw) | 0;
+      area++; sumY += Y[i]; if (Y[i] > maxY) maxY = Y[i];
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      const nb = [x > 0 ? i - 1 : -1, x < mw - 1 ? i + 1 : -1, y > 0 ? i - mw : -1, y < mh - 1 ? i + mw : -1];
+      for (const j of nb) if (j >= 0 && !label[j] && grow[j]) { label[j] = id; queue[qt++] = j; }
+    }
+    comps.push({ id, area, maxY, meanY: sumY / area, bbox: [x0, y0, x1, y1], ringSum: 0, ringN: 0 });
+  }
+  if (comps.length) {
+    // ring contrast: multi-source BFS outward (Voronoi labels); ring pixels at ringNear..ringFar vote
+    const dist = new Uint8Array(n).fill(255), own = new Int32Array(n);
+    let qh = 0, qt = 0;
+    for (let i = 0; i < n; i++) if (label[i]) { dist[i] = 0; own[i] = label[i]; queue[qt++] = i; }
+    while (qh < qt) {
+      const i = queue[qh++], dd = dist[i];
+      if (dd >= o.ringFar) continue;
+      const x = i % mw, y = (i / mw) | 0;
+      const nb = [x > 0 ? i - 1 : -1, x < mw - 1 ? i + 1 : -1, y > 0 ? i - mw : -1, y < mh - 1 ? i + mw : -1];
+      for (const j of nb) if (j >= 0 && dist[j] === 255) {
+        dist[j] = dd + 1; own[j] = own[i]; queue[qt++] = j;
+        if (dd + 1 >= o.ringNear) { const c = comps[own[i] - 1]; c.ringSum += Y[j]; c.ringN++; }
+      }
+    }
+  }
+  const minArea = Math.max(4, o.minArea * n), keep = new Uint8Array(comps.length + 1);
+  for (const c of comps) {
+    const ring = c.ringN ? c.ringSum / c.ringN : c.meanY;
+    const fill = c.area / ((c.bbox[2] - c.bbox[0] + 1) * (c.bbox[3] - c.bbox[1] + 1));
+    if (c.area >= minArea && c.meanY - ring >= o.minContrast && c.maxY >= o.peakMin && fill >= o.minFill) keep[c.id] = 1;
+  }
+  const mask = new Uint8Array(n);
+  let total = 0;
+  for (let i = 0; i < n; i++) if (label[i] && keep[label[i]]) { mask[i] = 1; total++; }
+  const regions = {};
+  for (const [k, r] of Object.entries(CARD_REGIONS)) {
+    const xa = Math.floor(r.x0 * mw), xb = Math.ceil(r.x1 * mw), ya = Math.floor(r.y0 * mh), yb = Math.ceil(r.y1 * mh);
+    let c = 0, m = 0;
+    for (let y = ya; y < yb; y++) for (let x = xa; x < xb; x++) { c++; m += mask[y * mw + x]; }
+    regions[k] = c ? m / c : 0;
+  }
+  const innerN = (inner.x1 - inner.x0) * (inner.y1 - inner.y0);
+  return { mask, mw, mh, fraction: total / innerN, regions, whiteRef, overexposed: whiteRef >= 245 };
+}
+
+/**
+ * Capture advice from a glareMap and (optionally) the strip sharpness.
+ * @returns {'ok'|'glare-collector'|'glare-title'|'glare-art'|'too-blurry'} (hint: ADVICE_HINTS[code])
+ */
+export function captureAdvice(glare, sharpness, limits = {}) {
+  const L = { ...ADVICE_LIMITS, ...limits };
+  if (Number.isFinite(sharpness) && sharpness < L.sharpFloor) return "too-blurry";
+  const r = glare?.regions ?? {};
+  if ((r.collector ?? 0) > L.collector) return "glare-collector";
+  if ((r.title ?? 0) > L.title) return "glare-title";
+  if ((r.art ?? 0) > L.art) return "glare-art";
+  return "ok";
+}
+
+// ---------------------------------------------------------------------------
+// Scan sounds: a short blip when a scan is staged, a "cha-ching" when the card
+// is worth at least the threshold. Synthesized with Web Audio (no files).
+
+/** Per-device sound settings (the UI keeps them in localStorage mtg.scan.sound). */
+export const SOUND_DEFAULTS = Object.freeze({ enabled: true, threshold: 5 });
+const STAGED = new Set(["auto", "suggest", "confirmed"]);
+
+/**
+ * Which sound a scan answer gets (pure).
+ * `res`: the POST /api/scan response {scan, duplicate, result: {price_eur}}, or a
+ * +1 ({increment: true, price_eur} or the incremented scan row, last_action
+ * 'increment'). Staged auto/suggest/confirmed rows and +1s sound (cash when
+ * price_eur >= settings.threshold, default 5); review/failed rows, duplicate
+ * prompts, nothing staged and settings.enabled === false stay silent.
+ * @returns {'cash'|'success'|null}
+ */
+export function chooseScanSound(res, settings = {}) {
+  if (!res || typeof res !== "object") return null;
+  const cfg = { ...SOUND_DEFAULTS, ...(settings || {}) };
+  if (cfg.enabled === false) return null;
+  if (res.duplicate) return null;
+  const isIncrement = res.increment === true || res.kind === "increment" || res.last_action === "increment";
+  if (!isIncrement && (!res.scan || !STAGED.has(res.scan.match_status))) return null;
+  const price = [res.price_eur, res.result?.price_eur, res.scan?.price_eur].find((v) => typeof v === "number" && Number.isFinite(v));
+  const t = cfg.threshold === null || cfg.threshold === "" ? NaN : Number(cfg.threshold);
+  const thr = Number.isFinite(t) ? t : SOUND_DEFAULTS.threshold;
+  return price !== undefined && price >= thr ? "cash" : "success";
+}
+
+/**
+ * Web Audio scan sounds. unlock() on the user's Start tap (iOS only plays
+ * audio after a gesture); play('success'|'cash'). Never throws, never blocks;
+ * a no-op without AudioContext. Asks for the 'ambient' audio session where
+ * Safari offers it, so the silent switch mutes it.
+ * @param {{AudioContext?: Function}} [env] (tests)
+ */
+export function createScanSounds(env = {}) {
+  const AC = "AudioContext" in env ? env.AudioContext : (globalThis.AudioContext ?? globalThis.webkitAudioContext);
+  let ctx = null;
+
+  function ensure() {
+    if (ctx || typeof AC !== "function") return ctx;
+    try {
+      try { if (globalThis.navigator?.audioSession) globalThis.navigator.audioSession.type = "ambient"; } catch { /* ignore */ }
+      ctx = new AC();
+    } catch { ctx = null; }
+    return ctx;
+  }
+
+  async function unlock() {
+    try {
+      const c = ensure();
+      if (!c) return;
+      // iOS also reports "interrupted" (calls, other audio); resume from any non-running state
+      if (c.state !== "running" && c.resume) await c.resume();
+      // a silent one-sample buffer fully unlocks older iOS
+      const b = c.createBuffer(1, 1, c.sampleRate || 44100), s = c.createBufferSource();
+      s.buffer = b; s.connect(c.destination); s.start(0);
+    } catch { /* audio is optional */ }
+  }
+
+  function tone(c, out, t, freq, dur, peak, type = "sine") {
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(peak, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(out);
+    o.start(t); o.stop(t + dur + 0.02);
+  }
+
+  function noise(c, out, t, dur, peak, hp) {
+    const sr = c.sampleRate || 44100, n = Math.max(1, Math.round(sr * dur)), b = c.createBuffer(1, n, sr), d = b.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+    s.buffer = b; f.type = "highpass"; f.frequency.setValueAtTime(hp, t);
+    g.gain.setValueAtTime(peak, t);
+    s.connect(f); f.connect(g); g.connect(out);
+    s.start(t); s.stop(t + dur);
+  }
+
+  function play(kind) {
+    try {
+      const c = ensure();
+      if (!c || (kind !== "success" && kind !== "cash")) return;
+      if (c.state !== "running" && c.resume) Promise.resolve(c.resume()).catch(() => {});
+      const t = (c.currentTime || 0) + 0.01, out = c.createGain();
+      out.gain.setValueAtTime(0.5, t);
+      out.connect(c.destination);
+      if (kind === "success") {
+        // two-tone blip (A5 → E6), ~150 ms
+        tone(c, out, t, 880, 0.08, 0.35);
+        tone(c, out, t + 0.07, 1318.5, 0.09, 0.35);
+      } else {
+        // "cha": two short mechanical noise bursts; "ching": inharmonic bell partials; ~400 ms
+        noise(c, out, t, 0.06, 0.5, 2500);
+        noise(c, out, t + 0.07, 0.04, 0.35, 4000);
+        for (const [m, a, d] of [[1, 0.32, 0.3], [1.5, 0.1, 0.24], [2.76, 0.12, 0.2], [5.4, 0.06, 0.12]]) tone(c, out, t + 0.1, 1975.5 * m, d, a);
+      }
+    } catch { /* never break the scan flow */ }
+  }
+
+  return { unlock, play };
 }

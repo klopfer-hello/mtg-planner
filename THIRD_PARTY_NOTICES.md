@@ -87,6 +87,11 @@ for display; downloaded reference images are only used to compute local
 fingerprints and are not re-published. mtg-planner is not produced by or
 endorsed by Scryfall.
 
+The card detector's data files (`public/det/template.mjs`: mean card layout
+templates; `public/det/orientw.mjs`: orientation classifier weights) are
+small statistics derived from Scryfall card images. They contain no image,
+and no card image can be reconstructed from them.
+
 ## Magic: The Gathering
 
 Magic: The Gathering, card names, card text, mana symbols and card images are

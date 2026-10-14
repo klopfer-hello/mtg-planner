@@ -27,12 +27,13 @@ import * as indexModule from "./lib/cardindex.js";
 import { createScheduler, schedulerConfig } from "./lib/scheduler.js";
 import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker, checkJpegSize } from "./lib/fingerprint.js";
 import { ocrTools } from "./lib/ocr.js";
-import { decideFinish, identify, printingSummary } from "./lib/scanner.js";
+import { decideFinish, identify, printingSummary, scanPriceEur } from "./lib/scanner.js";
+import { DebugError, DebugSessions } from "./lib/debugsessions.js";
 import {
   BackupError, backupConfig, backupPath, createBackup, dbCounts, deleteBackup, gunzipToFile, listBackups, swapDatabase, validateBackupDb,
 } from "./lib/backups.js";
 import {
-  CONDITIONS, ScanError, commitScans, defaultImageDir, normFinish, deleteScan, exportCalibration, getScan, incrementScan,
+  CONDITIONS, ScanError, captureLog, commitScans, defaultImageDir, normFinish, deleteScan, exportCalibration, getScan, incrementScan,
   listScans, recordTruth, scanImagePath, scanStripPath, stageScan, undoLast, updateScan,
 } from "./lib/scans.js";
 import {
@@ -47,6 +48,11 @@ const JSON_LIMIT = 1024 * 1024;
 const CSV_LIMIT = 25 * 1024 * 1024;
 const MAX_MESSAGE_CHARS = 20000;
 const SCAN_LIMIT = 12 * 1024 * 1024;
+// /increment body ({capture}): the record is cut to 4 KB by sanitizeCapture;
+// the raw body may be a bit larger (a chip record with its evidence).
+const INCREMENT_LIMIT = 16 * 1024;
+// Record session frame upload: ≤ 300 KB JPEG as base64 plus a decision record.
+const DEBUG_FRAME_LIMIT = 512 * 1024;
 const SCAN_MAX_CONCURRENT = Math.max(1, Number(process.env.SCAN_MAX_CONCURRENT) || 2);
 const STORAGE_LANGS = ["en", "de", "fr", "it", "es", "pt", "ja", "ko", "ru", "zhs", "zht"];
 const INDEX_FILE = process.env.INDEX_DB_FILE || "/data/cardindex.db";
@@ -645,6 +651,15 @@ function scanSettings(raw = {}) {
   return { storageLang, foil, setHint, condition };
 }
 
+/** Optional capture-controller fields of a scan request: {capture, dupOf}. */
+function captureFields(body) {
+  const capture = body.capture ?? null;
+  if (capture !== null && (typeof capture !== "object" || Array.isArray(capture))) throw new HttpError(400, "capture must be an object");
+  const dupOf = body.dup_of == null ? null : Number(body.dup_of);
+  if (dupOf != null && !(Number.isInteger(dupOf) && dupOf > 0)) throw new HttpError(400, "dup_of must be a scan id");
+  return { capture, dupOf };
+}
+
 /** identify() result without the bulky calibration features. */
 function resultSummary(r) {
   return {
@@ -675,6 +690,7 @@ async function postScan(req, res) {
   const gone = new AbortController();
   res.on("close", () => { if (!res.writableFinished) gone.abort(new Error("client closed the request")); });
   const body = await readJson(req, SCAN_LIMIT);
+  const { capture, dupOf } = captureFields(body);
   requireIndex();
   if (!indexReady()) throw new HttpError(503, "The card index is still being built; try again when it is ready");
   const card = decodeImage(body.card, "card", { maxPixels: MAX_CARD_PIXELS });
@@ -697,8 +713,13 @@ async function postScan(req, res) {
   if (gone.signal.aborted) throw new HttpError(499, "Scan cancelled: the client closed the request");
   const staged = stageScan(db, result, {
     image: card, strip, force: body.force === true, condition: settings.condition, calibration: body.calibration === true, replaceId,
+    dupOf, capture,
   });
-  return { scan: staged.scan, duplicate: staged.duplicate, result: resultSummary(result) };
+  // EUR price of the stored printing + finish: the UI picks the scan sound by it.
+  const price = await scanPriceEur(result, {
+    db, lookupEn: (p) => indexLookup("storagePrinting", p, "en").catch(() => null),
+  });
+  return { scan: staged.scan, duplicate: staged.duplicate, result: { ...resultSummary(result), ...price } };
 }
 
 async function postManualScan(req) {
@@ -753,6 +774,7 @@ async function handleScanApi(req, res, url) {
     return sendJson(res, 200, listScans(db, { status }));
   }
   if (pathname === "/api/scans/undo" && method === "POST") return sendJson(res, 200, undoLast(db));
+  if (pathname === "/api/scans/capture-log" && method === "GET") return sendJson(res, 200, captureLog(db));
   if (pathname === "/api/scans/manual" && method === "POST") return sendJson(res, 201, await postManualScan(req));
   if (pathname === "/api/scans/commit" && method === "POST") {
     const body = await readJson(req);
@@ -769,7 +791,9 @@ async function handleScanApi(req, res, url) {
     }
     if (m[2] === "increment") {
       if (method !== "POST") throw new HttpError(405, "Method not allowed");
-      return sendJson(res, 200, scanCall(() => incrementScan(db, id)));
+      const body = await readJson(req, INCREMENT_LIMIT);
+      const { capture } = captureFields({ capture: body.capture });
+      return sendJson(res, 200, scanCall(() => incrementScan(db, id, { capture })));
     }
     if (m[2] === "truth") {
       if (method !== "POST") throw new HttpError(405, "Method not allowed");
@@ -915,6 +939,37 @@ function matcherHealth() {
   if (!matcher) return { state: "unavailable" };
   if (matcher instanceof MatcherWorker) return matcher.status();
   return { state: "in-process", size: matcher.size, load_ms: matcher.loadMs ?? null };
+}
+
+// ---------------------------------------------------------------------------
+// Record session (Scan settings switch): small frames + capture decision
+// records for offline replay (lib/debugsessions.js). Not part of backups.
+
+const debugSessions = new DebugSessions();
+
+async function handleDebugApi(req, res, url) {
+  const { pathname } = url;
+  const method = req.method;
+  const call = (fn) => { try { return fn(); } catch (err) { throw err instanceof DebugError ? new HttpError(err.status, err.message) : err; } };
+  if (pathname === "/api/debug/frames" && method === "POST") {
+    const body = await readJson(req, DEBUG_FRAME_LIMIT);
+    let frame = null;
+    if (body.jpeg != null && body.jpeg !== "") {
+      if (typeof body.jpeg !== "string") throw new HttpError(400, "jpeg must be a base64 string");
+      frame = Buffer.from(body.jpeg.replace(/^data:image\/jpeg;base64,/, ""), "base64");
+    }
+    call(() => debugSessions.add({ session: body.session, seq: body.seq, frame, record: body.record ?? undefined }));
+    return sendEmpty(res);
+  }
+  if (pathname === "/api/debug/sessions" && method === "GET") return sendJson(res, 200, { sessions: call(() => debugSessions.list()) });
+  const m = /^\/api\/debug\/sessions\/([^/]+)$/.exec(pathname);
+  if (m && method === "DELETE") {
+    let id;
+    try { id = decodeURIComponent(m[1]); } catch { throw new HttpError(400, "Invalid session id"); }
+    if (!call(() => debugSessions.delete(id))) throw new HttpError(404, "Session not found");
+    return sendEmpty(res);
+  }
+  throw new HttpError(404, "Not found");
 }
 
 // ---------------------------------------------------------------------------
@@ -1225,6 +1280,7 @@ async function handleApi(req, res, url) {
     const handled = await handleScanApi(req, res, url);
     if (handled !== null) return handled;
   }
+  if (pathname.startsWith("/api/debug/")) return handleDebugApi(req, res, url);
 
   throw new HttpError(404, "Not found");
 }

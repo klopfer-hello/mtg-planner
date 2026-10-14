@@ -586,6 +586,17 @@ ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
 .pill.s-stable .dot, .pill.s-capture .dot { background: #62d18d; }
 .pill.s-cooldown .dot { background: #f0c062; }
 .pill.s-busy .dot { background: #fff; animation: blink 1s infinite both; }
+.pill.s-weak .dot { background: #f5e050; }
+.pill.s-rec .dot { background: #ff5a4f; animation: blink 1.4s infinite both; }
+.cam-hud .pills { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+/* "Same card again?" chip (scanner v2): one at a time, next to the result card */
+.same-chip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--radius);
+  border: 1px solid var(--border); border-left: 6px solid var(--warn); background: var(--surface); box-shadow: var(--shadow);
+}
+.same-chip .grow { min-width: 0; font-weight: 700; }
+.rec-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.num-input { width: 6.5em; }
 .cam-btn {
   appearance: none; width: 48px; height: 48px; border-radius: 50%; border: 0; cursor: pointer;
   display: grid; place-items: center; background: rgba(0, 0, 0, .58); color: #fff;
@@ -3716,7 +3727,8 @@ const BOARDS = [["main", "Main deck"], ["side", "Sideboard"], ["commander", "Com
 const FINISH_LABEL = { nonfoil: "Non-foil", foil: "Foil", etched: "Etched" };
 const STATUS_LABEL = { auto: "✓ matched", suggest: "? confirm", review: "✗ pick", failed: "✗ unknown", duplicate: "= same as last" };
 const STATUS_COLOR = { auto: "#62d18d", suggest: "#f0c062", duplicate: "#f0c062", review: "#ff8274", failed: "#ff8274", error: "#ff8274" };
-const SCAN_DEFAULTS = { storageLang: "en", foil: "auto", condition: "near_mint", setHint: "", sound: true, auto: true, photo: true, calibration: false };
+// (Sound settings moved to mtg.scan.sound, see loadSoundSettings.)
+const SCAN_DEFAULTS = { storageLang: "en", foil: "auto", condition: "near_mint", setHint: "", auto: true, photo: true, calibration: false };
 
 /** Array from an API answer that may be a bare array or wrap it in a key. */
 const asList = (d, ...keys) => (Array.isArray(d) ? d : keys.map((k) => d?.[k]).find(Array.isArray) || []);
@@ -3776,38 +3788,64 @@ const candidatesOf = (result, scan) => {
 };
 
 // ---------------------------------------------------------------------------
-// Feedback: short beep (WebAudio, unlocked on the "Start camera" tap) + vibration
+// Feedback: scan sounds (scanlib createScanSounds, Web Audio unlocked on the
+// "Start camera" tap) + vibration. Sound settings are per device in
+// localStorage mtg.scan.sound {enabled, threshold}: a staged scan plays the
+// success blip, or the cash sound when its EUR price is >= threshold.
 
-let audioCtx = null;
-function unlockAudio() {
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!audioCtx && AC) audioCtx = new AC();
-    audioCtx?.resume?.();
-  } catch { /* no audio */ }
-}
-function beep(kind) {
-  if (!audioCtx) return;
-  try {
-    const tones = { auto: [[1320, 0.09]], suggest: [[880, 0.08], [1100, 0.08]], duplicate: [[700, 0.07], [700, 0.07]] };
-    const seq = tones[kind] || [[300, 0.22]];
-    let t = audioCtx.currentTime + 0.01;
-    for (const [f, dur] of seq) {
-      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-      o.frequency.value = f;
-      o.type = kind === "auto" || kind === "suggest" ? "sine" : "square";
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.connect(g); g.connect(audioCtx.destination);
-      o.start(t); o.stop(t + dur + 0.02);
-      t += dur + 0.05;
-    }
-  } catch { /* ignore */ }
+const SOUND_DEFAULTS = { enabled: true, threshold: 5 };
+function loadSoundSettings() {
+  const s = store.get("mtg.scan.sound", null);
+  // Before v0.5.0 the on/off switch lived in mtg.scan.settings.sound ("Beep on scan").
+  const legacy = store.get("mtg.scan.settings", {})?.sound;
+  const enabled = typeof s?.enabled === "boolean" ? s.enabled : legacy !== false;
+  const t = Number(s?.threshold);
+  return { enabled, threshold: Number.isFinite(t) && t >= 0 ? t : SOUND_DEFAULTS.threshold };
 }
 function vibrate(kind) {
-  try { navigator.vibrate?.(kind === "auto" ? 40 : kind === "suggest" || kind === "duplicate" ? [30, 60, 30] : [120, 60, 120]); } catch { /* ignore */ }
+  try { navigator.vibrate?.(kind === "auto" || kind === "increment" ? 40 : kind === "suggest" || kind === "duplicate" ? [30, 60, 30] : [120, 60, 120]); } catch { /* ignore */ }
 }
+
+// Scanner version: scanlib's scanDetVersion() reads ?det=v1|v2, else localStorage
+// mtg.scan.det (a plain string), default v2. The settings choice writes that key.
+const SCAN_DET_KEY = "mtg.scan.det";
+function detUrlOverride() {
+  try { const v = new URLSearchParams(window.location.search).get("det"); return v === "v1" || v === "v2" ? v : null; } catch { return null; }
+}
+function readDetChoice() {
+  try { return localStorage.getItem(SCAN_DET_KEY) === "v1" ? "v1" : "v2"; } catch { return "v2"; }
+}
+function writeDetChoice(v) {
+  try { localStorage.setItem(SCAN_DET_KEY, v); } catch { /* private mode: this session only */ }
+}
+
+// Record session (scanner tuning data): small frames + capture decision
+// records go to POST /api/debug/frames. Off by default, auto-off after 15 min.
+const RECORD_MAX_MS = 15 * 60 * 1000;
+const RECORD_EVERY_MS = 500;
+const RECORD_MAX_B64 = 300 * 1024;
+function newRecordSession() {
+  const d = new Date(), p = (n) => String(n).padStart(2, "0");
+  const rnd = Math.random().toString(36).slice(2, 6).padEnd(4, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${rnd}`;
+}
+/**
+ * Capture tuning overrides for field tests (CaptureController cfg): localStorage
+ * mtg.scan.capture (JSON object), then ?scancfg=<JSON> in the URL on top.
+ * capture.js validates them and ignores unknown keys / wrong types.
+ */
+function readCaptureOverrides() {
+  let over = {};
+  const saved = store.get("mtg.scan.capture", null);
+  if (saved && typeof saved === "object" && !Array.isArray(saved)) over = { ...saved };
+  try {
+    const q = new URLSearchParams(window.location.search).get("scancfg");
+    const u = q ? JSON.parse(q) : null;
+    if (u && typeof u === "object" && !Array.isArray(u)) over = { ...over, ...u };
+  } catch { /* malformed ?scancfg */ }
+  return over;
+}
+const fmtElapsed = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 
 function cameraErrorMessage(e) {
   const n = e?.name;
@@ -3818,9 +3856,16 @@ function cameraErrorMessage(e) {
 }
 
 // ---------------------------------------------------------------------------
-// Camera view: stream, analysis loop, overlay, auto/manual capture
+// Camera view: stream, analysis loop, overlay, auto/manual capture.
+// v2 (default): detector A2 + CaptureController (public/capture.js) + upload
+// queue. v1 (?det=v1 or the "classic" setting): the old findCard/AutoCapture
+// path, kept unchanged as the fallback for v0.5.x.
 
-function CameraView({ lib, active, settings, busy, paused, flash, rearmKey, onCapture, onError }) {
+function CameraView(props) {
+  return props.v2 ? <CameraViewV2 {...props} /> : <CameraViewV1 {...props} />;
+}
+
+function CameraViewV1({ lib, active, settings, busy, paused, flash, rearmKey, onCapture, onError, onUnlock }) {
   const videoRef = useRef(null);
   const overlayRef = useRef(null);
   const streamRef = useRef(null);
@@ -3852,7 +3897,7 @@ function CameraView({ lib, active, settings, busy, paused, flash, rearmKey, onCa
 
   const start = async () => {
     if (!lib || cam.state === "starting") return;
-    unlockAudio();
+    onUnlock?.();
     const gen = ++genRef.current;
     const stale = () => gen !== genRef.current || !activeRef.current || document.hidden;
     setCam({ state: "starting", error: null, vw: 0, vh: 0 });
@@ -4029,6 +4074,336 @@ function CameraView({ lib, active, settings, busy, paused, flash, rearmKey, onCa
             <button type="button" className="shutter" aria-label="Take scan now" disabled={busy || paused}
               onClick={() => shoot(obsRef.current, "manual")} />
             <button type="button" className="cam-btn" aria-label="Scan this card again" title="Re-arm auto capture" onClick={() => acRef.current?.rearm()}><Icon.refresh /></button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Pill dot colour per CaptureController state.
+const V2_PHASE = { searching: "searching", tracking: "tracking", settling: "tracking", capture: "capture", pending: "busy", cooldown: "cooldown", idle: "stable", stuck: "searching", fallback: "capture", paused: "searching" };
+
+/**
+ * Scanner v2 camera: detector A2 (scanlib createDetAnalyzer) feeds the shared
+ * CaptureController (ctlRef, owned by ScanTab so upload answers reach it);
+ * shots go to onUpload as queue items. No guide mask: the card may lie
+ * anywhere; a learned box prior is drawn faintly. Also uploads the record
+ * session frames while `record` is set.
+ */
+function CameraViewV2({ lib, ctlRef, detRef, active, settings, paused, flash, queued, record, buildPayload, onUpload, onChip, onRecorded, onError, onUnlock }) {
+  const videoRef = useRef(null);
+  const overlayRef = useRef(null);
+  const streamRef = useRef(null);
+  const trackRef = useRef(null);
+  const obsRef = useRef(null);
+  const capturingRef = useRef(false);
+  const recRef = useRef({ session: null, seq: 0, last: 0, busy: false, queue: [], frames: 0, bytes: 0, errors: 0 });
+  const live = useRef({});
+  live.current = { paused, auto: settings.auto, photo: settings.photo, flash, record, queued, buildPayload, onUpload, onChip, onRecorded, onError };
+  const [cam, setCam] = useState({ state: "off", error: null, vw: 0, vh: 0 });
+  const [status, setStatus] = useState({ phase: "searching", hint: "" });
+  const [torch, setTorchState] = useState({ supported: null, on: false });
+  const [dbg, setDbg] = useState(null); // ?scandebug=1: detector timing + controller state
+  const debugOn = useMemo(() => { try { return new URLSearchParams(window.location.search).get("scandebug") === "1"; } catch { return false; } }, []);
+  const genRef = useRef(0);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  // A held "+1?" photo is never lost: stop, tab change and page hide upload it (dup_of).
+  const stop = useCallback(() => {
+    genRef.current++;
+    try { const h = ctlRef.current?.takeHeld(); if (h) live.current.onUpload?.(h); } catch { /* ignore */ }
+    live.current.onChip?.(null);
+    if (lib) lib.stopStream(streamRef.current);
+    else streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    trackRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setCam((c) => (c.state === "off" || c.state === "error" ? c : { ...c, state: "off" }));
+    setTorchState((t) => ({ ...t, on: false }));
+  }, [lib, ctlRef]);
+
+  const start = async () => {
+    if (!lib || cam.state === "starting") return;
+    onUnlock?.();
+    const gen = ++genRef.current;
+    const stale = () => gen !== genRef.current || !activeRef.current || document.hidden;
+    setCam({ state: "starting", error: null, vw: 0, vh: 0 });
+    try {
+      const stream = await lib.openCamera();
+      if (stale()) {
+        lib.stopStream(stream);
+        if (gen === genRef.current) stop();
+        return;
+      }
+      streamRef.current = stream;
+      const track = stream.getVideoTracks()[0];
+      trackRef.current = track;
+      track?.addEventListener?.("ended", () => { stop(); setCam({ state: "error", error: "The camera stopped (another app may have taken it).", vw: 0, vh: 0 }); });
+      const v = videoRef.current;
+      v.muted = true;
+      v.setAttribute("playsinline", "");
+      v.setAttribute("muted", "");
+      v.srcObject = stream;
+      await v.play().catch(() => {});
+      if (!v.videoWidth) {
+        await new Promise((res) => { v.addEventListener("loadedmetadata", res, { once: true }); setTimeout(res, 4000); });
+      }
+      if (stale()) { if (gen === genRef.current) stop(); return; }
+      lib.preferContinuousFocus(track);
+      setTorchState({ supported: lib.torchCapability(track), on: false });
+      ctlRef.current?.reset();
+      setCam({ state: "on", error: null, vw: v.videoWidth, vh: v.videoHeight });
+    } catch (e) {
+      stop();
+      setCam({ state: "error", error: cameraErrorMessage(e), vw: 0, vh: 0 });
+    }
+  };
+
+  useEffect(() => { if (!active) stop(); }, [active, stop]);
+  useEffect(() => {
+    const h = () => { if (document.hidden) stop(); };
+    document.addEventListener("visibilitychange", h);
+    return () => { document.removeEventListener("visibilitychange", h); stop(); };
+  }, [stop]);
+
+  // Shoot capture `c` (from step() or forceCapture()) on frame analysis `o`.
+  const shoot = useCallback(async (c, o) => {
+    const v = videoRef.current, ctl = ctlRef.current;
+    if (!lib || !v || !v.videoWidth || !ctl || !c?.quad || capturingRef.current) return;
+    capturingRef.current = true;
+    // The analyzer decides the source: the video frame while the learned box is active (corners
+    // exact), else takePhoto + A2 re-detect; the "Full-resolution photo" setting can veto the photo.
+    const det = detRef.current;
+    const opts = det?.captureOpts ? det.captureOpts() : { preferPhoto: true };
+    try {
+      const shot = await lib.captureCard(v, trackRef.current, c.quad, { ...opts, preferPhoto: opts.preferPhoto !== false && live.current.photo !== false });
+      if (c.rec) Object.assign(c.rec, { shot: shot.kind, shot_drift: shot.drift ?? null, orient_conf: Number.isFinite(o?.orientConf) ? Math.round(o.orientConf * 1000) / 1000 : null, prior_learned: Boolean(o?.priorLearned) });
+      const item = ctl.captured(c, live.current.buildPayload(shot, c));
+      if (item) live.current.onUpload(item);
+      // An accepted, tracked capture teaches the box prior (savePrior adds it, then persists).
+      if (!c.fallback && o?.accepted && c.quad === o.corners) {
+        try { det?.savePrior?.(c.quad); } catch { /* storage may be blocked */ }
+      }
+    } catch (e) {
+      ctl.captureFailed();
+      live.current.onError?.(`Capture failed: ${e.message}`);
+    } finally {
+      capturingRef.current = false;
+    }
+  }, [lib, ctlRef, detRef]);
+
+  const manualShot = () => {
+    const v = videoRef.current, ctl = ctlRef.current;
+    if (!v || !ctl || capturingRef.current) return;
+    const o = obsRef.current || { vw: v.videoWidth, vh: v.videoHeight };
+    const c = ctl.forceCapture({ ...o, now: Date.now() });
+    if (c.flush) live.current.onUpload(c.flush);
+    live.current.onChip?.(null);
+    if (c.quad) shoot(c, o);
+  };
+  const rearm = () => {
+    const ctl = ctlRef.current;
+    if (!ctl) return;
+    const h = ctl.takeHeld(); // rearm() would drop a held photo: upload it first
+    if (h) live.current.onUpload(h);
+    live.current.onChip?.(null);
+    ctl.rearm();
+  };
+
+  // Record session: one small frame every RECORD_EVERY_MS, plus every decision record (one per frame upload).
+  const recordTick = (r) => {
+    const R = live.current.record, S = recRef.current;
+    if (!R?.session) { S.queue.length = 0; return; }
+    if (S.session !== R.session) Object.assign(S, { session: R.session, seq: 0, last: 0, queue: [], frames: 0, bytes: 0, errors: 0 });
+    if (r?.rec) { S.queue.push({ ...r.rec, t: Date.now(), state: r.state }); if (S.queue.length > 30) S.queue.shift(); }
+    const now = performance.now();
+    if (S.busy || (!S.queue.length && now - S.last < RECORD_EVERY_MS)) return;
+    S.last = now;
+    S.busy = true;
+    const session = S.session, seq = S.seq++, rec = S.queue.shift() || null;
+    const frame = async () => {
+      // the analyzer's last 480 px work frame (what the detector saw)
+      const d = detRef.current;
+      let j = d?.frameJpeg?.(0.7) || null;
+      if (j && j.length > RECORD_MAX_B64) j = d.frameJpeg(0.5);
+      return j && j.length <= RECORD_MAX_B64 ? j : null;
+    };
+    frame()
+      .then(async (jpeg) => {
+        if (!jpeg) throw new Error("encode");
+        await api("/api/debug/frames", { method: "POST", json: { session, seq, jpeg, ...(rec ? { record: rec } : {}) } });
+        if (S.session === session) { S.frames++; S.bytes += Math.floor((jpeg.length * 3) / 4); }
+      })
+      .catch(() => { if (S.session === session) S.errors++; })
+      .finally(() => {
+        S.busy = false;
+        if (S.session === session) live.current.onRecorded?.({ session, frames: S.frames, bytes: S.bytes, errors: S.errors });
+      });
+  };
+
+  // Analysis loop (~8 fps) + overlay drawing.
+  useEffect(() => {
+    if (cam.state !== "on" || !lib) return;
+    const v = videoRef.current;
+    let det = null;
+    try { det = lib.createDetAnalyzer(v, {}); } catch (e) {
+      live.current.onError?.(`Could not start the card detector: ${e.message}`);
+      return;
+    }
+    detRef.current = det;
+    const gap = 1000 / (lib.CAPTURE_DEFAULTS?.fps || 8);
+    let alive = true, timer = null, last = 0, shown = { phase: "", hint: "" }, dims = [cam.vw, cam.vh];
+    let chipKey = "", fallbackUntil = 0;
+    const msHist = [];
+    let dbgAt = 0;
+    const pct = (a, q) => { const b = [...a].sort((x, y) => x - y); return b.length ? b[Math.min(b.length - 1, Math.floor(q * b.length))] : null; };
+
+    const poly = (ctx, q) => { ctx.beginPath(); q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.stroke(); };
+    const draw = (o, r) => {
+      const c = overlayRef.current;
+      if (!c) return;
+      const cw = c.clientWidth, ch = c.clientHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
+      if (!cw || !ch) return;
+      if (c.width !== Math.round(cw * dpr) || c.height !== Math.round(ch * dpr)) { c.width = Math.round(cw * dpr); c.height = Math.round(ch * dpr); }
+      const ctx = c.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cw, ch);
+      const sc = Math.max(cw / o.vw, ch / o.vh), dx = (cw - o.vw * sc) / 2, dy = (ch - o.vh * sc) / 2;
+      const map = ([x, y]) => [x * sc + dx, y * sc + dy];
+      const fl = live.current.flash;
+      const flashOn = fl && Date.now() < fl.until;
+      // The learned box prior, faintly.
+      if (o.priorLearned && o.priorQuad) {
+        ctx.setLineDash([]);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255,255,255,.28)";
+        poly(ctx, o.priorQuad.map(map));
+      }
+      const weakOnly = Boolean(o.weak && !o.accepted);
+      if (o.corners && (o.found || o.weak)) {
+        ctx.lineWidth = flashOn ? 6 : 3;
+        ctx.setLineDash(weakOnly && !flashOn ? [10, 8] : []);
+        ctx.strokeStyle = flashOn ? fl.color
+          : r.state === "cooldown" ? "#f0c062"
+            : weakOnly ? "#f5e050"
+              : o.stable || r.state === "capture" ? "#62d18d" : "#a38bff";
+        poly(ctx, o.corners.map(map));
+      } else if (flashOn) {
+        ctx.setLineDash([]);
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = fl.color;
+        ctx.strokeRect(3, 3, cw - 6, ch - 6);
+      }
+    };
+
+    const loop = () => {
+      if (!alive) return;
+      const now = performance.now();
+      if (now - last >= gap && v.readyState >= 2 && !capturingRef.current) {
+        last = now;
+        let o = null;
+        try { o = det.analyze(now); } catch { o = null; }
+        const ctl = ctlRef.current;
+        if (o && ctl) {
+          if (o.vw !== dims[0] || o.vh !== dims[1]) { dims = [o.vw, o.vh]; setCam((c) => ({ ...c, vw: o.vw, vh: o.vh })); }
+          obsRef.current = o;
+          const L = live.current;
+          let r = null;
+          const t0 = performance.now();
+          try { r = ctl.step({ ...o, now: Date.now(), busy: false, paused: L.paused || !L.auto }); } catch (e) { r = null; }
+          if (debugOn) {
+            msHist.push([o.ms, performance.now() - t0]);
+            if (msHist.length > 60) msHist.shift();
+            window.__scanDebug = { o: { ...o, thumb: undefined, cardThumb: undefined }, r: r && { ...r, capture: r.capture && { kind: r.capture.kind, fallback: r.capture.fallback } } };
+            if (Date.now() - dbgAt > 500) {
+              dbgAt = Date.now();
+              setDbg({ a50: pct(msHist.map((x) => x[0]), 0.5), a90: pct(msHist.map((x) => x[0]), 0.9), s90: pct(msHist.map((x) => x[1]), 0.9), st: r?.state, f: o.found, w: o.weak, a: o.accepted, s: o.stable, mad: r?.mad, sharp: o.sharp, mode: o.mode, prior: o.priorLearned, armed: r?.armed?.join(",") });
+            }
+          }
+          if (r) {
+            if (r.flush) L.onUpload(r.flush);
+            draw(o, r);
+            const key = r.sameChip ? `${r.sameChip.scanId}:${r.sameChip.d}` : "";
+            if (key !== chipKey) { chipKey = key; L.onChip?.(r.sameChip || null); }
+            if (r.capture?.fallback) fallbackUntil = Date.now() + 2500;
+            let hint = r.hint, phase = V2_PHASE[r.state] || "searching";
+            if (o.weak && !o.accepted && phase === "tracking") phase = "weak";
+            const workW = o.corners && o.found ? lib.quadSize(o.corners).w * (480 / Math.min(o.vw, o.vh)) : null;
+            const looking = ["tracking", "settling", "stuck", "searching"].includes(r.state);
+            if (L.paused) hint = "Paused";
+            else if (!L.auto && r.state !== "cooldown") hint = o.found ? "Card found: tap the shutter" : "Place a card in view";
+            else if (Date.now() < fallbackUntil) hint = "Couldn't find the edges – trying anyway";
+            else if (o.glare?.advice && looking) hint = o.glare.advice;
+            else if (r.state === "settling" && o.stable && r.hint === "Focusing…") hint = "Reflection – tilt slightly";
+            else if (workW !== null && workW < 100 && (r.state === "tracking" || r.state === "settling")) hint = "Move closer";
+            if (L.queued > 1) hint = `${hint} · ${L.queued - 1} waiting`;
+            if (hint !== shown.hint || phase !== shown.phase) { shown = { hint, phase }; setStatus(shown); }
+            recordTick(r);
+            if (r.capture && L.auto && !L.paused) shoot(r.capture, o);
+          } else recordTick(null);
+        }
+      }
+      timer = setTimeout(loop, 30);
+    };
+    loop();
+    return () => { alive = false; clearTimeout(timer); if (detRef.current === det) detRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cam.state, lib, shoot]);
+
+  const toggleTorch = async () => {
+    const next = !torch.on;
+    try {
+      await lib.setTorch(trackRef.current, next);
+      setTorchState((t) => ({ ...t, on: next, supported: true }));
+    } catch {
+      setTorchState({ supported: false, on: false });
+      onError?.("The torch is not available on this camera.");
+    }
+  };
+
+  const on = cam.state === "on";
+  const ratio = cam.vw && cam.vh ? cam.vw / cam.vh : 3 / 4;
+  const style = { aspectRatio: `${ratio}`, width: `min(100%, calc(72dvh * ${ratio.toFixed(4)}))` };
+  const support = lib ? lib.cameraSupport() : null;
+
+  return (
+    <div className="cam" style={style}>
+      <video ref={videoRef} playsInline muted autoPlay aria-label="Camera preview" />
+      <canvas ref={overlayRef} aria-hidden="true" hidden={!on} />
+      {!on && (
+        <div className="cam-start">
+          {cam.state === "starting" ? <Spinner label="Starting camera…" /> : (
+            <>
+              {cam.error && <p role="alert" style={{ color: "#ffb4a8" }}>{cam.error}</p>}
+              {support && !support.secure && <p role="alert" style={{ color: "#ffb4a8" }}>The camera only works over HTTPS.</p>}
+              <button type="button" className="btn primary" onClick={start} disabled={!lib}><Icon.camera /> {cam.error ? "Try again" : "Start camera"}</button>
+              <p>Lay or slide a card into view – it's captured automatically.</p>
+            </>
+          )}
+        </div>
+      )}
+      {on && (
+        <>
+          <div className="cam-hud top">
+            <span className="pills">
+              <span className={`pill s-${status.phase}`} role="status" aria-live="polite"><span className="dot" aria-hidden="true" />{status.hint || "Ready"}</span>
+              {record?.session && <span className="pill s-rec"><span className="dot" aria-hidden="true" />REC</span>}
+              {debugOn && dbg && (
+                <span className="pill" style={{ whiteSpace: "normal", fontWeight: 500, fontSize: ".72rem" }}>
+                  A2 {dbg.a50?.toFixed(0)}/{dbg.a90?.toFixed(0)} ms · step p90 {dbg.s90?.toFixed(0)} ms · {dbg.st} · {dbg.f ? "F" : "-"}{dbg.w ? "W" : "-"}{dbg.a ? "A" : "-"}{dbg.s ? "S" : "-"} · mad {dbg.mad?.toFixed(1)} · sharp {Math.round(dbg.sharp ?? 0)} · {dbg.mode}{dbg.prior ? " prior" : ""} · {dbg.armed || "-"}
+                </span>
+              )}
+            </span>
+            {torch.supported !== false && (
+              <button type="button" className="cam-btn" aria-pressed={torch.on} aria-label={torch.on ? "Turn torch off" : "Turn torch on"} onClick={toggleTorch}><Icon.bolt /></button>
+            )}
+          </div>
+          <div className="cam-hud bottom">
+            <button type="button" className="cam-btn" aria-label="Stop camera" onClick={stop}><Icon.close /></button>
+            <button type="button" className="shutter" aria-label="Take scan now" disabled={paused} onClick={manualShot} />
+            <button type="button" className="cam-btn" aria-label="Scan this card again" title="Scan the card in view again" onClick={rearm}><Icon.refresh /></button>
           </div>
         </>
       )}
@@ -4538,16 +4913,100 @@ function ScanTab({ active, health, onCommitted }) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const replaceRef = useRef(null);
+  // Scanner v2: capture.js module, the CaptureController (shared with CameraViewV2 so
+  // upload answers reach it), the detector analyzer (for hash crops), the upload queue.
+  const [capMod, setCapMod] = useState(null);
+  const ctlRef = useRef(null);
+  const detRef = useRef(null);
+  const queueRef = useRef(null);
+  const handlers = useRef({}); // the queue's callbacks, refreshed every render
+  const [queued, setQueued] = useState(0);
+  const [chip, setChip] = useState(null); // {scanId, d}: "Same card again?"
+  const [busyPreview, setBusyPreview] = useState(null);
+  const [detChoice, setDetChoice] = useState(readDetChoice);
+  const [sound, setSoundState] = useState(loadSoundSettings);
+  const soundRef = useRef(sound);
+  soundRef.current = sound;
+  const soundsRef = useRef(null); // scanlib createScanSounds()
+  const priceRef = useRef(new Map()); // scan id → price_eur (sound for +1)
+  const [rec, setRec] = useState(null); // record session {session, startedAt, frames, bytes, errors}
+  const [, tick] = useReducer((x) => x + 1, 0);
 
   useEffect(() => {
     if (!active || lib) return;
     let alive = true;
-    import("./scanlib.js").then((m) => { if (alive) setLib(m); })
+    // capture.js only matters for v2; if it fails to load the classic scanner still works.
+    Promise.all([import("./scanlib.js"), import("./capture.js").catch(() => null)])
+      .then(([m, c]) => {
+        if (!alive) return;
+        try { soundsRef.current = m.createScanSounds ? m.createScanSounds() : null; } catch { soundsRef.current = null; }
+        setCapMod(c);
+        setLib(m);
+      })
       .catch((e) => { if (alive) setLibError(`Could not load the scanner: ${e.message}`); });
     return () => { alive = false; };
   }, [active, lib]);
 
+  // v2 needs scanlib's detector + capture.js; anything missing falls back to the classic scanner.
+  const urlDet = detUrlOverride();
+  const detVersion = lib ? (lib.scanDetVersion ? lib.scanDetVersion() : "v1") : (urlDet || detChoice);
+  const v2 = Boolean(lib && capMod && detVersion === "v2" && lib.createDetAnalyzer);
+  const v2Ref = useRef(v2);
+  v2Ref.current = v2;
+
+  const pushItem = useCallback((item) => {
+    const q = queueRef.current;
+    if (!item || !q) return;
+    q.push(item);
+    setQueued(q.length);
+  }, []);
+
+  useEffect(() => {
+    if (!capMod) return;
+    const q = new capMod.UploadQueue({
+      send: (item) => handlers.current.send(item),
+      onResult: (item, res) => handlers.current.onResult(item, res),
+      onError: (item, err) => handlers.current.onError(item, err),
+      onGiveUp: (item, err) => handlers.current.onGiveUp(item, err),
+    });
+    queueRef.current = q;
+    return () => { if (queueRef.current === q) queueRef.current = null; };
+  }, [capMod]);
+
+  // One controller per calibration setting; a held photo is uploaded before it is replaced
+  // and upload ids keep counting (answers for the old controller's uploads must not collide).
+  useEffect(() => {
+    if (!capMod) return;
+    const old = ctlRef.current;
+    if (old) pushItem(old.takeHeld());
+    const crop = (o, quad) => {
+      try {
+        const img = detRef.current?.hashCrop?.(quad);
+        return img ? { width: img.width, height: img.height, channels: img.channels || 4, data: img.data } : null;
+      } catch { return null; }
+    };
+    const ctl = new capMod.CaptureController({ crop, cfg: readCaptureOverrides(), calibration: settings.calibration });
+    if (ctl.ignored?.length) console.warn(`Scanner: ignored capture overrides ${ctl.ignored.join(", ")}`);
+    if (old) { ctl.nextId = old.nextId; ctl.plus = old.plus || []; } // deferred "+1"s still wait for their row
+    ctlRef.current = ctl;
+    setChip(null);
+  }, [capMod, settings.calibration, pushItem]);
+
+  // Record session: elapsed time ticks; auto-off after RECORD_MAX_MS.
+  useEffect(() => {
+    if (!rec) return;
+    const t = setInterval(() => {
+      if (Date.now() - rec.startedAt >= RECORD_MAX_MS) {
+        setRec(null);
+        setToast({ text: "Recording stopped after 15 minutes." });
+      } else tick();
+    }, 1000);
+    return () => clearInterval(t);
+  }, [rec?.session, rec?.startedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const setSetting = (k, v) => setSettings((s) => { const n = { ...s, [k]: v }; store.set("mtg.scan.settings", n); return n; });
+  const setSound = (k, v) => setSoundState((s) => { const n = { ...s, [k]: v }; store.set("mtg.scan.sound", n); return n; });
+  const unlockSounds = () => { try { soundsRef.current?.unlock?.()?.catch?.(() => {}); } catch { /* no audio */ } };
 
   const loadScans = useCallback(async () => {
     try {
@@ -4579,15 +5038,22 @@ function ScanTab({ active, health, onCommitted }) {
   }, [statusById]);
   const markStatus = (id, st) => setStatusById((m) => ({ ...m, [id]: st }));
 
-  const feedback = (kind) => {
-    if (settingsRef.current.sound) beep(kind);
+  // kind: a scan status (auto|suggest|review|failed|duplicate|error) or "increment" (+1);
+  // res: the /api/scan answer {scan, duplicate, result}, or {increment:true, price_eur} for +1.
+  // scanlib's chooseScanSound picks success, cash (price ≥ threshold) or nothing.
+  const feedback = (kind, res = null) => {
+    try {
+      const snd = res ? lib?.chooseScanSound?.(res, soundRef.current) : null;
+      if (snd) soundsRef.current?.play?.(snd);
+    } catch { /* never block scanning on audio */ }
     vibrate(kind);
-    setFlash({ color: STATUS_COLOR[kind] || "#ffffff", until: Date.now() + 900 });
+    setFlash({ color: STATUS_COLOR[kind === "increment" ? "auto" : kind] || "#ffffff", until: Date.now() + 900 });
   };
 
   const showError = (msg) => setToast({ text: msg, ms: 5000 });
 
-  function openPickerFor(scan, result, { truthFinish = null, payload = null } = {}) {
+  // itemId: the v2 upload that produced it (a pick adopts the card in view, see onPicked).
+  function openPickerFor(scan, result, { truthFinish = null, payload = null, itemId = null } = {}) {
     // The user's own collector line: the server's stored strip, else the local capture.
     const strips = [];
     if (scan?.id && scan.has_strip !== false) strips.push(scanFileUrl(scan, "strip"));
@@ -4595,36 +5061,69 @@ function ScanTab({ active, health, onCommitted }) {
     const cands = [...candidatesOf(result, scan), ...jsonArr(result?.variants || scan?.variants).map(normPrinting)]
       .filter((p, i, a) => p && p.id && a.findIndex((x) => x.id === p.id) === i);
     setSheet({
-      type: "pick", scan, candidates: cands, truthFinish, strips,
+      type: "pick", scan, candidates: cands, truthFinish, strips, itemId,
       oracleId: scan?.oracle_id || result?.printing?.oracle_id || cands[0]?.oracle_id || null,
       lang: scan?.lang_detected || result?.lang_detected || "",
     });
   }
 
-  async function handleResult(res, payload, preview) {
+  // The controller's last upload no longer counts (review/failed/error): the card in view is
+  // uploaded again after the next motion. A held photo comes back as an upload item.
+  // "+1" answers given while this upload was still being identified are uploaded as rows of their own.
+  const forgetFor = (item) => {
+    const ctl = ctlRef.current;
+    if (!ctl || item?.id == null) return;
+    for (const it of ctl.uploadLost?.(item.id) || []) pushItem(it);
+    if (ctl.cap?.id === item.id) pushItem(ctl.forgetCapture());
+  };
+  // Row `id` was undone/committed/deleted (no id: unknown row, forget anyway).
+  const forgetRow = (id) => {
+    const ctl = ctlRef.current;
+    if (ctl) pushItem(ctl.forgetCapture(id ?? undefined));
+  };
+
+  // item: the v2 upload-queue item (null for v1 and manual sends).
+  async function handleResult(res, payload, preview, item = null) {
     const r = res?.result || {};
     const scan = res?.scan || null;
+    const ctl = item ? ctlRef.current : null;
+    if (scan?.id && r.price_eur != null) priceRef.current.set(scan.id, r.price_eur);
     if (res?.duplicate) {
+      if (ctl && item.id != null && scan?.id) applyPlus(ctl.uploaded(item.id, scan.id));
       setLast({ kind: "duplicate", scan, result: r, payload, preview });
-      feedback("duplicate");
+      feedback("duplicate", res);
+      // An unanswered "+1?" chip came back as a duplicate: nothing was counted. Say so until
+      // dismissed (the next card's result would cover the result card within a second).
+      const chipLabel = item?.capture?.chip?.label;
+      if (scan?.id && (chipLabel === "ignored" || chipLabel === "forgotten")) {
+        const id = scan.id;
+        setToast({ text: `Not counted: ${scan.name || "same card"} (another copy?)`, ms: 600000, action: { label: "+1", run: () => increment(id) } });
+      }
       return;
     }
     const status = ["auto", "suggest", "review", "failed"].includes(r.status) ? r.status : scan ? statusOf(scan) : "failed";
+    if (ctl && item.id != null) {
+      if (scan?.id && (status === "auto" || status === "suggest")) applyPlus(ctl.uploaded(item.id, scan.id));
+      else forgetFor(item);
+    }
     if (scan?.id) markStatus(scan.id, status);
     setLast({ kind: status, scan, result: r, payload, preview });
-    feedback(status);
+    feedback(status, res);
     loadScans();
     if (settingsRef.current.calibration) setSheet({ type: "truth", entry: { scan, result: r, preview, payload } });
     else if (status === "review" || status === "failed") {
-      if (candidatesOf(r, scan).length) openPickerFor(scan, r, { payload });
+      if (candidatesOf(r, scan).length) openPickerFor(scan, r, { payload, itemId: item?.id ?? null });
     }
   }
 
-  async function postScan(payload, preview) {
-    if (busyRef.current) return;
+  // One POST /api/scan with the busy/slow/cancel UI. Resolves with the answer; throws the
+  // ApiError (status kept: the v2 queue retries 429) or an Error with timeout:true when
+  // cancelled/timed out.
+  async function requestScan(payload, preview) {
     busyRef.current = true;
     setBusy(true);
     setSlow(null);
+    setBusyPreview(preview || null);
     // After a server start the first scan waits for the scanner's warm-up
     // (fingerprints loading): say so instead of looking hung. After
     // SCAN_CANCEL_MS the user may cancel (with a retry); SCAN_TIMEOUT_MS is
@@ -4648,17 +5147,13 @@ function ScanTab({ active, health, onCommitted }) {
     const cancelTimer = setTimeout(() => { if (!ctl.signal.aborted) setSlow((s) => ({ since, warming: s?.warming ?? null, cancellable: true })); }, SCAN_CANCEL_MS);
     const abortTimer = setTimeout(() => ctl.abort(), SCAN_TIMEOUT_MS);
     try {
-      const res = await api("/api/scan", { method: "POST", json: payload, signal: ctl.signal });
-      await handleResult(res, payload, preview);
+      return await api("/api/scan", { method: "POST", json: payload, signal: ctl.signal });
     } catch (e) {
-      const timeout = e.name === "AbortError";
-      const error = !timeout ? e.message
-        : Date.now() - since < SCAN_TIMEOUT_MS - 1000
-          ? `Cancelled after ${Math.round((Date.now() - since) / 1000)} s; nothing was added. The scanner may still be warming up after a server start; try again in a moment.`
-          : `No answer after ${Math.round(SCAN_TIMEOUT_MS / 1000)} s; nothing was added. Try again in a moment.`;
-      setLast({ kind: "error", error, timeout, payload, preview });
-      feedback("error");
-      bumpRearm(); // let the same card be captured again
+      if (e.name !== "AbortError") throw e;
+      const error = Date.now() - since < SCAN_TIMEOUT_MS - 1000
+        ? `Cancelled after ${Math.round((Date.now() - since) / 1000)} s; nothing was added. The scanner may still be warming up after a server start; try again in a moment.`
+        : `No answer after ${Math.round(SCAN_TIMEOUT_MS / 1000)} s; nothing was added. Try again in a moment.`;
+      throw Object.assign(new Error(error), { timeout: true });
     } finally {
       clearTimeout(slowTimer);
       clearInterval(pollTimer);
@@ -4669,21 +5164,111 @@ function ScanTab({ active, health, onCommitted }) {
       busyRef.current = false;
       setBusy(false);
       setSlow(null);
+      setBusyPreview(null);
     }
   }
 
-  const onCapture = (cap) => {
+  // v1 (and resends without the queue): single flight, as before.
+  async function postScan(payload, preview) {
+    if (busyRef.current) return;
+    let res;
+    try {
+      res = await requestScan(payload, preview);
+    } catch (e) {
+      setLast({ kind: "error", error: e.message, timeout: Boolean(e.timeout), payload, preview });
+      feedback("error");
+      bumpRearm(); // let the same card be captured again
+      return;
+    }
+    await handleResult(res, payload, preview);
+  }
+
+  /** The scan request body for a capture (settings at capture time). */
+  const scanBody = (shot, consumeReplace = true) => {
     const s = settingsRef.current;
-    const payload = {
-      card: cap.card,
-      strip: cap.strip,
+    const body = {
+      card: shot.card,
+      strip: shot.strip,
       settings: { storageLang: s.storageLang, foil: s.foil, condition: s.condition, ...(s.setHint.trim() ? { setHint: s.setHint.trim().toLowerCase() } : {}) },
       ...(s.calibration ? { calibration: true } : {}),
       ...(replaceRef.current ? { replace_id: replaceRef.current } : {}),
     };
-    replaceRef.current = null;
-    postScan(payload, cap.cardPreview);
+    if (consumeReplace) replaceRef.current = null;
+    return body;
   };
+
+  const onCapture = (cap) => postScan(scanBody(cap), cap.cardPreview);
+
+  // v2: CaptureController payload = {body, preview}; a "+1?" chip photo never takes the Rescan replace_id.
+  const buildPayload = (shot, c) => ({ body: scanBody(shot, !c?.hold), preview: shot.cardPreview, kind: shot.kind });
+
+  // Re-send a body already sent once (Send again, Retry, Different card, Ask Claude).
+  const resend = (body, preview, extra = {}) => {
+    const b = { ...body, ...extra };
+    for (const k of Object.keys(b)) if (b[k] == null) delete b[k];
+    if (!v2Ref.current || !queueRef.current) { postScan(b, preview); return; }
+    const { capture, allowClaude, dup_of: dupOf, force, ...rest } = b;
+    pushItem({ id: null, payload: { body: rest, preview }, capture: capture || null, allowClaude: allowClaude !== false, dup_of: dupOf ?? null, force: Boolean(force) });
+  };
+
+  // The v2 upload queue's callbacks (latest closures).
+  handlers.current = {
+    send: (item) => {
+      const { capture: _c, allowClaude: _a, dup_of: _d, force: _f, ...rest } = item.payload?.body || {};
+      const body = { ...rest, allowClaude: item.allowClaude !== false };
+      if (item.capture) body.capture = item.capture;
+      if (item.dup_of != null) body.dup_of = item.dup_of;
+      if (item.force) body.force = true;
+      item.sent = body;
+      return requestScan(body, item.payload?.preview);
+    },
+    onResult: (item, res) => {
+      setQueued(queueRef.current?.length ?? 0);
+      handleResult(res, item.sent, item.payload?.preview, item);
+    },
+    onError: (item, err) => {
+      setQueued(queueRef.current?.length ?? 0);
+      setLast({ kind: "error", error: err?.message || "Scan failed", timeout: Boolean(err?.timeout), payload: item.sent, preview: item.payload?.preview });
+      feedback("error");
+      forgetFor(item);
+    },
+    onGiveUp: () => {
+      setQueued(queueRef.current?.length ?? 0);
+      setToast({ text: "The server is busy, scans are waiting.", ms: 600000, action: { label: "Retry", run: () => queueRef.current?.retry() } });
+    },
+  };
+
+  // Chip answers. "+1": increment the chip's row; if that row is gone (404/409) the photo is
+  // uploaded with dup_of so the server asks instead. "Scan as new": forced upload.
+  // "+1" before the first copy has a row id: chipAnswer defers it and uploaded() hands it back.
+  const chipPlus = async () => {
+    const a = ctlRef.current?.chipAnswer("plus");
+    setChip(null);
+    if (!a) return;
+    if (a.action === "upload") { pushItem(a.item); return; }
+    if (a.action === "deferred") { setToast({ text: "+1 once the card is identified" }); return; }
+    await runIncrement(a);
+  };
+  // Deferred "+1"s whose row is now known (ctl.uploaded()'s answer).
+  const applyPlus = (actions) => { for (const a of actions || []) runIncrement(a); };
+  const runIncrement = async (a) => {
+    const capture = { ...a.capture, chip: a.event };
+    try {
+      await api(`/api/scans/${a.scanId}/increment`, { method: "POST", json: { capture } });
+      setToast({ text: "+1 copy" });
+      feedback("increment", { increment: true, price_eur: priceRef.current.get(a.scanId) ?? null });
+      await loadScans();
+    } catch (e) {
+      if (e.status === 404 || e.status === 409) pushItem({ id: null, payload: a.payload, capture, allowClaude: false, dup_of: a.scanId, force: false });
+      else showError(e.message);
+    }
+  };
+  const chipNew = () => {
+    const a = ctlRef.current?.chipAnswer("new");
+    setChip(null);
+    if (a?.item) pushItem(a.item);
+  };
+  const flushHeld = () => pushItem(ctlRef.current?.takeHeld());
 
   const patchScan = async (id, body, { status } = {}) => {
     try {
@@ -4696,6 +5281,7 @@ function ScanTab({ active, health, onCommitted }) {
   const deleteScan = async (id) => {
     try {
       await api(`/api/scans/${id}`, { method: "DELETE" });
+      forgetRow(id);
       setLast((l) => (l?.scan?.id === id ? null : l));
       await loadScans();
     } catch (e) { showError(e.message); }
@@ -4704,13 +5290,14 @@ function ScanTab({ active, health, onCommitted }) {
     try {
       await api(`/api/scans/${id}/increment`, { method: "POST", json: {} });
       setToast({ text: "+1 copy" });
-      feedback("auto");
+      feedback("increment", { increment: true, price_eur: priceRef.current.get(id) ?? null });
       await loadScans();
     } catch (e) { showError(e.message); }
   };
   const undo = async () => {
     try {
       const r = await api("/api/scans/undo", { method: "POST", json: {} });
+      forgetRow(r?.scan?.id ?? r?.id ?? null);
       setLast(null);
       setToast({ text: r?.scan?.name || r?.name ? `Removed ${r.scan?.name || r.name}` : "Last scan undone" });
       await loadScans();
@@ -4718,7 +5305,14 @@ function ScanTab({ active, health, onCommitted }) {
   };
   const forceAdd = () => {
     if (!last?.payload) return;
-    postScan({ ...last.payload, force: true }, last.preview);
+    resend(last.payload, last.preview, { force: true, dup_of: null });
+  };
+  // "Ask Claude" on a review/failed card: the same photo again, Claude allowed, replacing the review row.
+  const askClaude = () => {
+    if (!last?.payload) return;
+    const replace = last.scan?.id && last.kind === "review" ? { replace_id: last.scan.id } : {};
+    const { replace_id: _r, ...body } = last.payload;
+    resend(body, last.preview, { allowClaude: true, dup_of: null, force: false, ...replace });
   };
 
   async function onPicked(p) {
@@ -4733,6 +5327,7 @@ function ScanTab({ active, health, onCommitted }) {
         const res = await api("/api/scans/manual", { method: "POST", json: { printing_id: p.id, finish, quantity: 1, storageLang: s.storageLang, condition: s.condition } });
         const scan = res?.scan || (res?.id ? res : null);
         if (scan?.id) markStatus(scan.id, "auto");
+        if (scan?.id && sh.itemId != null) ctlRef.current?.adopt?.(sh.itemId, scan.id);
         if (sh.truthFinish && scan?.id) {
           await api(`/api/scans/${scan.id}/truth`, { method: "POST", json: { printing_id: p.id, finish } }).catch(() => {});
         }
@@ -4741,6 +5336,8 @@ function ScanTab({ active, health, onCommitted }) {
       } else {
         await api(`/api/scans/${sh.scan.id}`, { method: "PATCH", json: { printing_id: p.id } });
         markStatus(sh.scan.id, "auto");
+        // the card still in view is decided now: no re-upload (and second picker) on the next motion
+        if (sh.itemId != null) ctlRef.current?.adopt?.(sh.itemId, sh.scan.id);
         if (sh.truthFinish) {
           await api(`/api/scans/${sh.scan.id}/truth`, { method: "POST", json: { printing_id: p.id, finish: sh.truthFinish } });
           setToast({ text: "Truth saved" });
@@ -4773,16 +5370,27 @@ function ScanTab({ active, health, onCommitted }) {
         {scanner && (scanner.tesseract === false || scanner.djpeg === false) && (
           <div className="notice warn" role="status"><div className="grow">Text recognition is not installed on the server{scanner.tesseract === false ? " (tesseract missing)" : ""}{scanner.djpeg === false ? " (djpeg missing)" : ""}. Scans will be less accurate.</div></div>
         )}
-        <CameraView lib={lib} active={active} settings={settings} busy={busy} paused={sheetOpen} flash={flash} rearmKey={rearmKey}
-          onCapture={onCapture} onError={showError} />
-        {(busy || last) && <ResultCard busy={busy} slow={slow} last={last} onCancel={() => cancelRef.current?.()} onPick={() => openPickerFor(last?.scan, last?.result, { payload: last?.payload })}
+        <CameraView key={v2 ? "v2" : "v1"} v2={v2} lib={lib} active={active} settings={settings} busy={busy} paused={sheetOpen} flash={flash} rearmKey={rearmKey}
+          onCapture={onCapture} onError={showError} onUnlock={unlockSounds}
+          ctlRef={ctlRef} detRef={detRef} queued={queued} record={rec} buildPayload={buildPayload} onUpload={pushItem} onChip={setChip}
+          onRecorded={(p) => setRec((r) => (r && r.session === p.session ? { ...r, frames: p.frames, bytes: p.bytes, errors: p.errors } : r))} />
+        {v2 && chip && (
+          <div className="same-chip" role="status" aria-live="polite">
+            <span className="grow">Same card again?</span>
+            <button type="button" className="btn sm primary" onClick={chipPlus}><Icon.plus /> +1</button>
+            <button type="button" className="btn sm" onClick={chipNew}>Scan as new</button>
+          </div>
+        )}
+        {(busy || last) && <ResultCard busy={busy} slow={slow} last={last} busyPreview={busyPreview} queued={v2 ? queued : 0} onCancel={() => cancelRef.current?.()} onPick={() => openPickerFor(last?.scan, last?.result, { payload: last?.payload })}
           onConfirm={() => last?.scan?.id && patchScan(last.scan.id, { printing_id: last.scan.printing_id }, { status: "auto" })}
           onIncrement={() => last?.scan?.id && increment(last.scan.id)} onForce={forceAdd} onUndo={undo}
-          onResend={() => last?.payload && postScan(last.payload, last.preview)}
+          onResend={() => last?.payload && resend(last.payload, last.preview)}
+          onAskClaude={v2 ? askClaude : null}
           onRetry={() => {
             // A rescan replaces the open review row of this card instead of adding a second one.
             replaceRef.current = last?.scan?.id && ["review", "failed"].includes(last.kind) ? last.scan.id : null;
-            setLast(null); bumpRearm();
+            setLast(null);
+            if (v2) { flushHeld(); setChip(null); ctlRef.current?.rearm(); } else bumpRearm();
           }} onSearch={() => setSheet({ type: "manual" })} />}
 
         <div className="scan-settings">
@@ -4811,9 +5419,39 @@ function ScanTab({ active, health, onCommitted }) {
               <input id="scan-set" className="input" placeholder="e.g. dmu" maxLength={8} autoCapitalize="off" autoCorrect="off" spellCheck="false"
                 value={settings.setHint} onChange={(e) => setSetting("setHint", e.target.value.replace(/[^a-z0-9]/gi, ""))} />
             </div>
-            <label className="switch"><input type="checkbox" checked={settings.sound} onChange={(e) => setSetting("sound", e.target.checked)} /> Beep on scan</label>
+            <label className="switch"><input type="checkbox" checked={sound.enabled} onChange={(e) => setSound("enabled", e.target.checked)} /> Scan sounds</label>
+            <div className="field">
+              <label htmlFor="scan-cash">Cash sound from (€)</label>
+              <input id="scan-cash" className="input num-input" type="number" inputMode="decimal" min="0" step="0.5" disabled={!sound.enabled}
+                defaultValue={sound.threshold} onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v) && v >= 0) setSound("threshold", v); }} />
+            </div>
             <label className="switch"><input type="checkbox" checked={settings.photo} onChange={(e) => setSetting("photo", e.target.checked)} /> Full-resolution photo (Android)</label>
             <label className="switch" style={{ gridColumn: "1 / -1" }}><input type="checkbox" checked={settings.calibration} onChange={(e) => setSetting("calibration", e.target.checked)} /> Calibration mode: confirm the true printing after each scan</label>
+            <div className="field" style={{ gridColumn: "1 / -1" }}>
+              <span className="small" style={{ fontWeight: 600 }} id="scan-det-label">Scanner</span>
+              <div className="segmented" role="group" aria-labelledby="scan-det-label">
+                {[["v2", "New"], ["v1", "Classic"]].map(([k, l]) => (
+                  <button key={k} type="button" aria-pressed={detVersion === k} disabled={Boolean(urlDet)}
+                    onClick={() => { writeDetChoice(k); setDetChoice(k); }}>{l}</button>
+                ))}
+              </div>
+              {urlDet && <span className="small muted">Set by ?det={urlDet} in the address.</span>}
+              {lib && detVersion === "v2" && !v2 && <span className="small muted">The new scanner could not be loaded; using the classic one.</span>}
+            </div>
+            {v2 && (
+              <div className="field" style={{ gridColumn: "1 / -1" }}>
+                <label className="switch"><input type="checkbox" checked={Boolean(rec)}
+                  onChange={(e) => setRec(e.target.checked ? { session: newRecordSession(), startedAt: Date.now(), frames: 0, bytes: 0, errors: 0 } : null)} /> Record session</label>
+                <span className="small muted">Sends small camera frames and capture decisions to your server to tune the scanner. Stops by itself after 15 minutes.</span>
+                {rec && (
+                  <span className="small rec-status" role="status">
+                    <span>● Recording {fmtElapsed(Date.now() - rec.startedAt)}</span>
+                    <span>{plural(rec.frames, "frame")}</span>
+                    {rec.errors > 0 && <span className="muted">{rec.errors} not sent</span>}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </details>
       </div>
@@ -4847,7 +5485,7 @@ function ScanTab({ active, health, onCommitted }) {
               <span className="grow small">{selIds.length ? `${plural(selIds.length, "scan")} selected` : `${plural(committable.length, "scan")} ready`}
                 {!selIds.length && committable.length < list.length && <span className="muted"> · {list.length - committable.length} need a pick</span>}
                 {selIds.length > selCommit.length && <span className="muted"> · {selIds.length - selCommit.length} need a pick first</span>}</span>
-              <button type="button" className="btn primary" disabled={!commitIds.length} onClick={() => setSheet({ type: "commit", ids: commitIds })}>
+              <button type="button" className="btn primary" disabled={!commitIds.length} onClick={() => { flushHeld(); setChip(null); setSheet({ type: "commit", ids: commitIds }); }}>
                 Add {selIds.length ? "selected" : "all"} to…
               </button>
             </div>
@@ -4866,6 +5504,7 @@ function ScanTab({ active, health, onCommitted }) {
         <CommitSheet ids={sheet.ids} onClose={() => setSheet(null)} onDone={(res, label) => {
           setSheet(null);
           setSelected(new Set());
+          sheet.ids.forEach((id) => forgetRow(id));
           const n = res?.committed ?? sheet.ids.length;
           setToast({ text: `Added ${typeof n === "number" ? plural(n, "scan") : "scans"} to ${label}` });
           setLast(null);
@@ -4881,6 +5520,7 @@ function ScanTab({ active, health, onCommitted }) {
       {toast && (
         <div className="toast" role="status" aria-live="polite">
           <span>{toast.text}</span>
+          {toast.action && <button type="button" className="btn ghost sm" onClick={() => { const a = toast.action; setToast(null); a.run(); }}>{toast.action.label}</button>}
           <button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setToast(null)} style={{ textDecoration: "none" }}><Icon.close /></button>
         </div>
       )}
@@ -4905,7 +5545,7 @@ function ScanElapsed({ since }) {
   return <span className="small muted">{Math.max(0, Math.round((now - since) / 1000))} s</span>;
 }
 
-function ResultCard({ busy, slow, last, onCancel, onPick, onConfirm, onIncrement, onForce, onResend, onUndo, onRetry, onSearch }) {
+function ResultCard({ busy, slow, last, busyPreview, queued = 0, onCancel, onPick, onConfirm, onIncrement, onForce, onResend, onUndo, onRetry, onSearch, onAskClaude }) {
   if (busy) {
     // slow.warming: true = the matcher is loading, false = it is ready (just slow), null = /healthz unknown.
     const title = !slow ? "Identifying…" : slow.warming === false ? "Still identifying…" : "Identifying… (warming up the scanner)";
@@ -4914,8 +5554,9 @@ function ResultCard({ busy, slow, last, onCancel, onPick, onConfirm, onIncrement
         : "The first scan after a server start waits for the card fingerprints to load. This can take up to a minute.";
     return (
       <div className="result st-busy" role="status" aria-live="polite">
-        {last?.preview ? <img className="th" src={last.preview} alt="" /> : <span className="th" />}
+        {busyPreview || last?.preview ? <img className="th" src={busyPreview || last.preview} alt="" /> : <span className="th" />}
         <div className="body"><span className="nm">{title}</span><span className="small muted">{detail}</span>
+          {queued > 1 && <span className="small muted">{plural(queued - 1, "more card")} waiting</span>}
           {slow && <ScanElapsed since={slow.since} />}
           <div className="progress" aria-hidden="true" /></div>
         {slow?.cancellable && onCancel && (
@@ -4955,6 +5596,7 @@ function ResultCard({ busy, slow, last, onCancel, onPick, onConfirm, onIncrement
         {kind === "duplicate" && <span className="small">Same printing as your last scan, so it was not added again.</span>}
         {kind === "suggest" && <span className="small">Probably right: please confirm.</span>}
         {kind === "review" && <span className="small">Not sure: pick the right printing.</span>}
+        {kind === "failed" && last.payload?.capture?.fallback && <span className="small">Couldn't identify – adjust the card and retry.</span>}
       </div>
       <div className="actions">
         {kind === "duplicate" && scan?.id && <button type="button" className="btn sm primary" onClick={onIncrement}><Icon.plus /> +1 copy</button>}
@@ -4965,6 +5607,9 @@ function ResultCard({ busy, slow, last, onCancel, onPick, onConfirm, onIncrement
         )}
         {kind === "failed" && <button type="button" className="btn sm primary" onClick={onSearch}><Icon.search /> Find by name</button>}
         {(kind === "failed" || kind === "review") && <button type="button" className="btn sm" onClick={onRetry}><Icon.camera /> Rescan</button>}
+        {(kind === "failed" || kind === "review") && onAskClaude && last.payload?.allowClaude === false && !r.claude_used && (
+          <button type="button" className="btn sm" onClick={onAskClaude}><Icon.sparkle /> Ask Claude</button>
+        )}
         {(kind === "auto" || kind === "suggest") && scan?.id && <button type="button" className="btn sm" onClick={onIncrement}><Icon.plus /> +1</button>}
         {scan?.id && kind !== "duplicate" && <button type="button" className="btn sm danger undo-btn" onClick={onUndo} style={{ marginLeft: "auto" }}><Icon.undo /> Undo</button>}
       </div>
