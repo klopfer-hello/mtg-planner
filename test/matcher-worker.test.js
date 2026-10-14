@@ -14,8 +14,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fingerprintMetaPending, getMeta, indexBrief, indexStatus, openIndex, refreshIndex, syncFingerprintMeta, warmIndex } from "../lib/cardindex.js";
-import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker, hasDjpeg, hashQuery } from "../lib/fingerprint.js";
-import { identify, DEFAULT_THRESHOLDS } from "../lib/scanner.js";
+import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker, decodeJpeg, encodeJpeg, hasCjpeg, hasDjpeg, hashQuery, rotate180 } from "../lib/fingerprint.js";
+import { identify, identifyOriented, DEFAULT_THRESHOLDS } from "../lib/scanner.js";
 import { nameSimilarity } from "../lib/ocr.js";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -241,6 +241,43 @@ describe("MatcherWorker", () => {
       }
     } finally {
       await late.close();
+    }
+  });
+
+  test("upside-down card: the worker hashes the turned pixels; identifyOriented finds the card", { skip: !(hasDjpeg() && hasCjpeg()) && "djpeg/cjpeg not installed" }, async () => {
+    const jpg = await encodeJpeg(rotate180(synth(3, 292, 408)), { quality: 95 });
+    // Title OCR stub: reads the card only from the turned PGM the retry hands it.
+    const ocr = {
+      readCollectorLine: async () => null,
+      readTitle: async (buf) => ({ text: buf[0] === 0x50 ? "Card 3" : "", confidence: 0.9 }),
+      nameSimilarity,
+    };
+    const w = new MatcherWorker(file, { warm: false }).start();
+    try {
+      assert.equal(await w.whenReady(10000), true);
+      const turned = await w.hashImage(jpg, { rotate: 180 });
+      const local = hashQuery(rotate180(await decodeJpeg(jpg)));
+      assert.deepEqual(turned.map((h) => h.toString("hex")), local.map((h) => h.toString("hex")), "same hashes as in-process");
+      const ctx = { db: null, idx, matcher: w, claude: null, ocr, thresholds: DEFAULT_THRESHOLDS };
+      const input = { card: jpg, strip: null, settings: { storageLang: "en", foil: "auto" } };
+      const plain = await identify(ctx, input);
+      assert.notEqual(plain.printing?.id, ID(3), "as photographed, nothing names it");
+      const r = await identifyOriented(ctx, input);
+      assert.equal(r.printing?.id, ID(3));
+      assert.equal(r.features.rotation, 180);
+      assert.equal(r.features.strip_used, "card_top");
+      assert.ok(r.features.fingerprint.d1 < 0.1, `d1 ${r.features.fingerprint.d1}`);
+      const back = await decodeJpeg(r.upright.card);
+      assert.deepEqual([back.width, back.height], [292, 408]);
+      assert.equal((await w.hashImage(r.upright.card)).length, 27);
+      // A precise capture's 9 variants: the same hashes as in-process.
+      const nine = await w.hashImage(r.upright.card, { variants: 9 });
+      const nineLocal = hashQuery(await decodeJpeg(r.upright.card), { variants: 9 });
+      assert.deepEqual(nine.map((h) => h.toString("hex")), nineLocal.map((h) => h.toString("hex")));
+      const again = await w.match(await w.hashImage(r.upright.card), { topK: 1 });
+      assert.equal(again[0].printing_id, ID(3), "the stored photo is upright");
+    } finally {
+      await w.close();
     }
   });
 

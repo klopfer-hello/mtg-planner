@@ -2,7 +2,7 @@
 // Claude, plus the Claude vision runner (lib/claude.js runVision, hourly cap,
 // shared concurrency gate) against a fake CLI binary.
 
-import { test, describe, before, after } from "node:test";
+import { test, describe, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -39,7 +39,9 @@ process.env.CLAUDE_BIN = fakeBin;
 process.env.CLAUDE_CODE_OAUTH_TOKEN = "test-token-not-real";
 process.env.CLAUDE_MAX_CONCURRENT = "2";
 
-const { identify, decideFinish, DEFAULT_THRESHOLDS, verifyClaude } = await import("../lib/scanner.js");
+const { identify, identifyOriented, decideFinish, DEFAULT_THRESHOLDS, verifyClaude, resetLangGuess } = await import("../lib/scanner.js");
+// The speculative title language follows the last collector line: start every test from English.
+beforeEach(() => resetLangGuess());
 const { createHourlyCap, parseJsonReply, runVision, activeClaudeRuns, SCAN_PROMPT } = await import("../lib/claude.js");
 const { nameSimilarity } = await import("../lib/ocr.js");
 
@@ -186,8 +188,21 @@ describe("identify: modern collector line", () => {
   });
 
   test("German card stored in English (storage language), title OCR runs in German", async () => {
-    const { r, ocr } = await run({ line: modernLine({ langCode: "DE", lang: "de", raw: "R 0107\nDMU • DE" }), title: "Shivan-Verwüster" });
-    assert.deepEqual(ocr.calls.title, ["de"]);
+    const deLine = modernLine({ langCode: "DE", lang: "de", raw: "R 0107\nDMU • DE" });
+    const { r, ocr } = await run({ line: deLine, title: "Shivan-Verwüster" });
+    assert.deepEqual(ocr.calls.title, ["en", "de"], "the speculative English read is re-read in German");
+    assert.ok(Number.isFinite(r.timings.title_reread));
+    // The next scan reads German (the last line) and English (no-line fallback) up front: no re-read.
+    const again = await run({ line: deLine, title: "Shivan-Verwüster" });
+    assert.deepEqual(again.ocr.calls.title, ["de", "en"]);
+    assert.equal(again.r.timings.title_reread, undefined);
+    assert.equal(again.r.printing.id, "dmu-107-de");
+    assert.equal(again.r.features.title.lang, "de");
+    // No line on the next card: the English read is used.
+    const noLine = await run({ line: null, title: "Shivan Devastator" });
+    assert.deepEqual(noLine.ocr.calls.title, ["de", "en"]);
+    assert.equal(noLine.r.timings.title_reread, undefined);
+    assert.equal(noLine.r.features.title.lang, "en");
     assert.equal(r.status, "auto");
     assert.equal(r.printing.id, "dmu-107-de");
     assert.equal(r.lang_detected, "de");
@@ -488,6 +503,244 @@ describe("identify: fingerprint-only uniqueness and Claude re-verification", () 
 });
 
 // ---------------------------------------------------------------------------
+
+describe("identify: overlapped stages (speed step 1)", () => {
+  const defer = () => { let resolve; const p = new Promise((r) => { resolve = r; }); return { p, resolve }; };
+
+  test("title OCR and the global match start before the collector OCR ends; same result", async () => {
+    const lineGate = defer();
+    const events = [];
+    const ocr = {
+      readCollectorLine: async () => { events.push("collector:start"); await lineGate.p; events.push("collector:end"); return modernLine(); },
+      readTitle: async (_b, { lang }) => { events.push(`title:${lang}`); return { text: "Shivan Devastator", confidence: 0.85 }; },
+      nameSimilarity,
+    };
+    const base = makeMatcher({ scores: { "dmu-107-en": 0.12 }, top: [{ printing_id: "dmu-107-en", oracle_id: "o-shivan-devastator", name: "Shivan Devastator", score: 0.12 }], gap: 0.2 });
+    const matcher = {
+      ...base,
+      hashImage: async (_c, opts) => { events.push(`hash:${opts?.variants ?? 27}`); return [Buffer.alloc(88)]; },
+      match: async (...a) => { events.push("match"); return base.match(...a); },
+    };
+    const ctx = { db: null, idx: {}, matcher, ocr, fp: fpStub, index: makeIndex(), thresholds: DEFAULT_THRESHOLDS };
+    const pending = identify(ctx, { card: CARD, strip: STRIP, settings: { storageLang: "en" } });
+    for (let i = 0; i < 20 && !events.includes("match"); i++) await new Promise((r) => setImmediate(r));
+    assert.ok(events.includes("title:en") && events.includes("match"), `started while the collector OCR runs: ${events}`);
+    assert.ok(!events.includes("collector:end"));
+    lineGate.resolve();
+    const r = await pending;
+    assert.equal(r.status, "auto");
+    assert.equal(r.printing.id, "dmu-107-en");
+    assert.ok("match" in r.timings && "title" in r.timings);
+    assert.deepEqual(events.filter((e) => e.startsWith("title")), ["title:en"], "English line: no re-read");
+  });
+
+  test("settings.precise hashes 9 variants only when preciseVariants is 9 (default 27 = off)", async () => {
+    const seen = [];
+    const matcher = { ...makeMatcher({}), hashImage: async (_c, opts) => { seen.push(opts?.variants ?? 27); return [Buffer.alloc(88)]; } };
+    const mk = (thresholds = DEFAULT_THRESHOLDS) => ({ db: null, idx: {}, matcher, ocr: makeOcr({ line: modernLine(), title: "Shivan Devastator" }), fp: fpStub, index: makeIndex(), thresholds });
+    assert.equal(DEFAULT_THRESHOLDS.preciseVariants, 27);
+    const precise = await identify(mk(), { card: CARD, strip: STRIP, settings: { precise: true } });
+    await identify(mk({ ...DEFAULT_THRESHOLDS, preciseVariants: 9 }), { card: CARD, strip: STRIP, settings: { precise: true } });
+    await identify(mk({ ...DEFAULT_THRESHOLDS, preciseVariants: 9 }), { card: CARD, strip: STRIP, settings: {} });
+    assert.deepEqual(seen, [27, 9, 27]);
+    assert.equal(precise.features.settings.precise, true);
+  });
+
+  test("a failing title read and a failing match are reported, not thrown", async () => {
+    const ocr = { readCollectorLine: async () => modernLine(), readTitle: async () => { throw new Error("boom"); }, nameSimilarity };
+    const matcher = { ...makeMatcher({}), hashImage: async () => [Buffer.alloc(88)], match: async () => { throw new Error("worker gone"); } };
+    const r = await identify({ db: null, idx: {}, matcher, ocr, fp: fpStub, index: makeIndex(), thresholds: DEFAULT_THRESHOLDS }, { card: CARD, strip: STRIP, settings: {} });
+    assert.ok(r.features.errors.includes("title: boom"));
+    assert.ok(r.features.errors.includes("fingerprint: worker gone"));
+    assert.equal(r.status, "suggest", "exact line without confirmation");
+  });
+});
+
+describe("identifyOriented: 180° retry", () => {
+  // OCR inputs and hashes are tagged by orientation: the retry's turned card
+  // and its top band (ROT_*) and the re-encoded upright images (UP_*).
+  const ROT_CARD = Buffer.from("P5 turned card");
+  const ROT_STRIP = Buffer.from("P5 turned top band");
+  const UP_CARD = Buffer.from([0xff, 0xd8, 9, 9, 1]);
+  const UP_STRIP = Buffer.from([0xff, 0xd8, 9, 9, 2]);
+  const lea = (score) => ({ printing_id: "lea-2-en", oracle_id: "o-unique-old-card", name: "Unique Old Card", score });
+  const far = { printing_id: "dmo-107-en", oracle_id: "o-ghostly-prison", name: "Ghostly Prison", score: 0.43 };
+
+  function go({ up = {}, rot = {}, claude = null, settings = {}, signal, uprightJpegs, retryMode, hashErr } = {}) {
+    const calls = { hash: [], collector: [], title: [], band: null, upright: 0 };
+    const pass = (rotated) => (rotated ? rot : up);
+    const ocr = {
+      rotatedOcrInputs: async (_card, { band }) => { calls.band = band; return { card: ROT_CARD, strip: ROT_STRIP }; },
+      readCollectorLine: async (buf) => { calls.collector.push(buf === ROT_STRIP ? 180 : 0); return pass(buf === ROT_STRIP).line ?? null; },
+      readTitle: async (buf) => {
+        calls.title.push(buf === ROT_CARD ? 180 : 0);
+        const t = pass(buf === ROT_CARD).title ?? "";
+        return { text: t, confidence: t ? 0.85 : 0 };
+      },
+      nameSimilarity,
+    };
+    const matcher = {
+      hashImage: async (_card, opts) => {
+        calls.hash.push(opts?.rotate ?? 0);
+        if (hashErr) throw new Error(hashErr);
+        return [Buffer.from([opts?.rotate ? 1 : 0])];
+      },
+      match: async (h) => {
+        const r = (pass(h[0][0] === 1).top ?? []).map((x) => ({ ...x, printing_ids: x.printing_ids ?? [x.printing_id] }));
+        Object.defineProperty(r, "bestOther", { value: null });
+        return r;
+      },
+      nameGap: (r) => (r.length ? (r.find((x) => x.oracle_id !== r[0].oracle_id)?.score ?? 0.5) - r[0].score : null),
+      scorePrintings: async (h, ids) => {
+        const scores = pass(h[0][0] === 1).scores ?? {};
+        return new Map(ids.filter((id) => id in scores).map((id) => [id, { score: scores[id], key: id }]));
+      },
+    };
+    const fp = { uprightJpegs: uprightJpegs ?? (async () => { calls.upright++; return { card: UP_CARD, strip: UP_STRIP }; }) };
+    const ctx = { db: null, idx: {}, matcher, claude, ocr, fp, index: makeIndex(), thresholds: DEFAULT_THRESHOLDS, fingerprintsComplete: true, signal, retry: retryMode };
+    return identifyOriented(ctx, { card: CARD, strip: STRIP, settings: { storageLang: "en", foil: "auto", ...settings } }).then((r) => ({ r, calls }));
+  }
+  // An upside-down pre-1998 card: upright, the art and title say nothing; turned, they name it.
+  const upsideDown = { up: { top: [far] }, rot: { top: [lea(0.1), far], title: "Unique Old Card", scores: { "lea-2-en": 0.1 } } };
+
+  test("upside-down card: the turned pass identifies it; upright images to store", async () => {
+    const { r, calls } = await go(upsideDown);
+    assert.equal(r.status, "auto");
+    assert.equal(r.printing.id, "lea-2-en");
+    assert.equal(r.features.rotation, 180);
+    assert.equal(r.features.strip_used, "card_top");
+    assert.equal(r.features.stored_upright, true);
+    assert.deepEqual(calls.hash, [0, 180], "hash of the turned pixels");
+    assert.deepEqual(calls.title, [0, 180]);
+    assert.deepEqual(calls.collector, [0, 180], "the card's own top band is the collector strip");
+    assert.deepEqual(calls.band, [0.85, 1]);
+    assert.equal(calls.upright, 1);
+    assert.deepEqual(r.upright, { card: UP_CARD, strip: UP_STRIP });
+    assert.equal(r.features.retry.chosen, 180);
+    assert.equal(r.features.retry.upright.status, "failed");
+    assert.equal(r.features.retry.rotated.status, "auto");
+    assert.ok(Number.isFinite(r.timings.retry) && Number.isFinite(r.timings.total));
+    assert.ok(r.timings.upright && "hash" in r.timings.upright, "the upright pass's timings are kept");
+  });
+
+  test("certain upright results never retry", async () => {
+    const { r, calls } = await go({ up: { line: modernLine(), title: "Shivan Devastator" } });
+    assert.equal(r.status, "auto");
+    assert.deepEqual(calls.hash, [0]);
+    assert.equal(calls.band, null, "no turned OCR inputs");
+    assert.equal(r.features.rotation, 0);
+    assert.equal(r.features.strip_used, "strip");
+    assert.equal(r.features.retry, undefined);
+    assert.equal(r.upright, undefined);
+  });
+
+  test("REVIEW: a near fingerprint does not retry; a far one does, also with a (bogus) collector line", async () => {
+    const near = await go({ up: { top: [lea(0.22), { ...far, score: 0.23 }], scores: { "lea-2-en": 0.22 } } });
+    assert.equal(near.r.status, "review");
+    assert.ok(near.r.features.fingerprint.d1 <= DEFAULT_THRESHOLDS.retryFpMin);
+    assert.deepEqual(near.calls.hash, [0]);
+    // The upside-down title band can read as a collector line; the art still decides.
+    const withLine = await go({ up: { line: modernLine({ confidence: 0.2 }), top: [far], scores: { "dmu-107-en": 0.45 } }, rot: upsideDown.rot });
+    assert.deepEqual(withLine.calls.hash, [0, 180]);
+    assert.equal(withLine.r.features.retry.upright.status, "review");
+    assert.equal(withLine.r.printing.id, "lea-2-en");
+    assert.equal(withLine.r.features.rotation, 180);
+  });
+
+  test("matcher warming up: the turned pass is OCR only (no second hash wait)", async () => {
+    const { r, calls } = await go({ up: { top: [far] }, rot: { line: modernLine(), title: "Shivan Devastator" }, hashErr: "scanner warming up" });
+    assert.deepEqual(calls.hash, [0], "the rotated pass does not wait on the matcher again");
+    assert.deepEqual(calls.collector, [0, 180], "the turned OCR still runs");
+    assert.equal(r.features.rotation, 180);
+    assert.equal(r.printing.id, "dmu-107-en");
+    assert.ok(r.features.errors.some((e) => /upright hash: scanner warming up/.test(e)), r.features.errors.join("; "));
+  });
+
+  test("same status: a turned collector line wins only when the turned art (or title) backs it", async () => {
+    // An upright old-frame card whose turned title band reads as a bogus line.
+    const up = { top: [lea(0.3)], scores: { "lea-2-en": 0.3 } };
+    const bogus = await go({ up, rot: { line: modernLine({ confidence: 0.2 }), top: [far], scores: { "dmu-107-en": 0.45 } } });
+    assert.equal(bogus.r.features.retry.upright.status, "review");
+    assert.equal(bogus.r.features.retry.rotated.status, "review");
+    assert.equal(bogus.r.features.rotation, 0, "a bogus line does not turn an upright photo");
+    assert.equal(bogus.r.printing.id, "lea-2-en");
+    const art = await go({ up, rot: { line: modernLine({ confidence: 0.2 }), top: [{ ...far, score: 0.305 }], scores: { "dmu-107-en": 0.35 } } });
+    assert.equal(art.r.features.retry.rotated.status, "review");
+    assert.equal(art.r.features.rotation, 180, "the turned art backs the line");
+    assert.equal(art.r.printing.id, "dmu-107-en");
+  });
+
+  test("ctx.retry: 'never' skips the retry, 'always' forces it", async () => {
+    const never = await go({ ...upsideDown, retryMode: "never" });
+    assert.equal(never.r.features.rotation, 0);
+    assert.equal(never.r.features.retry, undefined);
+    assert.deepEqual(never.calls.hash, [0]);
+    const always = await go({ up: { line: modernLine(), title: "Shivan Devastator" }, retryMode: "always" });
+    assert.equal(always.r.features.retry.chosen, 0, "a certain upright result keeps winning");
+    assert.equal(always.r.status, "auto");
+    assert.deepEqual(always.calls.hash, [0, 180]);
+  });
+
+  test("a retry that finds nothing better keeps the upright result; Claude runs once on the original photo", async () => {
+    const claude = makeClaude({ english_name: "Lightning Bolt", printed_name: "Lightning Bolt", set_code: "m10", collector_number: "146", language: "en" });
+    const { r, calls } = await go({ up: { top: [far] }, rot: { top: [far] }, claude });
+    assert.deepEqual(calls.hash, [0, 180]);
+    assert.equal(r.features.rotation, 0);
+    assert.equal(r.features.strip_used, "strip");
+    assert.equal(r.features.retry.chosen, 0);
+    assert.equal(r.features.retry.rotated.status, "failed");
+    assert.equal(calls.upright, 0, "nothing re-encoded");
+    assert.equal(claude.calls.length, 1, "Claude at most once");
+    assert.equal(claude.calls[0].images[0].data, CARD.toString("base64"));
+    assert.equal(claude.calls[0].images[1].data, STRIP.toString("base64"));
+
+    const off = makeClaude({ english_name: "Lightning Bolt" });
+    await go({ up: { top: [far] }, rot: { top: [far] }, claude: off, settings: { allowClaude: false } });
+    assert.equal(off.calls.length, 0);
+  });
+
+  test("a turned REVIEW result asks Claude with the upright images", async () => {
+    const claude = makeClaude({ english_name: "Nope", printed_name: "Nope", set_code: "zzz", collector_number: "1", language: "en" });
+    const { r } = await go({ up: { top: [far] }, rot: { top: [lea(0.3)], scores: { "lea-2-en": 0.3 } }, claude });
+    assert.equal(r.status, "review");
+    assert.equal(r.features.rotation, 180);
+    assert.equal(claude.calls.length, 1);
+    assert.deepEqual(claude.calls[0].images.map((i) => i.data), [UP_CARD.toString("base64"), UP_STRIP.toString("base64")]);
+  });
+
+  test("a client that left: no turned pass, no Claude", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const claude = makeClaude({ english_name: "Lightning Bolt" });
+    const { r, calls } = await go({ ...upsideDown, claude, signal: ac.signal });
+    assert.deepEqual(calls.hash, [0]);
+    assert.equal(r.features.rotation, 0);
+    assert.equal(claude.calls.length, 0);
+    assert.equal(r.features.claude?.skipped, "cancelled");
+  });
+
+  test("★ read from the card's top band is SUGGEST at most", async () => {
+    const neo = modernLine({ raw: "R 0301\nNEO ★ EN", number: "301", numberCandidates: ["301"], setCandidates: [{ code: "neo", score: 1, cost: 0 }], separator: "star" });
+    const upright = await go({ up: { line: neo, title: "Ancestral Katana" } });
+    assert.equal(upright.r.status, "auto", "the client's strip may decide the finish");
+    assert.equal(upright.r.finish, "foil");
+    const { r } = await go({ up: { top: [far] }, rot: { line: neo, title: "Ancestral Katana" } });
+    assert.equal(r.features.rotation, 180);
+    assert.equal(r.printing.id, "neo-301-en");
+    assert.equal(r.finish, "foil");
+    assert.equal(r.status, "suggest");
+    assert.ok(r.features.local.reasons.some((x) => /top band/.test(x)));
+  });
+
+  test("re-encoding fails: the result stands, the original photo is stored", async () => {
+    const { r } = await go({ ...upsideDown, uprightJpegs: async () => { throw new Error("cjpeg missing"); } });
+    assert.equal(r.status, "auto");
+    assert.equal(r.features.rotation, 180);
+    assert.equal(r.features.stored_upright, false);
+    assert.equal(r.upright, undefined);
+    assert.ok(r.features.errors.some((e) => /upright: cjpeg missing/.test(e)));
+  });
+});
 
 describe("claude.js vision runner", () => {
   test("createHourlyCap: sliding window", () => {

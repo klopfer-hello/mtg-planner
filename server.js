@@ -27,7 +27,7 @@ import * as indexModule from "./lib/cardindex.js";
 import { createScheduler, schedulerConfig } from "./lib/scheduler.js";
 import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker, checkJpegSize } from "./lib/fingerprint.js";
 import { ocrTools } from "./lib/ocr.js";
-import { decideFinish, identify, printingSummary, scanPriceEur } from "./lib/scanner.js";
+import { decideFinish, identifyOriented, printingSummary, scanPriceEur } from "./lib/scanner.js";
 import { DebugError, DebugSessions } from "./lib/debugsessions.js";
 import {
   BackupError, backupConfig, backupPath, createBackup, dbCounts, deleteBackup, gunzipToFile, listBackups, swapDatabase, validateBackupDb,
@@ -648,7 +648,9 @@ function scanSettings(raw = {}) {
   if (setHint && !/^[a-z0-9]{2,8}$/.test(setHint)) throw new HttpError(400, "settings.setHint must be a set code");
   const condition = raw.condition ?? "near_mint";
   if (!CONDITIONS.includes(condition)) throw new HttpError(400, `settings.condition must be one of ${CONDITIONS.join(", ")}`);
-  return { storageLang, foil, setHint, condition };
+  // precise: the client tracked a stable quad (not a fallback crop); the scanner then hashes 9 query variants, not 27.
+  if (raw.precise != null && typeof raw.precise !== "boolean") throw new HttpError(400, "settings.precise must be a boolean");
+  return { storageLang, foil, setHint, condition, precise: raw.precise === true };
 }
 
 /** Optional capture-controller fields of a scan request: {capture, dupOf}. */
@@ -703,7 +705,8 @@ async function postScan(req, res) {
   let result;
   try {
     await loadSetCodes().catch(() => null);
-    result = await identify(
+    // Upside-down cards are retried turned by 180° (the stored photo is then upright).
+    result = await identifyOriented(
       { db, idx, index: scanIndex, matcher: readyMatcher(), signal: gone.signal, claude: { runVision: claudeConfigured() ? runVision : null, cap: visionCap } },
       { card, strip, settings: { ...settings, allowClaude: body.allowClaude !== false } },
     );
@@ -712,7 +715,7 @@ async function postScan(req, res) {
   }
   if (gone.signal.aborted) throw new HttpError(499, "Scan cancelled: the client closed the request");
   const staged = stageScan(db, result, {
-    image: card, strip, force: body.force === true, condition: settings.condition, calibration: body.calibration === true, replaceId,
+    image: result.upright?.card ?? card, strip: result.upright?.strip ?? strip, force: body.force === true, condition: settings.condition, calibration: body.calibration === true, replaceId,
     dupOf, capture,
   });
   // EUR price of the stored printing + finish: the UI picks the scan sound by it.

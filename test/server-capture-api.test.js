@@ -104,6 +104,14 @@ describe("POST /api/scan capture fields", () => {
     assert.equal((await call("POST", "/api/scan", { card, capture: "x" })).status, 400);
     assert.equal((await call("POST", "/api/scan", { card, dup_of: "abc" })).status, 400);
     assert.equal((await call("POST", "/api/scan", { card, dup_of: -2 })).status, 400);
+    const bad = await call("POST", "/api/scan", { card, settings: { precise: "yes" } });
+    assert.equal(bad.status, 400);
+    assert.match(bad.body.error, /precise/);
+  });
+
+  test("settings.precise true is accepted", async () => {
+    const r = await call("POST", "/api/scan", { card: fakeJpeg().toString("base64"), allowClaude: false, settings: { precise: true } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
   });
 
   test("an unidentifiable photo: result carries price_eur null; its capture record reaches the log", async () => {

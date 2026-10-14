@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   classifySeparator, cropFrac, decodeGray, digitize, encodePgm, invert, matchSetCode, nameSimilarity,
-  ocrTools, parseCollectorText, parseLegacy, parsePnm, parseTsv, PRINTED_LANGS, readCollectorLine, readTitle, wlev,
+  ocrTools, parseCollectorText, parseLegacy, parsePnm, parseTsv, PRINTED_LANGS, readCollectorLine, readTitle, rotateGray180,
+  rotatedOcrInputs, tessLangFor, wlev,
 } from "../lib/ocr.js";
 
 const SETS = ["dft", "dsk", "dsc", "dmc", "ddc", "m15", "m20", "clb", "aclb", "blb", "neo", "nec", "j22", "j20", "afc",
@@ -145,6 +146,18 @@ describe("parseCollectorText: 1998-2014 and older", () => {
 
 const pick = (c) => [c[0]?.number, c[0]?.total];
 
+describe("tessLangFor", () => {
+  test("Scryfall lang -> tesseract spec; specs pass through; unknown -> eng", () => {
+    assert.equal(tessLangFor("en"), "eng");
+    assert.equal(tessLangFor("ph"), "eng", "same read as English (no extra speculative read)");
+    assert.equal(tessLangFor("de"), "deu+eng");
+    assert.equal(tessLangFor("ja"), "jpn");
+    assert.equal(tessLangFor("deu+eng"), "deu+eng");
+    assert.equal(tessLangFor("x"), "eng");
+    assert.equal(tessLangFor(), "eng");
+  });
+});
+
 describe("set-code matching helpers", () => {
   test("wlev weights OCR confusions at 0.5", () => {
     assert.equal(wlev("OSC", "DSC"), 0.5);
@@ -251,6 +264,17 @@ describe("pixels", () => {
     assert.deepEqual([...invert(c).data], [155, 105, 245, 235]);
   });
 
+  test("rotateGray180 turns the pixels; rotatedOcrInputs takes a PGM too", async () => {
+    const img = { width: 3, height: 2, data: Uint8Array.from([1, 2, 3, 4, 5, 6]) };
+    assert.deepEqual([...rotateGray180(img).data], [6, 5, 4, 3, 2, 1]);
+    // 4x20 card, rows 0..19 valued by row: the turned card's bottom 15% = rows 2, 1, 0.
+    const card = { width: 4, height: 20, data: Uint8Array.from({ length: 80 }, (_, i) => Math.floor(i / 4) * 10) };
+    const r = await rotatedOcrInputs(encodePgm(card));
+    const turned = parsePnm(r.card), band = parsePnm(r.strip);
+    assert.deepEqual([turned.width, turned.height, turned.data[0]], [4, 20, 190]);
+    assert.deepEqual([band.width, band.height, [...band.data].filter((_, i) => i % 4 === 0)], [4, 3, [20, 10, 0]]);
+  });
+
   test("P6 is converted to gray", () => {
     const ppm = Buffer.concat([Buffer.from("P6 1 1 255\n"), Buffer.from([255, 255, 255])]);
     assert.deepEqual([...parsePnm(ppm).data], [255]);
@@ -304,5 +328,9 @@ describe("with tesseract and djpeg", { skip: skipBins }, () => {
     const t = await readTitle(jpegOf(card), { lang: "de" });
     assert.ok(t.confidence < 0.3, "blank title must not read with confidence"); // psm 7 may hallucinate a short low-conf word
     assert.equal(t.tessLang, "deu+eng");
+    // A pre-decoded gray image (or its promise) gives the same read as the JPEG.
+    const pre = await readTitle(Buffer.from("not decoded"), { lang: "de", gray: decodeGray(jpegOf(card)) });
+    assert.equal(pre.text, t.text);
+    assert.equal(pre.confidence, t.confidence);
   });
 });

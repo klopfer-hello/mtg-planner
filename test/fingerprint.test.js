@@ -11,8 +11,8 @@ import os from "node:os";
 import path from "node:path";
 import { openIndex, refreshIndex, indexStatus } from "../lib/cardindex.js";
 import {
-  FP_BYTES, Matcher, areaResample, buildFingerprints, checkJpegSize, decodeJpeg, fingerprintKey, hasDjpeg, hashCard, hashQuery,
-  jpegSize, parsePnm, score,
+  FP_BYTES, Matcher, areaResample, buildFingerprints, checkJpegSize, cropRows, decodeJpeg, encodeJpeg, fingerprintKey, hasCjpeg, hasDjpeg,
+  hashCard, hashQuery, jpegSize, parsePnm, rotate180, score, uprightJpegs,
 } from "../lib/fingerprint.js";
 
 // Seeded procedural "card": shaded background with coloured rectangles and
@@ -93,6 +93,29 @@ describe("hashing", () => {
     const d = refs.map((r) => Math.min(...q.map((v) => score(v, r))));
     assert.ok(d[2] < 0.2, `true match distance ${d[2]}`);
     for (const [i, x] of d.entries()) if (i !== 2) assert.ok(x > d[2] + 0.1, `impostor ${i} at ${x}`);
+  });
+
+  test("rotate180 / cropRows: pixel order, channels kept", () => {
+    const rgb = { width: 2, height: 2, channels: 3, data: Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) };
+    assert.deepEqual([...rotate180(rgb).data], [10, 11, 12, 7, 8, 9, 4, 5, 6, 1, 2, 3]);
+    const gray = { width: 3, height: 1, channels: 1, data: Uint8Array.from([1, 2, 3]) };
+    assert.deepEqual([...rotate180(gray).data], [3, 2, 1]);
+    const img = synth(5);
+    assert.deepEqual(rotate180(rotate180(img)).data, img.data);
+    const band = cropRows(img, 0.85, 1);
+    assert.deepEqual([band.width, band.height, band.channels], [146, 31, 3]);
+    assert.deepEqual(band.data.subarray(0, 6), img.data.subarray(173 * 146 * 3, 173 * 146 * 3 + 6));
+  });
+
+  test("an upside-down capture matches its card only once turned back", () => {
+    const refs = [1, 2, 3, 4, 5].map((i) => hashCard(synth(i)));
+    const upside = rotate180(capture(synth(3), { seed: 11 }));
+    const best = (q) => refs.map((r, i) => ({ i: i + 1, d: Math.min(...q.map((h) => score(h, r))) })).sort((a, b) => a.d - b.d)[0];
+    const as = best(hashQuery(upside));
+    assert.ok(as.d > 0.3, `as photographed: ${as.d.toFixed(3)} to card ${as.i}`);
+    const turned = best(hashQuery(rotate180(upside)));
+    assert.equal(turned.i, 3);
+    assert.ok(turned.d < 0.15, `turned back: ${turned.d.toFixed(3)}`);
   });
 
   test("gray input is accepted", () => {
@@ -302,6 +325,25 @@ describe("JPEG size guard", () => {
 });
 
 describe("djpeg", { skip: !hasDjpeg() && "djpeg not installed" }, () => {
+  test("uprightJpegs: an upside-down card JPEG comes back upright, plus its top band as the strip", async (t) => {
+    if (!hasCjpeg()) return t.skip("cjpeg not installed");
+    const upright = capture(synth(6), { w: 300, h: 420, noise: 0, shift: 0 });
+    const jpg = await encodeJpeg(rotate180(upright), { quality: 95 });
+    assert.deepEqual(jpg.subarray(0, 2), Buffer.from([0xff, 0xd8]));
+    const out = await uprightJpegs(jpg);
+    const card = await decodeJpeg(out.card);
+    const strip = await decodeJpeg(out.strip);
+    assert.deepEqual([card.width, card.height, strip.width, strip.height], [300, 420, 300, 63]);
+    assert.ok(score(hashCard(card), hashCard(upright)) < 0.06, "upright again");
+    const want = cropRows(upright, 0.85, 1);
+    let diff = 0;
+    for (let i = 0; i < want.data.length; i++) diff += Math.abs(want.data[i] - strip.data[i]);
+    assert.ok(diff / want.data.length < 8, `strip = the upright card's bottom band (mean diff ${(diff / want.data.length).toFixed(1)})`);
+    const gray = await encodeJpeg({ width: 8, height: 8, channels: 1, data: new Uint8Array(64).fill(100) });
+    assert.equal((await decodeJpeg(gray)).channels, 1);
+    await assert.rejects(uprightJpegs(Buffer.from("nope")), /JPEG/);
+  });
+
   test("decodeJpeg round-trips a cjpeg-encoded image", async (t) => {
     if (spawnSync("cjpeg", ["-version"], { stdio: "ignore" }).error) return t.skip("cjpeg not installed");
     const img = synth(4, 64, 88);

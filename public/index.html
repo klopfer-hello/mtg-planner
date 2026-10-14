@@ -596,6 +596,10 @@ ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
 }
 .same-chip .grow { min-width: 0; font-weight: 700; }
 .rec-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.rec-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.rec-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 0; border-top: 1px solid var(--border); min-width: 0; }
+.rec-list li:first-child { border-top: 0; }
+.rec-list .grow { flex: 1 1 12em; min-width: 0; overflow-wrap: anywhere; }
 .num-input { width: 6.5em; }
 .cam-btn {
   appearance: none; width: 48px; height: 48px; border-radius: 50%; border: 0; cursor: pointer;
@@ -3847,6 +3851,60 @@ function readCaptureOverrides() {
 }
 const fmtElapsed = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 
+/**
+ * Recorded sessions on the server (GET/DELETE /api/debug/sessions), shown in
+ * the scan settings so old recordings can be cleaned up from the phone.
+ * `recording` = the session being recorded now (not deletable, list reloads when it stops).
+ */
+function RecordedSessions({ recording }) {
+  const [list, setList] = useState(null);
+  const [error, setError] = useState(null);
+  const [ask, setAsk] = useState(null); // id awaiting the inline "Delete?" confirm
+  const [busy, setBusy] = useState(null);
+  const load = useCallback(() => {
+    api("/api/debug/sessions").then((d) => { setList(d.sessions || []); setError(null); })
+      .catch((e) => setError(`Could not load recorded sessions: ${e.message}`));
+  }, []);
+  useEffect(load, [load, recording]);
+  const remove = async (id) => {
+    setBusy(id); setError(null);
+    try { await api(`/api/debug/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }); setAsk(null); load(); }
+    catch (e) { setError(`Delete failed: ${e.message}`); setAsk(null); load(); }
+    finally { setBusy(null); }
+  };
+  return (
+    <div className="field rec-sessions" style={{ gridColumn: "1 / -1" }}>
+      <span className="small" style={{ fontWeight: 600 }}>Recorded sessions</span>
+      {error && <span className="small" style={{ color: "var(--bad)" }} role="alert">{error}</span>}
+      {!list && !error && <span className="small muted">Loading…</span>}
+      {list && list.length === 0 && <span className="small muted">No recorded sessions.</span>}
+      {list && list.length > 0 && (
+        <ul className="rec-list">
+          {list.map((s) => (
+            <li key={s.id}>
+              <span className="grow small">
+                <b>{fmtDate(s.started_at)}</b>
+                <span className="muted"> · {plural(s.frames, "frame")} · {(s.bytes / 1048576).toFixed(1)} MB</span>
+                {s.id === recording && <span className="badge accent" style={{ marginLeft: 6 }}>recording</span>}
+              </span>
+              {ask === s.id ? (
+                <span className="row small" style={{ gap: 4 }} role="group" aria-label="Confirm delete">
+                  <span>Delete?</span>
+                  <button type="button" className="btn sm danger" disabled={busy === s.id} onClick={() => remove(s.id)}>Yes</button>
+                  <button type="button" className="btn sm" disabled={busy === s.id} onClick={() => setAsk(null)}>No</button>
+                </span>
+              ) : (
+                <button type="button" className="btn sm ghost danger" style={{ paddingInline: 8 }} disabled={s.id === recording || Boolean(busy)}
+                  onClick={() => setAsk(s.id)} aria-label={`Delete recorded session from ${fmtDate(s.started_at)}`} title="Delete"><Icon.trash /></button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function cameraErrorMessage(e) {
   const n = e?.name;
   if (n === "NotAllowedError" || n === "SecurityError") return "Camera access was denied. Allow the camera for this site in your browser settings, then tap Start camera again.";
@@ -4180,7 +4238,10 @@ function CameraViewV2({ lib, ctlRef, detRef, active, settings, paused, flash, qu
     try {
       const shot = await lib.captureCard(v, trackRef.current, c.quad, { ...opts, preferPhoto: opts.preferPhoto !== false && live.current.photo !== false });
       if (c.rec) Object.assign(c.rec, { shot: shot.kind, shot_drift: shot.drift ?? null, orient_conf: Number.isFinite(o?.orientConf) ? Math.round(o.orientConf * 1000) / 1000 : null, prior_learned: Boolean(o?.priorLearned) });
-      const item = ctl.captured(c, live.current.buildPayload(shot, c));
+      // precise: the crop comes from an accepted, stable tracked quad (not a fallback), so the
+      // server may take its faster clean-crop path.
+      const precise = Boolean(!c.fallback && o?.accepted && o?.stable && c.quad === o.corners);
+      const item = ctl.captured(c, live.current.buildPayload(shot, c, { precise }));
       if (item) live.current.onUpload(item);
       // An accepted, tracked capture teaches the box prior (savePrior adds it, then persists).
       if (!c.fallback && o?.accepted && c.quad === o.corners) {
@@ -5184,12 +5245,12 @@ function ScanTab({ active, health, onCommitted }) {
   }
 
   /** The scan request body for a capture (settings at capture time). */
-  const scanBody = (shot, consumeReplace = true) => {
+  const scanBody = (shot, consumeReplace = true, precise = false) => {
     const s = settingsRef.current;
     const body = {
       card: shot.card,
       strip: shot.strip,
-      settings: { storageLang: s.storageLang, foil: s.foil, condition: s.condition, ...(s.setHint.trim() ? { setHint: s.setHint.trim().toLowerCase() } : {}) },
+      settings: { storageLang: s.storageLang, foil: s.foil, condition: s.condition, ...(s.setHint.trim() ? { setHint: s.setHint.trim().toLowerCase() } : {}), ...(precise ? { precise: true } : {}) },
       ...(s.calibration ? { calibration: true } : {}),
       ...(replaceRef.current ? { replace_id: replaceRef.current } : {}),
     };
@@ -5200,7 +5261,7 @@ function ScanTab({ active, health, onCommitted }) {
   const onCapture = (cap) => postScan(scanBody(cap), cap.cardPreview);
 
   // v2: CaptureController payload = {body, preview}; a "+1?" chip photo never takes the Rescan replace_id.
-  const buildPayload = (shot, c) => ({ body: scanBody(shot, !c?.hold), preview: shot.cardPreview, kind: shot.kind });
+  const buildPayload = (shot, c, meta) => ({ body: scanBody(shot, !c?.hold, Boolean(meta?.precise)), preview: shot.cardPreview, kind: shot.kind });
 
   // Re-send a body already sent once (Send again, Retry, Different card, Ask Claude).
   const resend = (body, preview, extra = {}) => {
@@ -5452,6 +5513,7 @@ function ScanTab({ active, health, onCommitted }) {
                 )}
               </div>
             )}
+            <RecordedSessions recording={rec?.session ?? null} />
           </div>
         </details>
       </div>
