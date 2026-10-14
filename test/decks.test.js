@@ -125,8 +125,9 @@ describe("decks", () => {
 
     const text = deckToText(d);
     assert.match(text, /^Deck #\d+ "Test" \[commander\] \(source: manual, status: idea/);
-    assert.match(text, /Missing from collection: 5 cards \(~€22\.00;/);
-    assert.match(text, /1x Lightning Bolt \| \{R\} \| Instant \| MISSING 1 \(owned 1\) \| €2\.00/);
+    assert.match(text, /To buy \(not owned at all\): 5 cards \(~€22\.00\)\./);
+    assert.doesNotMatch(text, /In other built decks/);
+    assert.match(text, /## side\n1x Lightning Bolt \| \{R\} \| Instant \| TO BUY 1, owned 1 \| €2\.00/);
     assert.match(text, /30x Forest .*\| basic \|/);
   });
 
@@ -260,7 +261,7 @@ describe("deck value (EUR)", () => {
       { board: "maybe", name: "Serra Angel", scryfall_id: ID.serra, quantity: 3 },                  // €0.30
     ] });
     const d = deckDetail(ctx.db, id);
-    assert.deepEqual(d.value, { total_eur: 31.5, owned_eur: 8, to_buy_eur: 23.5, maybe_eur: 0.3, no_eur_price: 3 });
+    assert.deepEqual(d.value, { total_eur: 31.5, owned_eur: 8, to_buy_eur: 23.5, in_use_eur: 0, maybe_eur: 0.3, no_eur_price: 3 });
     assert.equal(d.missing_cost_eur, 23.5);
     const bolt = d.cards.find((c) => c.name === "Lightning Bolt");
     assert.equal(bolt.eur, 2);
@@ -276,7 +277,7 @@ describe("deck value (EUR)", () => {
       { board: "main", name: "Lightning Bolt", scryfall_id: ID.lightning, quantity: 1 },
       { board: "side", name: "Lightning Bolt", scryfall_id: ID.lightning, quantity: 1 },
     ] });
-    assert.deepEqual(deckDetail(ctx.db, id).value, { total_eur: 7, owned_eur: 5, to_buy_eur: 2, maybe_eur: 0, no_eur_price: 0 });
+    assert.deepEqual(deckDetail(ctx.db, id).value, { total_eur: 7, owned_eur: 5, to_buy_eur: 2, in_use_eur: 0, maybe_eur: 0, no_eur_price: 0 });
   });
 });
 

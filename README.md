@@ -137,6 +137,7 @@ Set these in `.env`, which `docker-compose.yml` loads if it exists:
 | `INDEX_BULK_SOURCE` | *(empty)* | Local path (or URL) of a Scryfall `all_cards` .jsonl.gz to build the index from instead of downloading it. Empty means download. |
 | `SCAN_DUPLICATE_WINDOW_MS` | `20000` | The same printing and finish scanned again within this window is offered as +1 instead of being staged. |
 | `SCAN_MAX_CONCURRENT` | `2` | Scans identified at the same time; further uploads get HTTP 429 ("still identifying") until one finishes. |
+| `SCAN_MATCHER_WAIT_MS` | `30000` | How long a scan waits for the fingerprint matcher to finish loading after a server start; after that the scan goes on without the fingerprint (OCR / Claude only). |
 | `CLAUDE_SCAN_MAX_BUDGET_USD` | `0.25` | Spend cap per Claude vision call (`--max-budget-usd`). |
 | `CLAUDE_SCAN_TIMEOUT_MS` | `90000` | Timeout for one Claude vision call. |
 | `OCR_TIMEOUT_MS` | `20000` | Timeout for one tesseract/djpeg run. |
@@ -465,6 +466,12 @@ The **Import** tab shows the index status and has **Refresh index** and
 recognised. Until fingerprints exist, scanning still works on cards with a
 modern collector line, but older cards need more manual picking.
 
+The fingerprints are loaded in a worker thread right after the server starts
+(a few seconds; once after an upgrade that adds columns to the index, longer).
+`/healthz` shows `scanner.matcher.state` (`loading`, `ready` or `error`) and
+the load time. A scan sent while it is still loading waits for it, at most
+`SCAN_MATCHER_WAIT_MS`, and the Scan tab says "warming up the scanner".
+
 ### Phones, HTTPS and capture
 
 - Browsers only allow camera access in a **secure context**, which means
@@ -552,7 +559,11 @@ flowchart LR
 - `lib/ocr.js`: tesseract wrapper, collector-line parser, ★/• classifier,
   set-code matching, and title OCR.
 - `lib/fingerprint.js`: JPEG decoding via `djpeg`, the 88-byte card hash,
-  the in-memory matcher, and the background reference-hash job.
+  the in-memory matcher (`MatcherWorker` runs it in a worker thread), and the
+  background reference-hash job.
+- `lib/fingerprint-worker.js`: the matcher's worker thread: loads the
+  fingerprints at startup, hashes and matches scans, and serves the scanner's
+  card-index lookups, so none of that blocks the HTTP server.
 - `lib/scanner.js`: the identification pipeline and the decision thresholds
   (`SCAN_THRESHOLDS`).
 - `lib/scans.js`: the scan list (staging, duplicate rule, undo, +1), commits

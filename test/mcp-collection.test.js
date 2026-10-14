@@ -154,7 +154,7 @@ describe("mcp-collection.js", () => {
     assert.match(list.text, /value €\d+\.\d\d/);
     const got = await mcp.call("get_deck", { deck: "izzet test" });
     assert.match(got.text, /Value: €\d+\.\d\d \(owned €\d+\.\d\d, to buy €\d+\.\d\d/);
-    assert.match(got.text, /4x Counterspell .*owned 3|4x Counterspell .*MISSING 1/);
+    assert.match(got.text, /4x Counterspell .*TO BUY 1, owned 3/);
     const byId = await mcp.call("get_deck", { deck: id });
     assert.match(byId.text, /Izzet Test/);
   });
@@ -170,7 +170,8 @@ describe("mcp-collection.js", () => {
     assert.equal(bad.isError, true);
 
     const owned = await mcp.call("check_owned", { names: ["Lightning Bolt", "Sol Ring", "Serra Angel"] });
-    assert.match(owned.text, /Lightning Bolt: 4 owned, 0 free .*used in built decks: #\d+ Built Burn 4x/);
+    assert.match(owned.text, /Lightning Bolt: 4 owned, 0 free .*used in built decks: #\d+ Built Burn 4x \(can be moved\)/);
+    assert.match(owned.text, /only NOT OWNED cards are to buy/);
     assert.match(owned.text, /Sol Ring: 2 owned, -1 free \(SHORT\)/);
     const search = await mcp.call("search_collection", { query: "avail>=1" });
     assert.doesNotMatch(search.text, /Lightning Bolt|Sol Ring/);
@@ -180,10 +181,25 @@ describe("mcp-collection.js", () => {
     const shop = await mcp.call("shopping_list");
     assert.match(shop.text, /short of 1 cards/);
     assert.match(shop.text, /1x Sol Ring \| €1\.50 each \| #\d+ Built Burn 3x/);
-    assert.match(shop.text, /Izzet Test \[idea\]/);
+    assert.match(shop.text, /Izzet Test \[idea\]: \d+ to buy, €\d+\.\d\d; \d+ in other decks \(buying instead €\d+\.\d\d\)/);
     const list = await mcp.call("list_decks");
     assert.match(list.text, /Built Burn — built/);
+    assert.match(list.text, /Izzet Test .*, \d+ in other built decks \(can be moved\)/);
+    const izzet = await mcp.call("get_deck", { deck: "Izzet Test" });
+    assert.match(izzet.text, /4x Lightning Bolt .*IN USE 4 in other deck\(s\): Built Burn \(can be moved\)/);
+    assert.match(izzet.text, /In other built decks: \d+ cards \(owned, can be moved over/);
     const card = await mcp.call("get_card", { name: "Sol Ring" });
     assert.match(card.text, /Built decks claim 3; free: -1 \(SHORT\)/);
+
+    // Built deck: contested copies are shared (conflict), never "can be moved".
+    ctx.db.prepare("UPDATE decks SET status = 'built' WHERE name = 'Izzet Test'").run();
+    const izzetBuilt = await mcp.call("get_deck", { deck: "Izzet Test" });
+    assert.match(izzetBuilt.text, /4x Lightning Bolt .*SHARED 4 with Built Burn \(CONFLICT/);
+    assert.match(izzetBuilt.text, /Shared with other built decks: \d+ cards/);
+    assert.doesNotMatch(izzetBuilt.text, /can be moved/);
+    const list2 = await mcp.call("list_decks");
+    assert.match(list2.text, /Izzet Test .*, \d+ shared with other built decks \(buy extra to play both\)/);
+    const shop2 = await mcp.call("shopping_list");
+    assert.match(shop2.text, /Izzet Test \[built\]: \d+ to buy, €\d+\.\d\d; \d+ shared with other built decks/);
   });
 });

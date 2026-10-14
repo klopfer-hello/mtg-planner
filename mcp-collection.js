@@ -187,7 +187,8 @@ const TOOLS = [
     description:
       "List the user's decks: id, name, format, status (built = a physical deck that claims its cards, idea = a plan), " +
       "source (manabox = synced from a ManaBox deck binder, manual = entered in the app, scan = filled with the app's camera " +
-      "scanner, claude = saved by you), card count, value in EUR (commander+main+side), missing cards, conflicts and last update.",
+      "scanner, claude = saved by you), card count, value in EUR (commander+main+side), cards to buy (not owned at all), " +
+      "cards in other built decks (owned but claimed there, can be moved over), conflicts and last update.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { title: "List decks", readOnlyHint: true, openWorldHint: false },
     run: listDecksTool,
@@ -195,9 +196,10 @@ const TOOLS = [
   {
     name: "get_deck",
     description:
-      "Show one deck with its status (idea/built), every card, its board, and ownership against the collection (owned / " +
-      "MISSING n / basic; missing = not FREE, i.e. copies claimed by other built decks don't count), cards shared with other " +
-      "built decks (CONFLICT when there aren't enough copies), per-card prices, the deck value in EUR and its shopping list.",
+      "Show one deck with its status (idea/built), every card, its board, and ownership against the collection: TO BUY n = " +
+      "copies the user does not own at all; IN USE n in other deck(s) = owned copies claimed by other built decks (can be moved " +
+      "over, not a purchase) on an idea deck; on a BUILT deck the same copies show as SHARED n with <deck> (CONFLICT: both " +
+      "built decks need them, buy extra to play both); basic. Per-card prices, the deck value in EUR, its shopping list and the in-use list.",
     inputSchema: {
       type: "object",
       properties: {
@@ -213,7 +215,8 @@ const TOOLS = [
     name: "shopping_list",
     description:
       "What the user has to buy: every card the BUILT decks together need more of than the user owns (with the decks " +
-      "competing for it and EUR prices), plus per deck (built and idea) how many cards are missing given the free copies and their cost.",
+      "competing for it and EUR prices), plus per deck (built and idea) how many cards are to buy (not owned at all) with their " +
+      "cost and how many are owned but in use in other built decks (can be moved over).",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { title: "Shopping list", readOnlyHint: true, openWorldHint: false },
     run: shoppingListTool,
@@ -392,10 +395,11 @@ function checkOwned(args) {
     const key = cardKey(rows[0].oracle_id, rows[0].name);
     const demand = alloc.built.get(key)?.demand ?? 0;
     const free = isBasicLand(rows[0].name) ? total : total - demand;
-    const use = demand ? `; used in built decks: ${builtUse(key)}` : "";
+    const use = demand ? `; used in built decks: ${builtUse(key)} (can be moved)` : "";
     lines.push(`${label}: ${total} owned, ${free} free${free < 0 ? " (SHORT)" : ""} — ${detail.join(", ")}${use}`);
   }
-  return [`${ownedCount} of ${names.length} owned. "free" = owned minus copies claimed by built decks.`, ...lines].join("\n");
+  return [`${ownedCount} of ${names.length} owned. "free" = owned minus copies claimed by built decks; claimed copies are ` +
+    "still owned (in use in another deck, can be moved), only NOT OWNED cards are to buy.", ...lines].join("\n");
 }
 
 const COMMON_FORMATS = ["standard", "pioneer", "modern", "legacy", "vintage", "pauper", "commander", "brawl"];
@@ -471,7 +475,11 @@ function listBindersTool() {
 
 const deckLine = (k) =>
   `#${k.id} ${k.name}${k.format ? ` [${k.format}]` : ""} — ${k.status ?? "idea"}, ${k.card_count} cards, value €${(k.value_eur ?? 0).toFixed(2)}` +
-  `${k.missing_count ? `, missing ${k.missing_count}` : ""}${k.conflict_count ? `, ${k.conflict_count} CONFLICTS with other built decks` : ""}` +
+  `${k.missing_count ? `, to buy ${k.missing_count} (€${(k.missing_cost_eur ?? 0).toFixed(2)})` : ""}` +
+  `${k.in_use_count ? (k.status === "built"
+    ? `, ${k.in_use_count} shared with other built decks (buy extra to play both)`
+    : `, ${k.in_use_count} in other built decks (can be moved)`) : ""}` +
+  `${k.conflict_count ? `, ${k.conflict_count} CONFLICTS with other built decks` : ""}` +
   `, source ${k.source}, updated ${k.updated_at}`;
 
 function shoppingListTool() {
@@ -485,8 +493,13 @@ function shoppingListTool() {
   }
   if (built.items.length > 100) lines.push(`  ... ${built.items.length - 100} more`);
   if (perDeck.length) {
-    lines.push("", "Per deck (missing = not free in the collection):");
-    for (const k of perDeck) lines.push(`  #${k.id} ${k.name} [${k.status}]: ${k.missing_count} missing, ${eur(k.missing_eur)}`);
+    lines.push("", "Per deck (to buy = not owned at all; in other decks = owned, claimed by another built deck, can be moved):");
+    for (const k of perDeck) {
+      lines.push(`  #${k.id} ${k.name} [${k.status}]: ${k.to_buy_count} to buy, ${eur(k.missing_eur)}` +
+        `${k.in_use_count ? (k.status === "built"
+          ? `; ${k.in_use_count} shared with other built decks (in the built shortage above)`
+          : `; ${k.in_use_count} in other decks (buying instead ${eur(k.in_use_eur)})`) : ""}`);
+    }
   }
   return lines.join("\n");
 }
@@ -587,7 +600,8 @@ async function handle(msg) {
         instructions:
           "Read access to the user's Magic: The Gathering collection (synced from ManaBox) and decks, plus save_deck " +
           "to hand decks over to the app. Check ownership with check_owned / search_collection before recommending cards; " +
-          "built decks claim their cards, so 'free' copies (avail) are what is left for new decks.",
+          "built decks claim their cards, so 'free' copies (avail) are what is left for new decks; claimed copies are still " +
+          "owned (in use in another deck, can be moved), not purchases.",
       });
     case "ping":
       return reply(id, {});

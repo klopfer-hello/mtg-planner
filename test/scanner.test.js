@@ -404,24 +404,24 @@ describe("identify: Claude fallback", () => {
     assert.equal(claude.calls.length, 0, "auto and suggest stay local");
   });
 
-  test("verifyClaude uses OCR candidates when the printing has no reference hash", () => {
+  test("verifyClaude uses OCR candidates when the printing has no reference hash", async () => {
     const index = makeIndex();
     const p = index.getPrinting(null, "m10-146-en");
     const cands = new Map([["m10-146-en", { p, ocr: 0.8, title: null }]]);
-    const v = verifyClaude(boltAnswer, { idx: {}, index, sim: nameSimilarity, T: DEFAULT_THRESHOLDS, hashes: null, matcher: null, cands, fpById: new Map() });
+    const v = await verifyClaude(boltAnswer, { idx: {}, index, sim: nameSimilarity, T: DEFAULT_THRESHOLDS, hashes: null, matcher: null, cands, fpById: new Map() });
     assert.equal(v.ok, true);
     assert.equal(v.printing.id, "m10-146-en");
   });
 
-  test("verifyClaude: a legacy number without a set resolves by name + number, backed by the title OCR", () => {
+  test("verifyClaude: a legacy number without a set resolves by name + number, backed by the title OCR", async () => {
     const index = makeIndex();
     const ans = { ...boltAnswer, set_code: null, collector_number: "146" };
     const args = { idx: {}, index, sim: nameSimilarity, T: DEFAULT_THRESHOLDS, hashes: null, matcher: null, cands: new Map(), fpById: new Map() };
-    const v = verifyClaude(ans, { ...args, titleText: "Lightning Bolt" });
+    const v = await verifyClaude(ans, { ...args, titleText: "Lightning Bolt" });
     assert.equal(v.ok, true);
     assert.equal(v.printing.set_code, "m10");
     // Same answer without local evidence: rejected, but the printing is offered for the picker.
-    const r = verifyClaude(ans, { ...args, titleText: "" });
+    const r = await verifyClaude(ans, { ...args, titleText: "" });
     assert.equal(r.ok, false);
     assert.equal(r.printing?.set_code, "m10");
   });
@@ -470,19 +470,19 @@ describe("identify: fingerprint-only uniqueness and Claude re-verification", () 
     assert.ok(r.candidates.some((c) => c.id === "cmm-712"), "fingerprint hit is a candidate");
   });
 
-  test("verifyClaude: an answer the fingerprint contradicts is rejected (but offered)", () => {
+  test("verifyClaude: an answer the fingerprint contradicts is rejected (but offered)", async () => {
     const ans = { english_name: "Lightning Bolt", printed_name: "Lightning Bolt", set_code: "m10", collector_number: "146", language: "en" };
     const base = { idx: {}, index, sim: nameSimilarity, T: DEFAULT_THRESHOLDS, hashes: [Buffer.alloc(88)], matcher: null, cands: new Map() };
-    const gate = verifyClaude(ans, { ...base, fpById: new Map([["m10-bolt", 0.2]]), nameGate: true, fpTop: top5, d1: 0.12 });
+    const gate = await verifyClaude(ans, { ...base, fpById: new Map([["m10-bolt", 0.2]]), nameGate: true, fpTop: top5, d1: 0.12 });
     assert.equal(gate.ok, false);
     assert.match(gate.reason, /fingerprint says Shivan Dragon/);
     assert.equal(gate.printing.id, "m10-bolt");
-    const closer = verifyClaude(ans, { ...base, fpById: new Map([["m10-bolt", 0.2]]), nameGate: false, fpTop: top5, d1: 0.12 });
+    const closer = await verifyClaude(ans, { ...base, fpById: new Map([["m10-bolt", 0.2]]), nameGate: false, fpTop: top5, d1: 0.12 });
     assert.equal(closer.ok, false);
     assert.match(closer.reason, /closer to Shivan Dragon/);
-    const loose = verifyClaude(ans, { ...base, fpById: new Map([["m10-bolt", 0.28]]) });
+    const loose = await verifyClaude(ans, { ...base, fpById: new Map([["m10-bolt", 0.28]]) });
     assert.equal(loose.ok, false, "0.28 is above claudeFpMax");
-    const fine = verifyClaude(ans, { ...base, fpById: new Map([["m10-bolt", 0.14]]), fpTop: top5, d1: 0.12 });
+    const fine = await verifyClaude(ans, { ...base, fpById: new Map([["m10-bolt", 0.14]]), fpTop: top5, d1: 0.12 });
     assert.equal(fine.ok, true);
   });
 });

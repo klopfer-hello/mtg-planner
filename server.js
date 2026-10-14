@@ -20,11 +20,11 @@ import {
 import * as claudeLib from "./lib/claude.js";
 import { MAX_CONCURRENT, activeClaudeRuns, claudeConfigured, killAll, prepareMcpConfig, runTurn, runVision, visionCap } from "./lib/claude.js";
 import {
-  checkpointIndex, fetchBulkInfo, getMeta, getPrinting, indexStatus, openIndex, printingsOf, refreshIndex, refreshIndexInWorker, searchTitle,
-  setMeta, storagePrinting, variantsOf,
+  checkpointIndex, fetchBulkInfo, getMeta, indexBrief, openIndex, refreshIndex, refreshIndexInWorker, setMeta,
 } from "./lib/cardindex.js";
+import * as indexModule from "./lib/cardindex.js";
 import { createScheduler, schedulerConfig } from "./lib/scheduler.js";
-import { Matcher, buildFingerprints, checkJpegSize } from "./lib/fingerprint.js";
+import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker, checkJpegSize } from "./lib/fingerprint.js";
 import { ocrTools } from "./lib/ocr.js";
 import { decideFinish, identify, printingSummary } from "./lib/scanner.js";
 import {
@@ -49,6 +49,10 @@ const INDEX_FILE = process.env.INDEX_DB_FILE || "/data/cardindex.db";
 // Declared JPEG size caps for uploads (djpeg writes the full declared raster).
 const MAX_CARD_PIXELS = 6_000_000; // the browser sends 1000x1400
 const MAX_STRIP_PIXELS = 20_000_000;
+// How long a scan waits for the fingerprint matcher's warm-up before it goes
+// on without the fingerprint (OCR / Claude only).
+const SCAN_MATCHER_WAIT_MS = Number(process.env.SCAN_MATCHER_WAIT_MS) >= 0 && process.env.SCAN_MATCHER_WAIT_MS !== ""
+  ? Number(process.env.SCAN_MATCHER_WAIT_MS) : 30000;
 
 const db = openDb();
 
@@ -58,7 +62,9 @@ let idx = null;
 let matcher = null;
 try {
   idx = openIndex(INDEX_FILE);
-  matcher = new Matcher(idx);
+  // Fingerprint loading/hashing/matching run in a worker thread (started
+  // after listen); an in-memory index (tests) can only match in-process.
+  matcher = INDEX_FILE === ":memory:" ? new Matcher(idx) : new MatcherWorker(INDEX_FILE, { waitMs: SCAN_MATCHER_WAIT_MS });
   // The hourly Claude vision cap survives restarts (best effort).
   try { visionCap.restore(JSON.parse(getMeta(idx, "vision_calls") || "[]")); } catch { /* fresh window */ }
   // Skipped while the refresh worker holds the index's write lock (a busy wait would block the event loop).
@@ -276,9 +282,35 @@ async function patchDeck(req, id) {
   const format = body.format === undefined ? deck.format : normalizeFormat(optString(body.format, "format", 50));
   const description = body.description === undefined ? deck.description : optString(body.description, "description", 5000) || null;
   const status = deckStatus(body.status) ?? deck.status;
+  // Idea -> built: the cards this deck now shares with other built decks (they were "in use" while it was an idea).
+  const before = status === "built" && deck.status !== "built" ? deckDetail(db, id) : null;
   db.prepare("UPDATE decks SET name = ?, format = ?, description = ?, status = ?, updated_at = datetime('now') WHERE id = ?")
     .run(name, format, description, status, id);
-  return db.prepare("SELECT * FROM decks WHERE id = ?").get(id);
+  const row = db.prepare("SELECT * FROM decks WHERE id = ?").get(id);
+  if (status === deck.status) return row;
+  const after = deckDetail(db, id);
+  return {
+    ...row,
+    status_change: {
+      from: deck.status, to: status,
+      in_use_count: before?.in_use_count ?? 0,
+      in_use: before?.shopping.in_use ?? [],
+      conflict_count: after.conflict_count,
+    },
+  };
+}
+
+/** GET /api/decks/:id/status-preview?status=built -> what switching would change (the UI's confirm text). */
+function statusPreview(id, status) {
+  const detail = deckDetail(db, id);
+  if (!detail) throw new HttpError(404, "Deck not found");
+  if (!DECK_STATUSES.includes(status)) throw new HttpError(400, `status must be ${DECK_STATUSES.join(" or ")}`);
+  const toBuilt = status === "built" && detail.status !== "built";
+  return {
+    from: detail.status, to: status,
+    in_use_count: toBuilt ? detail.in_use_count : 0,
+    in_use: toBuilt ? detail.shopping.in_use : [],
+  };
 }
 
 /** POST /api/decks/:id/to-binder {binder?, confirm_master?} -> moved/missing summary + deck detail. */
@@ -448,9 +480,14 @@ function indexReady() {
   return indexReadyCache;
 }
 
-/** The matcher, only once it has fingerprints (else hashing a scan is wasted work). */
+/**
+ * The matcher for a scan. The worker waits for its own warm-up inside
+ * hashImage (bounded) and skips hashing without fingerprints; the in-process
+ * matcher only once it has fingerprints (else hashing a scan is wasted work).
+ */
 function readyMatcher() {
   if (!matcher) return null;
+  if (matcher instanceof MatcherWorker) return matcher.state === "closed" ? null : matcher;
   try {
     matcher.ensureLoaded();
     return matcher.size > 0 ? matcher : null;
@@ -460,7 +497,38 @@ function readyMatcher() {
   }
 }
 
-// Background index jobs, one at a time, in-process.
+/**
+ * A card-index lookup on the matcher worker's connection: a scan makes dozens
+ * of them (title search ~70 ms warm, >1 s on a cold cache; collector lookups
+ * blocked >1 s in a row cold). Errors of a call (also a timeout) are thrown,
+ * never retried on the main thread; while the worker respawns after a crash
+ * a lookup waits for it (bounded). In-process only for an in-memory index or
+ * a worker that is closed or gave up.
+ */
+async function indexLookup(fn, ...args) {
+  if (matcher instanceof MatcherWorker && matcher.available) {
+    if (!(await matcher.whenRunning(INDEX_LOOKUP_WAIT_MS))) throw new HttpError(503, "The card index is restarting; try again shortly");
+    return matcher.indexCall(fn, args);
+  }
+  return indexModule[fn](idx, ...args);
+}
+const INDEX_LOOKUP_WAIT_MS = 15000;
+const titleSearch = (text, opts) => indexLookup("searchTitle", text, opts);
+// Set codes for the OCR's set matcher (sync API): cached until an index job
+// ends, loaded through the worker before a scan needs them.
+let setCodesCache = null;
+async function loadSetCodes() {
+  if (!setCodesCache) setCodesCache = await indexLookup("setCodes");
+  return setCodesCache;
+}
+// identify()'s index functions: the lookups run off the event loop.
+const scanIndex = { ...indexModule, setCodes: (i) => (setCodesCache ??= indexModule.setCodes(i)) };
+for (const fn of ["lookupCollector", "lookupLegacyNumber", "getPrinting", "printingsOf", "variantsOf", "storagePrinting", "searchTitle"]) {
+  scanIndex[fn] = (_idx, ...args) => indexLookup(fn, ...args);
+}
+
+// Background index jobs, one at a time (the work itself runs in a worker thread).
+const JOB_DONE = Symbol("job done");
 const indexJob = { running: null, last: null, controller: null };
 
 function startIndexJob(kind, { then = null } = {}) {
@@ -475,14 +543,18 @@ function startIndexJob(kind, { then = null } = {}) {
     state.progress = p;
     if (p && typeof p === "object") for (const [k, v] of Object.entries(p)) if (!["kind", "state", "running"].includes(k)) state[k] = v;
   };
-  // The refresh runs in a worker thread (its finalize step is seconds of
-  // synchronous SQLite work); an in-memory index can only refresh in-process.
+  // Both jobs run in a worker thread (the refresh's finalize step and the
+  // fingerprint job's whole-table statements are seconds of synchronous
+  // SQLite work); an in-memory index can only run them in-process.
   const source = process.env.INDEX_BULK_SOURCE || undefined;
+  const inProcess = INDEX_FILE === ":memory:";
   const work = kind === "refresh"
-    ? (INDEX_FILE === ":memory:"
+    ? (inProcess
       ? refreshIndex(idx, { signal: controller.signal, onProgress, source })
       : refreshIndexInWorker(INDEX_FILE, { signal: controller.signal, onProgress, source }))
-    : buildFingerprints(idx, { signal: controller.signal, onProgress });
+    : (inProcess
+      ? buildFingerprints(idx, { signal: controller.signal, onProgress })
+      : buildFingerprintsInWorker(INDEX_FILE, { signal: controller.signal, onProgress }));
   console.log(`[scanner] ${kind} job started`);
   const finished = work.then(
     (result) => {
@@ -499,27 +571,31 @@ function startIndexJob(kind, { then = null } = {}) {
     indexJob.running = null;
     indexJob.controller = null;
     indexReadyCache = false;
+    setCodesCache = null;
   });
-  // `done` settles when this job and its follow-up (`then`) are finished; it
+  // [JOB_DONE] settles when this job and its follow-up (`then`) are finished; it
   // rejects when either fails. Not enumerable: state is sent to the UI as JSON.
   const done = finished.then((last) => {
     if (!last.ok) throw new Error(`${kind}: ${last.error}`);
     if (kind === "refresh" && then && !shuttingDown) {
       let next;
       try { next = startIndexJob(then); } catch (err) { console.warn(`[scanner] could not start ${then}: ${err.message}`); throw err; }
-      return next.done;
+      return next[JOB_DONE];
     }
     return last;
   });
   done.catch(() => { /* reported via indexJob.last */ });
-  Object.defineProperty(state, "done", { value: done, enumerable: false });
+  // A symbol: progress is flattened into `state`, and the fingerprint job's
+  // progress has its own `done` count (a "done" key would be overwritten,
+  // or, read-only, throw on the first progress message from the worker).
+  Object.defineProperty(state, JOB_DONE, { value: done, enumerable: false });
   return state;
 }
 
 function autoIndex() {
   if (!idx || process.env.SCAN_AUTO_INDEX === "false") return;
   try {
-    const st = indexStatus(idx);
+    const st = indexBrief(idx);
     if (!st.printings) startIndexJob("refresh", { then: "fingerprints" });
     // Not finished (interrupted by a restart or redeploy, which leaves it
     // 'paused' or 'running', stopped by errors, or never started): resume.
@@ -582,7 +658,12 @@ function resultSummary(r) {
 
 let scansInFlight = 0;
 
-async function postScan(req) {
+async function postScan(req, res) {
+  // A client that gives up (UI timeout/cancel, closed tab) cancels the scan:
+  // no Claude call is started or kept running, and nothing is staged, so a
+  // Retry can never stage the same card twice.
+  const gone = new AbortController();
+  res.on("close", () => { if (!res.writableFinished) gone.abort(new Error("client closed the request")); });
   const body = await readJson(req, SCAN_LIMIT);
   requireIndex();
   if (!indexReady()) throw new HttpError(503, "The card index is still being built; try again when it is ready");
@@ -595,13 +676,15 @@ async function postScan(req) {
   scansInFlight++;
   let result;
   try {
+    await loadSetCodes().catch(() => null);
     result = await identify(
-      { db, idx, matcher: readyMatcher(), claude: { runVision: claudeConfigured() ? runVision : null, cap: visionCap } },
+      { db, idx, index: scanIndex, matcher: readyMatcher(), signal: gone.signal, claude: { runVision: claudeConfigured() ? runVision : null, cap: visionCap } },
       { card, strip, settings: { ...settings, allowClaude: body.allowClaude !== false } },
     );
   } finally {
     scansInFlight--;
   }
+  if (gone.signal.aborted) throw new HttpError(499, "Scan cancelled: the client closed the request");
   const staged = stageScan(db, result, {
     image: card, strip, force: body.force === true, condition: settings.condition, calibration: body.calibration === true, replaceId,
   });
@@ -613,11 +696,11 @@ async function postManualScan(req) {
   requireIndex();
   const printingId = optString(body.printing_id, "printing_id", 64);
   if (!printingId) throw new HttpError(400, "printing_id is required");
-  const printing = getPrinting(idx, printingId);
+  const printing = await indexLookup("getPrinting", printingId);
   if (!printing) throw new HttpError(404, "Printing not found");
   const wanted = normFinish(body.finish);
   const settings = scanSettings({ storageLang: body.storageLang, condition: body.condition, foil: wanted === "foil" ? "foil" : "auto" });
-  const store = storagePrinting(idx, printing, settings.storageLang) || printing;
+  const store = (await indexLookup("storagePrinting", printing, settings.storageLang)) || printing;
   let finish = decideFinish(store, { foilMode: settings.foil }).finish;
   if (wanted != null) {
     if (!["normal", "foil", "etched"].includes(wanted)) throw new HttpError(400, "finish must be normal, foil or etched");
@@ -626,7 +709,7 @@ async function postManualScan(req) {
   const quantity = body.quantity == null ? 1 : Number(body.quantity);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) throw new HttpError(400, "quantity must be 1-999");
   let variants = [];
-  try { variants = variantsOf(idx, printing).map((p) => printingSummary(p)); } catch { variants = []; }
+  try { variants = (await indexLookup("variantsOf", printing)).map((p) => printingSummary(p)); } catch { variants = []; }
   const result = {
     status: "manual", printing, store, finish, finishSource: "user", method: "manual", confidence: 1,
     candidates: [], variants, quantity, features: { manual: true },
@@ -653,7 +736,7 @@ async function handleScanApi(req, res, url) {
   const method = req.method;
   let m;
 
-  if (pathname === "/api/scan" && method === "POST") return sendJson(res, 200, await postScan(req));
+  if (pathname === "/api/scan" && method === "POST") return sendJson(res, 200, await postScan(req, res));
   if (pathname === "/api/scans" && method === "GET") {
     const status = query.get("status") || "staged";
     if (!["staged", "committed", "all"].includes(status)) throw new HttpError(400, "status must be staged, committed or all");
@@ -706,15 +789,16 @@ async function handleScanApi(req, res, url) {
     const oracleId = query.get("oracle_id");
     if (!oracleId) throw new HttpError(400, "oracle_id is required");
     const lang = query.get("lang") || undefined;
-    return sendJson(res, 200, printingsOf(idx, oracleId, { lang }).slice(0, 400).map((p) => printingSummary(p)));
+    return sendJson(res, 200, (await indexLookup("printingsOf", oracleId, { lang })).slice(0, 400).map((p) => printingSummary(p)));
   }
   if (pathname === "/api/printings/search" && method === "GET") {
     requireIndex();
     const q = (query.get("q") || "").trim().slice(0, 200);
     if (q.length < 2) return sendJson(res, 200, []);
     const lang = query.get("lang") || undefined;
-    const hits = searchTitle(idx, q, { lang, limit: 12 });
-    return sendJson(res, 200, hits.map((h) => ({ ...h, printing: printingSummary(getPrinting(idx, h.id)) })));
+    const hits = await titleSearch(q, { lang, limit: 12 });
+    const printings = await Promise.all(hits.map((h) => indexLookup("getPrinting", h.id)));
+    return sendJson(res, 200, hits.map((h, i) => ({ ...h, printing: printingSummary(printings[i]) })));
   }
 
   if (pathname === "/api/binders" && method === "GET") return sendJson(res, 200, listBinders(db));
@@ -742,7 +826,7 @@ async function handleScanApi(req, res, url) {
   if (pathname === "/api/index/status" && method === "GET") {
     requireIndex();
     return sendJson(res, 200, {
-      ...indexStatus(idx),
+      ...(await indexLookup("indexStatus")),
       job: indexJob.running,
       last_job: indexJob.last,
       refresh_job: indexJob.running?.kind === "refresh" ? indexJob.running : indexJob.last?.kind === "refresh" ? indexJob.last : null,
@@ -780,15 +864,47 @@ function claudeCliHealth() {
   return { status: existsSync(bin) ? "installed" : "missing", version: process.env.CLAUDE_CODE_VERSION || null };
 }
 
+// Index counts for /healthz, stale-while-revalidate: the COUNT(*)s run on the
+// matcher worker (cold cache: >100 ms, and they queue behind a scan's
+// matching there), so a request never waits for them beyond the first
+// 100 ms after a start; later requests get the previous counts while one
+// refresh runs in the background.
 let healthCache = null;
+let healthRefresh = null;
+function refreshScannerHealth() {
+  healthRefresh ??= (async () => {
+    const tools = await ocrTools().catch(() => ({ tesseract: false, djpeg: false }));
+    let st = null;
+    try {
+      st = idx ? await indexLookup("indexStatus") : null;
+    } catch {
+      // Worker restarting: keep the last counts rather than count on the main thread.
+      if (healthCache) return (healthCache = { at: Date.now(), value: { ...healthCache.value, tesseract: tools.tesseract, djpeg: tools.djpeg } }).value;
+    }
+    const value = { index_ready: Boolean(st?.printings), fingerprints: st?.fingerprints ?? 0, tesseract: tools.tesseract, djpeg: tools.djpeg };
+    healthCache = { at: Date.now(), value };
+    return value;
+  })().finally(() => { healthRefresh = null; });
+  return healthRefresh;
+}
 async function scannerHealth() {
-  if (healthCache && Date.now() - healthCache.at < 30000) return healthCache.value;
-  const tools = await ocrTools().catch(() => ({ tesseract: false, djpeg: false }));
-  let st = null;
-  try { st = idx ? indexStatus(idx) : null; } catch { st = null; }
-  const value = { index_ready: Boolean(st?.printings), fingerprints: st?.fingerprints ?? 0, tesseract: tools.tesseract, djpeg: tools.djpeg };
-  healthCache = { at: Date.now(), value };
-  return value;
+  if (!healthCache || Date.now() - healthCache.at >= 30000) {
+    const pending = refreshScannerHealth();
+    if (!healthCache) {
+      let timer;
+      const slow = new Promise((resolve) => { timer = setTimeout(() => resolve(null), 100); });
+      await Promise.race([pending, slow]).finally(() => clearTimeout(timer));
+    }
+  }
+  const value = healthCache?.value ?? { index_ready: indexReadyCache || null, fingerprints: null, tesseract: null, djpeg: null, pending: true };
+  return { ...value, matcher: matcherHealth() };
+}
+
+/** scanner.matcher for /healthz: loading | ready | error (+ size, load time), never cached. */
+function matcherHealth() {
+  if (!matcher) return { state: "unavailable" };
+  if (matcher instanceof MatcherWorker) return matcher.status();
+  return { state: "in-process", size: matcher.size, load_ms: matcher.loadMs ?? null };
 }
 
 // ---------------------------------------------------------------------------
@@ -889,8 +1005,9 @@ async function handleApi(req, res, url) {
     if (method === "POST") return sendJson(res, 201, await createDeck(req));
   }
   if (pathname === "/api/shopping-list" && method === "GET") return sendJson(res, 200, shoppingList(db));
-  if ((m = /^\/api\/decks\/(\d+)\/(cards|commander|to-binder)$/.exec(pathname))) {
+  if ((m = /^\/api\/decks\/(\d+)\/(cards|commander|to-binder|status-preview)$/.exec(pathname))) {
     const id = Number(m[1]);
+    if (m[2] === "status-preview" && method === "GET") return sendJson(res, 200, statusPreview(id, query.get("status") || "built"));
     if (m[2] === "cards" && method === "PATCH") return sendJson(res, 200, await patchDeckCard(req, id));
     if (m[2] === "commander" && method === "POST") return sendJson(res, 200, await postCommander(req, id));
     if (m[2] === "to-binder" && method === "POST") return sendJson(res, 200, await postDeckToBinder(req, id));
@@ -1079,21 +1196,32 @@ const scheduler = createScheduler({
   meta: { get: (k) => getAppMeta(db, k), set: (k, v) => setAppMeta(db, k, v) },
   indexInfo: () => {
     if (!idx) return null;
-    const st = indexStatus(idx);
+    const st = indexBrief(idx);
     return { printings: st.printings, last_refresh: st.last_refresh, bulk_updated_at: st.bulk_updated_at };
   },
   indexBusy: () => Boolean(indexJob.running),
   remoteBulkUpdatedAt: async () => (await fetchBulkInfo()).updated_at,
-  runIndexRefresh: async () => { await startIndexJob("refresh", { then: "fingerprints" }).done; },
+  runIndexRefresh: async () => { await startIndexJob("refresh", { then: "fingerprints" })[JOB_DONE]; },
   runPriceRefresh: () => exclusive(() => refreshOwnedCards(db)),
   checkpoint: () => { if (idx && !indexJob.running) checkpointIndex(idx); },
 });
 
 prepareMcpConfig();
+// First commit after boot creates the app DB's WAL file (one fsync, ~60 ms
+// on a spinning disk): pay it here instead of in the first scan's staging.
+try { setAppMeta(db, "last_start", new Date().toISOString()); } catch (err) { console.warn(`[db] ${err.message}`); }
 autoIndex();
 scheduler.start();
 server.listen(PORT, () => {
   console.log(`mtg-planner ${VERSION} listening on :${PORT} (static: ${STATIC_DIR}, claude: ${claudeConfigured() ? "configured" : "not configured"})`);
+  // Preload the fingerprints now so the first scan doesn't pay for it.
+  if (matcher instanceof MatcherWorker) {
+    matcher.start();
+    matcher.whenReady(10 * 60 * 1000).then((ok) => {
+      const st = matcher.status();
+      if (ok) console.log(`[scanner] matcher ready: ${st.size} fingerprints, load ${st.load_ms} ms, ready after ${st.ready_ms} ms${st.backfill ? ` (backfilled ${st.backfill.updated} in ${st.backfill.ms} ms)` : ""}`);
+    });
+  }
 });
 
 let shuttingDown = false;
@@ -1106,6 +1234,7 @@ function shutdown(signal) {
   for (const controller of runs.values()) controller.abort();
   indexJob.controller?.abort();
   killAll();
+  if (matcher instanceof MatcherWorker) matcher.close().catch(() => {});
   // Give aborted runs a moment to store their partial answers, then close.
   const deadline = Date.now() + 8000;
   const timer = setInterval(() => {

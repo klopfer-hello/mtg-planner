@@ -741,6 +741,13 @@ ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
 .status-toggle button { min-height: 44px; padding: 0 14px; }
 .deck-row .conf { flex-basis: 100%; font-size: .78rem; color: var(--bad); font-weight: 600; overflow-wrap: anywhere; }
 .deck-row .free { flex-basis: 100%; font-size: .78rem; color: var(--muted); }
+.deck-row .inuse { flex-basis: 100%; font-size: .78rem; color: var(--warn); font-weight: 600; overflow-wrap: anywhere; }
+.deck-row .end .badge { white-space: nowrap; }
+.deck-row > .use { grid-column: 2 / -1; margin-top: -4px; }
+.need-notice .inuse-count { font-weight: 700; color: var(--warn); }
+.inuse-list { display: grid; gap: 8px; }
+.inuse-list > summary { color: var(--warn); min-height: 44px; }
+.inuse-list .buy-row .linkbtn { min-height: 24px; font-weight: 600; }
 .buy-list { display: grid; }
 .buy-row {
   display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center;
@@ -1807,6 +1814,19 @@ function DeckImportForm({ onCreated, onCancel }) {
   );
 }
 
+/** Compact "✗ 80 to buy" / "⇄ 8 in use" for list rows (old servers: missing_count). */
+function DeckNeedBadges({ d }) {
+  const { toBuy, inUse } = deckCounts(d);
+  return (
+    <>
+      {toBuy > 0 && <span className="badge bad" title={`${toBuy} cards you don't own`}>✗ {fmtInt(toBuy)} to buy</span>}
+      {inUse > 0 && (d.status === "built"
+        ? !(d.conflict_count > 0) && <span className="badge bad" title={`${inUse} owned cards are shared with other built decks`}>⚠ {fmtInt(inUse)} shared</span>
+        : <span className="badge warn" title={`${inUse} owned cards are in other built decks (can be moved)`}>⇄ {fmtInt(inUse)} in use</span>)}
+    </>
+  );
+}
+
 function DeckList({ dataVersion, onOpen, onShopping, refreshKey }) {
   const [decks, setDecks] = useState(null);
   const [error, setError] = useState(null);
@@ -1853,6 +1873,7 @@ function DeckList({ dataVersion, onOpen, onShopping, refreshKey }) {
               <span className="row small">
                 <StatusBadge status={d.status} />
                 {d.conflict_count > 0 && <span className="badge bad" title="Cards this deck shares with another built deck, without enough copies">⚠ {plural(d.conflict_count, "conflict")}</span>}
+                <DeckNeedBadges d={d} />
                 {d.format && <span className="badge">{d.format}</span>}
                 <SourceBadge source={d.source} />
                 <span className="muted">{plural(d.card_count, "card")}</span>
@@ -1867,26 +1888,74 @@ function DeckList({ dataVersion, onOpen, onShopping, refreshKey }) {
   );
 }
 
+// Allocation per deck row (v0.3.1): to_buy = copies you don't own at all
+// (the only "missing" ones); in_use = owned copies claimed by other built
+// decks (can be moved). Older servers only send `missing`: then it is to_buy.
+const cardToBuy = (c) => (c && !c.basic ? Math.max(0, Number(c.to_buy ?? c.missing) || 0) : 0);
+const cardInUse = (c) => (c && !c.basic ? Math.max(0, Number(c.in_use) || 0) : 0);
+/** Other BUILT decks that use this card (names for the visible in-use line). */
+const builtElsewhereOf = (c) => {
+  const own = asList(c?.in_use_decks).filter((u) => u && (u.name || typeof u === "string"));
+  if (own.length) return own;
+  return asList(c?.used_elsewhere).filter((u) => u && (typeof u === "string" || (u.name && (!u.status || u.status === "built"))));
+};
+const deckNames = (list) => list.map(refName).filter((n, i, a) => a.indexOf(n) === i).join(", ");
+/** Deck-level counts with fallbacks to the pre-0.3.1 fields. */
+function deckCounts(deck) {
+  const cards = asList(deck?.cards).filter((c) => c && c.board !== "maybe");
+  const toBuy = deck?.to_buy_count ?? deck?.missing_count ?? cards.reduce((a, c) => a + cardToBuy(c), 0);
+  const inUse = deck?.in_use_count ?? cards.reduce((a, c) => a + cardInUse(c), 0);
+  return {
+    toBuy: Number(toBuy) || 0,
+    inUse: Number(inUse) || 0,
+    toBuyEur: deck?.to_buy_eur ?? deck?.missing_cost_eur ?? deck?.missing_eur ?? deck?.value?.to_buy_eur ?? null,
+    inUseEur: deck?.in_use_eur ?? deck?.value?.in_use_eur ?? null,
+  };
+}
+
 function DeckCardRow({ card, onOpenCard, onActions }) {
   const [peek, setPeek] = useState(false);
   const elsewhere = asList(card.used_elsewhere).filter((u) => u && (u.name || typeof u === "string"));
   const free = card.available_for_this;
   const hasFree = !card.basic && typeof free === "number";
   const freeText = hasFree ? `own ${card.owned ?? 0} · ${Math.max(0, free)} free` : null;
-  let badge;
-  if (card.basic) badge = <span className="badge" title="Basic land">basic</span>;
-  else if (!card.missing) badge = <span className="badge ok" aria-label={`Owned (${card.owned})`} title={`You own ${card.owned}`}>✓</span>;
-  else badge = <span className="badge bad" aria-label={`Missing ${card.missing}, ${freeText || `own ${card.owned}`}`} title={`Missing ${card.missing} (${freeText || `you own ${card.owned}`})`}>✗ {card.missing}</span>;
-  // Warning icon next to the ownership badge whenever another BUILT deck uses
-  // the card: playing both decks needs more copies. Hover shows the decks; on
-  // phones a tap on the row opens the peek with the same list.
-  const builtElsewhere = card.basic ? [] : elsewhere.filter((u) => typeof u === "string" || !u.status || u.status === "built");
-  const sharedTitle = builtElsewhere.length
-    ? `${card.conflict ? `Not enough copies (own ${card.owned ?? 0}). ` : ""}Also used in: ${builtElsewhere.map((u) => (typeof u === "string" ? u : `${u.name}${u.quantity ? ` (${u.quantity}×)` : ""}`)).join(", ")}`
-    : null;
-  const sharedBadge = sharedTitle && (
-    <span className={`badge ${card.conflict ? "bad" : "warn"}`} role="img" aria-label={sharedTitle} title={sharedTitle}>⚠</span>
-  );
+  const toBuy = cardToBuy(card);
+  const inUse = cardInUse(card);
+  const builtElsewhere = card.basic ? [] : builtElsewhereOf(card);
+  const where = deckNames(builtElsewhere) || "another built deck";
+  // Built deck + contested copies = conflict (red); idea deck = in use (amber).
+  const conflict = Boolean(card.conflict) && !card.basic;
+  const badges = [];
+  if (card.basic) badges.push(<span key="b" className="badge" title="Basic land">basic</span>);
+  else {
+    if (inUse > 0) {
+      const t = conflict
+        ? `Conflict: ${inUse} of your copies ${inUse === 1 ? "is" : "are"} also in ${where} (own ${card.owned ?? 0})`
+        : `In use: ${inUse} owned ${inUse === 1 ? "copy is" : "copies are"} in ${where}. You can move ${inUse === 1 ? "it" : "them"} to this deck.`;
+      badges.push(<span key="u" className={`badge ${conflict ? "bad" : "warn"}`} role="img" aria-label={t} title={t}>{conflict ? "⚠" : "⇄"} {inUse}</span>);
+    }
+    if (conflict && !inUse) {
+      // Shared with another built deck but no owned copy to contest: still a conflict.
+      const t = `Conflict: also in ${where} (own ${card.owned ?? 0})`;
+      badges.push(<span key="c" className="badge bad" role="img" aria-label={t} title={t}>⚠</span>);
+    }
+    if (toBuy > 0) {
+      const t = `To buy: ${toBuy} (${freeText || `you own ${card.owned ?? 0}`})`;
+      badges.push(<span key="m" className="badge bad" role="img" aria-label={t} title={t}>✗ {toBuy}</span>);
+    }
+    if (!inUse && !toBuy) {
+      // Covered. Another built deck also using it (enough copies) stays a hint.
+      const sharedTitle = builtElsewhere.length
+        ? `${conflict ? `Not enough copies (own ${card.owned ?? 0}). ` : ""}Also used in: ${builtElsewhere.map((u) => (typeof u === "string" ? u : `${u.name}${u.quantity ? ` (${u.quantity}×)` : ""}`)).join(", ")}`
+        : null;
+      if (sharedTitle && !conflict) badges.push(<span key="s" className={`badge ${conflict ? "bad" : "warn"}`} role="img" aria-label={sharedTitle} title={sharedTitle}>⚠</span>);
+      badges.push(<span key="ok" className="badge ok" aria-label={`Owned (${card.owned})`} title={`You own ${card.owned}`}>✓</span>);
+    }
+  }
+  // Visible on phones (no hover): where the copies are and that they can move.
+  const useLine = conflict
+    ? <span className="use conf">conflict: also in {where}</span>
+    : inUse > 0 ? <span className="use inuse">in {where} · can be moved</span> : null;
   const unresolved = !card.scryfall_id;
   return (
     <>
@@ -1898,13 +1967,13 @@ function DeckCardRow({ card, onOpenCard, onActions }) {
           <b>{card.name}</b>
           <ManaCost cost={card.mana_cost} />
           {unresolved && <span className="badge warn">unresolved</span>}
-          {hasFree && free < (card.owned ?? 0) && <span className="free">{freeText}</span>}
+          {!useLine && hasFree && free < (card.owned ?? 0) && <span className="free">{freeText}</span>}
         </span>
         <span className="end">
           <span className="price">{fmtPrice(card.price)}</span>
-          {sharedBadge}
-          {badge}
+          {badges}
         </span>
+        {useLine}
       </button>
       {onActions && (
         <button type="button" className="btn ghost icon row-more" aria-label={`Actions for ${card.name}`} title="Board, quantity, commander" onClick={() => onActions(card)}><Icon.more /></button>
@@ -2105,14 +2174,104 @@ function ConflictBanner({ deck, onOpenDeck }) {
   );
 }
 
-/** What to buy for this deck, given the copies that are free. */
-function DeckShopping({ shopping }) {
-  const items = asList(shopping?.items).filter((x) => x && x.name);
-  if (!items.length) return null;
+/** "80 to buy (~€X) · 8 in other decks (€Y to buy instead)" or "you own every card". */
+function DeckNeedNotice({ deck }) {
+  const { toBuy, inUse, toBuyEur, inUseEur } = deckCounts(deck);
+  const built = deck?.status === "built";
+  if (!toBuy && !inUse) {
+    return <div className="notice ok"><span aria-hidden="true">✓</span><div className="grow"><b>You own every card in this deck.</b></div></div>;
+  }
+  return (
+    <div className={`notice ${toBuy || built ? "warn" : "ok"} need-notice`} role="status">
+      <span aria-hidden="true">{toBuy ? "✗" : built ? "⚠" : "✓"}</span>
+      <div className="grow stack" style={{ gap: 2 }}>
+        <span>
+          {toBuy > 0
+            ? <b>{fmtInt(toBuy)} to buy{toBuyEur != null ? ` (~${fmtEur(toBuyEur)})` : ""}</b>
+            : <b>You own every card</b>}
+          {inUse > 0 && <>
+            {" · "}
+            <span className="inuse-count"><span aria-hidden="true">{built ? "⚠" : "⇄"}</span> {fmtInt(inUse)} in other {built ? "built " : ""}decks{inUseEur != null && inUseEur > 0 ? ` (${fmtEur(inUseEur)} to buy instead)` : ""}</span>
+          </>}
+        </span>
+        <span className="small">
+          {inUse > 0 && (built ? "Shared copies: move them or buy extra to play both decks. " : "You own those; move them over when you build this deck. ")}
+          Maybeboard not counted.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** In-use list: shopping.in_use from the server, else derived from the rows. */
+function inUseItemsOf(deck) {
+  const listed = asList(deck?.shopping?.in_use).filter((x) => x && x.name);
+  if (listed.length || Array.isArray(deck?.shopping?.in_use)) return listed;
+  const byName = new Map();
+  for (const c of asList(deck?.cards)) {
+    const n = cardInUse(c);
+    if (!n || c.board === "maybe") continue;
+    const prev = byName.get(c.name);
+    const unit = c.eur ?? c.price_eur ?? null;
+    if (prev) { prev.quantity += n; if (prev.price_eur != null) prev.cost_eur = prev.price_eur * prev.quantity; continue; }
+    byName.set(c.name, {
+      name: c.name, oracle_id: c.oracle_id, quantity: n,
+      decks: builtElsewhereOf(c).map((u) => (typeof u === "string" ? { name: u } : { id: u.deck_id ?? u.id, name: u.name })),
+      price_eur: unit == null ? null : Number(unit), cost_eur: unit == null ? null : Number(unit) * n,
+    });
+  }
+  return [...byName.values()];
+}
+
+/** Deck names as links (tap opens that deck). */
+function DeckLinks({ decks, onOpenDeck, shared = false }) {
+  const list = asList(decks).filter(Boolean);
+  if (!list.length) return null;
+  return (
+    <span className="sub">in {list.map((d, j) => {
+      const did = typeof d === "object" ? (d.id ?? d.deck_id) : null;
+      return (
+        <React.Fragment key={j}>{j > 0 && ", "}
+          {did != null && onOpenDeck
+            ? <button type="button" className="linkbtn" onClick={() => onOpenDeck(did)}>{refName(d)}</button>
+            : refName(d)}
+        </React.Fragment>
+      );
+    })}{shared ? " · conflict" : " · can be moved"}</span>
+  );
+}
+
+/** What to buy for this deck (copies you don't own), plus the owned copies
+ *  that sit in other built decks (move them, or buy extra). */
+function DeckShopping({ deck, onOpenDeck }) {
+  const shopping = deck?.shopping;
+  const items = asList(shopping?.items).filter((x) => x && x.name)
+    .map((x) => ({ ...x, qty: x.to_buy ?? x.need ?? x.quantity ?? 1 }));
+  const inUse = inUseItemsOf(deck).map((x) => ({ ...x, qty: x.quantity ?? x.in_use ?? x.need ?? 1 }));
+  if (!items.length && !inUse.length) return null;
+  const inUseCards = inUse.reduce((a, x) => a + (Number(x.qty) || 1), 0);
+  const lineEur = lineEurOf("qty");
+  const inUseTotal = shopping?.in_use_eur ?? deck?.in_use_eur ?? deck?.value?.in_use_eur
+    ?? (inUse.some((x) => lineEur(x) != null) ? inUse.reduce((a, x) => a + (lineEur(x) || 0), 0) : null);
+  const built = deck?.status === "built";
   return (
     <section className="stack" style={{ gap: 8 }} aria-labelledby="deck-shop-title">
-      <h3 id="deck-shop-title" className="row" style={{ gap: 8 }}>Shopping list <span className="muted small">{plural(items.reduce((a, x) => a + (Number(x.need) || 1), 0), "card")}</span></h3>
-      <BuyList items={items} qtyKey="need" total={shopping.total_eur} />
+      <h3 id="deck-shop-title" className="row" style={{ gap: 8 }}>To buy <span className="muted small">{items.length ? plural(items.reduce((a, x) => a + (Number(x.qty) || 1), 0), "card") : "nothing"}</span></h3>
+      {items.length > 0
+        ? <BuyList items={items} qtyKey="qty" total={shopping?.total_eur} />
+        : <span className="small muted">You own every card. {built ? "Some copies are also claimed by other built decks." : "Some copies are in other decks."}</span>}
+      {inUse.length > 0 && (
+        <details className="disclosure inuse-list">
+          <summary>
+            <span>{built ? "Shared with other built decks" : "In other decks"}: {plural(inUseCards, "card")}{inUseTotal != null ? ` (buy instead: ${fmtEur(inUseTotal)})` : ""}</span>
+          </summary>
+          <span className="small muted">{built
+            ? "You own these, but other built decks claim the copies. Move them between decks or buy extra copies to play all at once."
+            : "You own these; they are in your built decks now. Move them over when you build this deck, or buy extra copies."}</span>
+          <BuyList items={inUse} qtyKey="qty" total={inUseTotal} label="Buy instead"
+            sub={(it) => <DeckLinks decks={it.decks} onOpenDeck={onOpenDeck} shared={built || it.conflict} />} />
+        </details>
+      )}
     </section>
   );
 }
@@ -2215,17 +2374,21 @@ function ShoppingListView({ dataVersion, onBack, onOpenDeck }) {
           {perDeck.length > 0 && (
             <section className="stack" aria-labelledby="shop-deck-title">
               <h2 id="shop-deck-title">Per deck</h2>
-              <span className="small muted">Missing cards per deck, counting only free copies (not used by other built decks).</span>
+              <span className="small muted">Cards to buy per deck (copies you don't own). Owned cards sitting in other built decks are counted separately: you can move them.</span>
               <div className="list">
-                {perDeck.map((d) => (
-                  <button key={d.id} type="button" className="list-row" style={{ gridTemplateColumns: "minmax(0, 1fr) auto" }} onClick={() => onOpenDeck(d.id)}>
-                    <span className="main">
-                      <span className="nm"><b>{d.name}</b> <StatusBadge status={d.status} /></span>
-                      <span className="sub">{d.missing_count ? `${plural(d.missing_count, "card")} missing` : "complete"}</span>
-                    </span>
-                    <span className="end">{d.missing_count ? fmtEur(d.missing_eur) : <span className="badge ok">✓</span>}</span>
-                  </button>
-                ))}
+                {perDeck.map((d) => {
+                  const { toBuy, inUse, toBuyEur } = deckCounts(d);
+                  const sub = [toBuy ? `${fmtInt(toBuy)} to buy` : null, inUse ? `${fmtInt(inUse)} in other decks` : null].filter(Boolean).join(" · ");
+                  return (
+                    <button key={d.id} type="button" className="list-row" style={{ gridTemplateColumns: "minmax(0, 1fr) auto" }} onClick={() => onOpenDeck(d.id)}>
+                      <span className="main">
+                        <span className="nm"><b>{d.name}</b> <StatusBadge status={d.status} /></span>
+                        <span className="sub">{sub || "complete"}</span>
+                      </span>
+                      <span className="end">{toBuy ? fmtEur(toBuyEur) : inUse ? <span className="badge warn" title="Owned, in other decks">⇄ {fmtInt(inUse)}</span> : <span className="badge ok">✓</span>}</span>
+                    </button>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -2278,6 +2441,27 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
   };
   const setStatus = async (status) => {
     if (!deck || deck.status === status || statusBusy) return;
+    if (status === "built") {
+      // Cards this idea deck shares with built decks turn into conflicts: owned copies in use,
+      // and shared cards nobody has enough of (same rule as the server's conflict flag).
+      const n = deckCounts(deck).inUse;
+      const conflicting = new Map();
+      for (const c of asList(deck.cards)) {
+        if (!c || c.basic || c.board === "maybe") continue;
+        const elsewhere = builtElsewhereOf(c);
+        if (elsewhere.length && (cardInUse(c) > 0 || cardToBuy(c) > 0)) conflicting.set(c.name, elsewhere);
+      }
+      if (n > 0 || conflicting.size > 0) {
+        const names = [...conflicting.keys()];
+        const list = names.slice(0, 5).join(", ") + (names.length > 5 ? ", …" : "");
+        const where = deckNames([...conflicting.values()].flat());
+        const k = conflicting.size;
+        const head = n > 0
+          ? `${n === 1 ? "1 card is" : `${n} cards are`} in use in other built decks${where ? ` (${where})` : ""}.`
+          : `This deck shares cards with other built decks${where ? ` (${where})` : ""}.`;
+        if (!window.confirm(`${head}\n\nAs a built deck, ${k === 1 ? "1 card" : `${k} cards`} will show as conflicts${list ? ` (${list})` : ""} until you move or buy copies. Set to Built?`)) return;
+      }
+    }
     setStatusBusy(true);
     setActionError(null);
     try {
@@ -2334,7 +2518,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
   const grouped = useMemo(() => {
     if (!deck) return [];
     return ["commander", "main", "side", "maybe"].map((board) => {
-      const cards = deck.cards.filter((c) => c.board === board && (!onlyMissing || c.missing > 0));
+      const cards = deck.cards.filter((c) => c.board === board && (!onlyMissing || cardToBuy(c) > 0 || cardInUse(c) > 0));
       const byType = DISPLAY_TYPES.map((t) => ({ type: t, cards: cards.filter((c) => mainType(c.type_line) === t) }))
         .filter((g) => g.cards.length);
       return { board, count: deck.counts?.[board] ?? 0, cards, byType };
@@ -2342,6 +2526,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
   }, [deck, onlyMissing]);
 
   const exportHref = `/api/decks/${id}/export`;
+  const counts = deckCounts(deck);
 
   return (
     <div className="stack-lg">
@@ -2425,9 +2610,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
                 </div>
               </div>
             )}
-            {deck.missing_count > 0
-              ? <div className="notice warn"><span aria-hidden="true">✗</span><div className="grow"><b>Missing: {plural(deck.missing_count, "card")} (~{fmtEur(deck.missing_cost_eur)})</b> <span className="small">— maybeboard not counted</span></div></div>
-              : <div className="notice ok"><span aria-hidden="true">✓</span><div className="grow"><b>You own every card in this deck.</b></div></div>}
+            <DeckNeedNotice deck={deck} />
             <div className="row">
               <button type="button" className="btn primary" onClick={() => onAsk(deck)}><Icon.sparkle /> Ask the planner</button>
               {deck.status === "built" && <button type="button" className="btn" onClick={() => setDeckBox(true)}><Icon.box /> Put into deck box</button>}
@@ -2439,12 +2622,12 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
             {notice && <div className="notice warn" role="status"><div className="grow">{notice}</div><button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setNotice(null)}><Icon.close /></button></div>}
           </header>
 
-          <DeckShopping shopping={deck.shopping} />
+          <DeckShopping deck={deck} onOpenDeck={onOpenDeck} />
 
-          {deck.cards.length > 0 && deck.missing_count > 0 && (
+          {deck.cards.length > 0 && (counts.toBuy > 0 || counts.inUse > 0) && (
             <label className="row" style={{ minHeight: 44, cursor: "pointer" }}>
               <input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} style={{ width: 20, height: 20, accentColor: "var(--accent)" }} />
-              Only show missing cards
+              {counts.inUse > 0 ? "Only cards to buy or in other decks" : "Only show cards to buy"}
             </label>
           )}
 
@@ -4187,7 +4370,10 @@ function ScanTab({ active, health, onCommitted }) {
   const [listError, setListError] = useState(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
-  const [last, setLast] = useState(null); // {kind, scan, result, payload, preview, error}
+  const cancelRef = useRef(null); // aborts the scan request in flight
+  // A scan that takes long: {since, warming} (warming = the server's fingerprint matcher is still loading).
+  const [slow, setSlow] = useState(null);
+  const [last, setLast] = useState(null); // {kind, scan, result, payload, preview, error, timeout}
   const [sheet, setSheet] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
   const [toast, setToast] = useState(null);
@@ -4283,16 +4469,51 @@ function ScanTab({ active, health, onCommitted }) {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
+    setSlow(null);
+    // After a server start the first scan waits for the scanner's warm-up
+    // (fingerprints loading): say so instead of looking hung. After
+    // SCAN_CANCEL_MS the user may cancel (with a retry); SCAN_TIMEOUT_MS is
+    // above the server's own bound (warm-up wait + OCR + Claude), so a slow
+    // but working scan is never cut off. A cancelled request is dropped by
+    // the server (nothing staged), so Retry can't add the card twice.
+    const ctl = new AbortController();
+    cancelRef.current = () => ctl.abort(new DOMException("Cancelled", "AbortError"));
+    const since = Date.now();
+    const checkWarm = async () => {
+      let warming = null;
+      try {
+        const h = await api("/healthz", { signal: ctl.signal });
+        const st = h?.scanner?.matcher?.state;
+        warming = st === "loading" || st === "idle";
+      } catch { warming = null; }
+      if (!ctl.signal.aborted) setSlow({ since, warming, cancellable: Date.now() - since >= SCAN_CANCEL_MS });
+    };
+    const slowTimer = setTimeout(checkWarm, SCAN_SLOW_MS);
+    const pollTimer = setInterval(checkWarm, SCAN_SLOW_MS * 2);
+    const cancelTimer = setTimeout(() => { if (!ctl.signal.aborted) setSlow((s) => ({ since, warming: s?.warming ?? null, cancellable: true })); }, SCAN_CANCEL_MS);
+    const abortTimer = setTimeout(() => ctl.abort(), SCAN_TIMEOUT_MS);
     try {
-      const res = await api("/api/scan", { method: "POST", json: payload });
+      const res = await api("/api/scan", { method: "POST", json: payload, signal: ctl.signal });
       await handleResult(res, payload, preview);
     } catch (e) {
-      setLast({ kind: "error", error: e.message, payload, preview });
+      const timeout = e.name === "AbortError";
+      const error = !timeout ? e.message
+        : Date.now() - since < SCAN_TIMEOUT_MS - 1000
+          ? `Cancelled after ${Math.round((Date.now() - since) / 1000)} s; nothing was added. The scanner may still be warming up after a server start; try again in a moment.`
+          : `No answer after ${Math.round(SCAN_TIMEOUT_MS / 1000)} s; nothing was added. Try again in a moment.`;
+      setLast({ kind: "error", error, timeout, payload, preview });
       feedback("error");
       bumpRearm(); // let the same card be captured again
     } finally {
+      clearTimeout(slowTimer);
+      clearInterval(pollTimer);
+      clearTimeout(cancelTimer);
+      clearTimeout(abortTimer);
+      ctl.abort();
+      cancelRef.current = null;
       busyRef.current = false;
       setBusy(false);
+      setSlow(null);
     }
   }
 
@@ -4399,7 +4620,7 @@ function ScanTab({ active, health, onCommitted }) {
         )}
         <CameraView lib={lib} active={active} settings={settings} busy={busy} paused={sheetOpen} flash={flash} rearmKey={rearmKey}
           onCapture={onCapture} onError={showError} />
-        {(busy || last) && <ResultCard busy={busy} last={last} onPick={() => openPickerFor(last?.scan, last?.result, { payload: last?.payload })}
+        {(busy || last) && <ResultCard busy={busy} slow={slow} last={last} onCancel={() => cancelRef.current?.()} onPick={() => openPickerFor(last?.scan, last?.result, { payload: last?.payload })}
           onConfirm={() => last?.scan?.id && patchScan(last.scan.id, { printing_id: last.scan.printing_id }, { status: "auto" })}
           onIncrement={() => last?.scan?.id && increment(last.scan.id)} onForce={forceAdd} onUndo={undo}
           onResend={() => last?.payload && postScan(last.payload, last.preview)}
@@ -4512,12 +4733,39 @@ function ScanTab({ active, health, onCommitted }) {
   );
 }
 
-function ResultCard({ busy, last, onPick, onConfirm, onIncrement, onForce, onResend, onUndo, onRetry, onSearch }) {
+// A scan slower than SCAN_SLOW_MS shows the warm-up state; from SCAN_CANCEL_MS on it can be
+// cancelled (then retried); SCAN_TIMEOUT_MS (above the server's 30 s warm-up wait + OCR + 90 s
+// Claude) aborts it for good.
+const SCAN_SLOW_MS = 4000;
+const SCAN_CANCEL_MS = 60000;
+const SCAN_TIMEOUT_MS = 180000;
+
+/** Seconds since `since`, ticking once a second. */
+function ScanElapsed({ since }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return <span className="small muted">{Math.max(0, Math.round((now - since) / 1000))} s</span>;
+}
+
+function ResultCard({ busy, slow, last, onCancel, onPick, onConfirm, onIncrement, onForce, onResend, onUndo, onRetry, onSearch }) {
   if (busy) {
+    // slow.warming: true = the matcher is loading, false = it is ready (just slow), null = /healthz unknown.
+    const title = !slow ? "Identifying…" : slow.warming === false ? "Still identifying…" : "Identifying… (warming up the scanner)";
+    const detail = !slow ? "Reading the collector line and matching the art."
+      : slow.warming === false ? "The server is busy; this is taking longer than usual."
+        : "The first scan after a server start waits for the card fingerprints to load. This can take up to a minute.";
     return (
       <div className="result st-busy" role="status" aria-live="polite">
         {last?.preview ? <img className="th" src={last.preview} alt="" /> : <span className="th" />}
-        <div className="body"><span className="nm">Identifying…</span><span className="small muted">Reading the collector line and matching the art.</span><div className="progress" aria-hidden="true" /></div>
+        <div className="body"><span className="nm">{title}</span><span className="small muted">{detail}</span>
+          {slow && <ScanElapsed since={slow.since} />}
+          <div className="progress" aria-hidden="true" /></div>
+        {slow?.cancellable && onCancel && (
+          <div className="actions"><button type="button" className="btn sm" onClick={onCancel}><Icon.close /> Cancel</button></div>
+        )}
       </div>
     );
   }
@@ -4527,9 +4775,9 @@ function ResultCard({ busy, last, onPick, onConfirm, onIncrement, onForce, onRes
     return (
       <div className="result st-error" role="alert">
         {last.preview ? <img className="th" src={last.preview} alt="" /> : <span className="th" />}
-        <div className="body"><span className="nm">Scan failed</span><span className="small">{last.error}</span></div>
+        <div className="body"><span className="nm">{last.timeout ? "Scan stopped" : "Scan failed"}</span><span className="small">{last.error}</span></div>
         <div className="actions">
-          {last.payload && <button type="button" className="btn sm" onClick={onResend}>Send again</button>}
+          {last.payload && <button type="button" className={`btn sm${last.timeout ? " primary" : ""}`} onClick={onResend}>{last.timeout ? <><Icon.refresh /> Retry</> : "Send again"}</button>}
           <button type="button" className="btn sm" onClick={onRetry}><Icon.camera /> Rescan</button>
         </div>
       </div>

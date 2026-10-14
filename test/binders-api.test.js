@@ -160,24 +160,38 @@ describe("deck allocation API", () => {
     assert.deepEqual(list.map((d) => [d.name, d.status, d.conflict_count]).sort(), [["Built1", "built", 0], ["Idea1", "idea", 0]]);
     let d = (await call("GET", `/api/decks/${idea}`)).body;
     const sol = d.cards.find((c) => c.name === "Sol Ring");
-    assert.deepEqual([sol.owned, sol.available_for_this, sol.missing, sol.conflict], [1, 0, 1, false]);
+    assert.deepEqual([sol.owned, sol.available_for_this, sol.missing, sol.to_buy, sol.in_use, sol.conflict], [1, 0, 0, 0, 1, false]);
+    assert.deepEqual([d.missing_count, d.to_buy_count, d.in_use_count, d.in_use_eur], [0, 0, 1, 1.5]);
+    assert.deepEqual(d.shopping.in_use.map((i) => [i.name, i.quantity, i.decks, i.conflict]), [["Sol Ring", 1, [{ id: built, name: "Built1" }], false]]);
     assert.deepEqual(sol.used_elsewhere.map((u) => [u.deck_id, u.name, u.status, u.quantity]), [[built, "Built1", "built", 1]]);
 
     assert.equal((await call("PATCH", `/api/decks/${idea}`, { status: "bogus" })).status, 400);
+    r = await call("GET", `/api/decks/${idea}/status-preview?status=built`);
+    assert.deepEqual([r.status, r.body.from, r.body.to, r.body.in_use_count, r.body.in_use.map((i) => i.name)], [200, "idea", "built", 1, ["Sol Ring"]]);
+    assert.equal((await call("GET", `/api/decks/${idea}/status-preview?status=done`)).status, 400);
+    assert.equal((await call("GET", "/api/decks/999/status-preview?status=built")).status, 404);
     r = await call("PATCH", `/api/decks/${idea}`, { status: "built" });
     assert.equal(r.status, 200);
     assert.equal(r.body.status, "built");
+    assert.deepEqual([r.body.status_change.from, r.body.status_change.to, r.body.status_change.in_use_count, r.body.status_change.conflict_count],
+      ["idea", "built", 1, 1]);
+    assert.equal(r.body.status_change.in_use[0].decks[0].name, "Built1");
+    assert.equal((await call("PATCH", `/api/decks/${idea}`, { status: "built" })).body.status_change, undefined, "no change, no status_change");
+    r = await call("GET", `/api/decks/${idea}/status-preview?status=built`);
+    assert.equal(r.body.in_use_count, 0, "already built");
     d = (await call("GET", `/api/decks/${idea}`)).body;
     assert.equal(d.conflict_count, 1);
     assert.deepEqual(d.conflicts.map((c) => [c.name, c.owned, c.demand, c.decks.length]), [["Sol Ring", 1, 2, 2]]);
-    assert.deepEqual(d.shopping.items.map((i) => [i.name, i.need, i.price_eur]), [["Sol Ring", 1, 1.5]]);
+    assert.deepEqual(d.shopping.items, [], "contested but owned: not to buy for the deck");
+    assert.deepEqual(d.shopping.in_use.map((i) => [i.name, i.quantity, i.conflict, i.price_eur]), [["Sol Ring", 1, true, 1.5]]);
     list = (await call("GET", "/api/decks")).body;
     assert.ok(list.every((x) => x.conflict_count === 1));
 
     r = await call("GET", "/api/shopping-list");
     assert.deepEqual(r.body.built.items.map((i) => [i.name, i.short, i.decks.length]), [["Sol Ring", 1, 2]]);
     assert.equal(r.body.built.total_eur, 1.5);
-    assert.deepEqual(r.body.per_deck.map((x) => [x.name, x.status, x.missing_count]), [["Built1", "built", 1], ["Idea1", "built", 1]]);
+    assert.deepEqual(r.body.per_deck.map((x) => [x.name, x.status, x.missing_count, x.to_buy_count, x.in_use_count]),
+      [["Built1", "built", 0, 0, 1], ["Idea1", "built", 0, 0, 1]]);
 
     r = await call("GET", `/api/cards/${ID.sol}`);
     assert.deepEqual([r.body.usage.owned, r.body.usage.built_demand, r.body.usage.available], [1, 2, -1]);
