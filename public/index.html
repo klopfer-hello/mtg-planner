@@ -275,6 +275,8 @@ details > summary::-webkit-details-marker { display: none; }
 /* ==========================================================================
    Collection
    ========================================================================== */
+.stats-wrap { display: grid; gap: 6px; min-width: 0; }
+.stats-scope { margin: 0; overflow-wrap: anywhere; }
 .stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; min-width: 0; }
 .stat .v { font-size: 1.2rem; font-weight: 750; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
@@ -574,7 +576,51 @@ ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
 .cam-start { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 12px; padding: 20px; text-align: center; }
 .cam-start p { margin: 0; max-width: 340px; color: #d7d6dd; font-size: .92rem; }
 .cam-hud { position: absolute; left: 8px; right: 8px; display: flex; align-items: center; gap: 8px; }
-.cam-hud.top { top: 8px; justify-content: space-between; }
+.cam-hud.top { top: 8px; justify-content: space-between; align-items: flex-start; }
+/* beta.3: money pill (top right) above the torch; last result as an overlay above the shutter row */
+.cam-hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: none; }
+.cam-value {
+  display: grid; justify-items: end; gap: 1px; padding: 4px 10px; border-radius: 12px; line-height: 1.15;
+  background: rgba(0, 0, 0, .66); color: #fff; font-variant-numeric: tabular-nums; max-width: 46vw;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); box-shadow: 0 1px 6px rgba(0, 0, 0, .3);
+}
+.cam-value .v-last { font-size: 1rem; font-weight: 800; }
+.cam-value .v-sum { font-size: .74rem; font-weight: 650; color: #e6e4ee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+/* the camera view is a size container: on a short view (landscape stream) the overlay keeps only the
+   info line (the full result card is right below the camera then) */
+.cam { container: cam / size; }
+.cam-hud.top .pills .pill { white-space: normal; line-height: 1.2; text-align: left; }
+.cam-overlay { position: absolute; left: 8px; right: 8px; bottom: 96px; display: flex; justify-content: center; pointer-events: none; }
+.cam-overlay > .result { pointer-events: auto; width: 100%; max-width: 460px; }
+.result.cam-result {
+  grid-template-columns: 40px minmax(0, 1fr); gap: 2px 8px; padding: 6px 8px; align-items: center;
+  background: rgba(14, 14, 18, .76); color: #fff; border: 1px solid rgba(255, 255, 255, .14); border-left-width: 5px;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 2px 12px rgba(0, 0, 0, .35);
+}
+.cam-result .body { gap: 2px; }
+.cam-result .head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cam-result .head .badge { flex: none; }
+.cam-result .nm { font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cam-result .sub { font-size: .78rem; color: #e6e4ee; }
+.cam-result .muted { color: #cfcdd8; }
+.cam-result .err-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cam-result .actions { margin-top: 2px; gap: 6px; }
+.cam-result .btn.sm, .cam-result .undo-btn { min-height: 34px; padding: 0 10px; font-size: .8rem; }
+.cam-result .btn svg { width: 18px; height: 18px; }
+.cam-result .finish-tag { min-height: 28px; }
+.result .sub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
+.result .sub .price { font-weight: 800; }
+.finish-tag {
+  appearance: none; display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; border-radius: 999px;
+  border: 1px solid rgba(127, 127, 127, .55); background: transparent; color: inherit; font: inherit; font-weight: 700; cursor: pointer;
+}
+.finish-tag.foil, .finish-tag.etched { background: linear-gradient(135deg, #f7d774, #b8f0e0 55%, #d6b8ff); color: #1d1b18; border-color: transparent; }
+.finish-tag.finish-q { border-style: dashed; }
+.finish-tag.static { cursor: default; }
+.result:not(.cam-result) .finish-tag.static { border: 0; padding: 0; min-height: 0; background: none; color: inherit; }
+.scan-price { font-weight: 700; color: var(--text); }
+@container cam (max-height: 360px) { .cam .cam-result .actions { display: none; } }
+@container cam (max-height: 300px) { .cam .cam-overlay { display: none; } }
 .cam-hud.bottom { bottom: 14px; justify-content: center; gap: 28px; }
 .pill {
   display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 30px; padding: 4px 12px;
@@ -1408,22 +1454,35 @@ const SORTS = [
 ];
 const tokenize = (q) => q.match(/-?[a-z]*(?:[:<>=!]+)?(?:"[^"]*"|\S+)/gi) || [];
 
-function StatsBar({ dataVersion }) {
+// binder: null = whole collection, "" = Unsorted, else that binder (GET /api/stats?binder=, exact, case-insensitive).
+function StatsBar({ dataVersion, binder = null }) {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState(null);
+  const reqId = useRef(0);
   const load = useCallback(() => {
+    const id = ++reqId.current;
     setError(null);
-    api("/api/stats").then(setStats).catch((e) => setError(`Could not load stats: ${e.message}`));
-  }, []);
+    setStats(null);
+    const qs = binder == null ? "" : `?${new URLSearchParams({ binder })}`;
+    api(`/api/stats${qs}`)
+      .then((d) => { if (id === reqId.current) setStats(d); })
+      .catch((e) => { if (id === reqId.current) setError(`Could not load stats: ${e.message}`); });
+  }, [binder]);
   useEffect(load, [load, dataVersion]);
   if (error) return <ErrorNotice error={error} onRetry={load} />;
   const s = stats || {};
+  const scope = binder == null ? null : binder || UNSORTED;
   return (
-    <div className="stats" aria-busy={!stats}>
-      <div className="stat"><div className="v">{stats ? fmtInt(s.unique_cards) : "…"}</div><div className="k">Unique cards</div></div>
-      <div className="stat"><div className="v">{stats ? fmtInt(s.total_cards) : "…"}</div><div className="k">Total copies</div></div>
-      <div className="stat"><div className="v">{stats ? fmtEur(s.value_eur) : "…"}</div><div className="k">Est. value</div></div>
-      <div className="stat"><div className="v" style={{ fontSize: "1rem" }} title={stats?.last_import ? fmtDate(s.last_import) : undefined}>{stats ? (s.last_import ? fmtAgo(s.last_import) : "never") : "…"}</div><div className="k">Last import</div></div>
+    <div className="stats-wrap">
+      {scope != null && (
+        <p className="stats-scope small muted" aria-live="polite">Showing <b>{scope}</b> only</p>
+      )}
+      <div className="stats" aria-busy={!stats}>
+        <div className="stat"><div className="v">{stats ? fmtInt(s.unique_cards) : "…"}</div><div className="k">Unique cards</div></div>
+        <div className="stat"><div className="v">{stats ? fmtInt(s.total_cards) : "…"}</div><div className="k">Total copies</div></div>
+        <div className="stat"><div className="v">{stats ? fmtEur(s.value_eur) : "…"}</div><div className="k">{scope != null ? "Binder value" : "Est. value"}</div></div>
+        <div className="stat"><div className="v" style={{ fontSize: "1rem" }} title={stats?.last_import ? fmtDate(s.last_import) : undefined}>{stats ? (s.last_import ? fmtAgo(s.last_import) : "never") : "…"}</div><div className="k">Last import</div></div>
+      </div>
     </div>
   );
 }
@@ -1605,7 +1664,7 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
 
   return (
     <div className="stack-lg">
-      <StatsBar dataVersion={dataVersion} />
+      <StatsBar dataVersion={dataVersion} binder={binder} />
 
       <div className="stack">
         <form className="search" role="search" onSubmit={(e) => { e.preventDefault(); e.currentTarget.querySelector("input")?.blur(); }}>
@@ -3931,7 +3990,7 @@ function CameraView(props) {
   return props.v2 ? <CameraViewV2 {...props} /> : <CameraViewV1 {...props} />;
 }
 
-function CameraViewV1({ lib, active, settings, busy, paused, flash, rearmKey, onCapture, onError, onUnlock }) {
+function CameraViewV1({ lib, active, settings, busy, paused, flash, rearmKey, onCapture, onError, onUnlock, overlay = null, valuePill = null }) {
   const videoRef = useRef(null);
   const overlayRef = useRef(null);
   const streamRef = useRef(null);
@@ -4131,10 +4190,14 @@ function CameraViewV1({ lib, active, settings, busy, paused, flash, rearmKey, on
         <>
           <div className="cam-hud top">
             <span className={`pill s-${status.phase}`} role="status" aria-live="polite"><span className="dot" aria-hidden="true" />{status.hint || "Ready"}</span>
-            {torch.supported !== false && (
-              <button type="button" className="cam-btn" aria-pressed={torch.on} aria-label={torch.on ? "Turn torch off" : "Turn torch on"} onClick={toggleTorch}><Icon.bolt /></button>
-            )}
+            <div className="cam-hud-right">
+              {valuePill}
+              {torch.supported !== false && (
+                <button type="button" className="cam-btn" aria-pressed={torch.on} aria-label={torch.on ? "Turn torch off" : "Turn torch on"} onClick={toggleTorch}><Icon.bolt /></button>
+              )}
+            </div>
           </div>
+          {overlay && <div className="cam-overlay">{overlay}</div>}
           <div className="cam-hud bottom">
             <button type="button" className="cam-btn" aria-label="Stop camera" onClick={stop}><Icon.close /></button>
             <button type="button" className="shutter" aria-label="Take scan now" disabled={busy || paused}
@@ -4162,7 +4225,7 @@ const FOIL_SHORT = { auto: "Auto", nonfoil: "Non-foil", foil: "✦ Foil" };
  * faintly. Also uploads the record-session frames while `record` is set,
  * each with a per-frame state record.
  */
-function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, flash, queued, record, sendProbe, onManual, onFoil, onRecorded, onError, onUnlock, onStart }) {
+function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, flash, queued, record, sendProbe, onManual, onFoil, onRecorded, onError, onUnlock, onStart, overlay = null, valuePill = null }) {
   const videoRef = useRef(null);
   const overlayRef = useRef(null);
   const streamRef = useRef(null);
@@ -4496,10 +4559,14 @@ function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, f
                 </span>
               )}
             </span>
-            {torch.supported !== false && (
-              <button type="button" className="cam-btn" aria-pressed={torch.on} aria-label={torch.on ? "Turn torch off" : "Turn torch on"} onClick={toggleTorch}><Icon.bolt /></button>
-            )}
+            <div className="cam-hud-right">
+              {valuePill}
+              {torch.supported !== false && (
+                <button type="button" className="cam-btn" aria-pressed={torch.on} aria-label={torch.on ? "Turn torch off" : "Turn torch on"} onClick={toggleTorch}><Icon.bolt /></button>
+              )}
+            </div>
           </div>
+          {overlay && <div className="cam-overlay">{overlay}</div>}
           <div className="cam-hud bottom">
             <button type="button" className="cam-btn" aria-label="Stop camera" onClick={stop}><Icon.close /></button>
             <button type="button" className="shutter" aria-label="Take scan now" disabled={paused} onClick={manualShot} />
@@ -4972,6 +5039,7 @@ function ScanRow({ s, status, selected, onSelect, onPatch, onDelete, onIncrement
           {s.set_code && <span>{String(s.set_code).toUpperCase()} #{s.collector_number}</span>}
           {(ld || ls) && <span className="badge" title="Detected language → stored language">{ld && ls && ld !== ls ? `${ld}→${ls}` : ls || ld}</span>}
           {s.method && <span className="muted">{s.method}{typeof s.confidence === "number" ? ` ${Math.round(s.confidence * 100)}%` : ""}</span>}
+          {"price_eur" in s && <span className="scan-price" title="EUR price of the stored printing and finish (each copy)">{s.price_eur == null ? "no price" : fmtEur(s.price_eur)}</span>}
         </div>
       </div>
       <div className="ctrls">
@@ -5012,6 +5080,7 @@ function ScanTab({ active, health, onCommitted }) {
   const [libError, setLibError] = useState(null);
   const [settings, setSettings] = useState(() => ({ ...SCAN_DEFAULTS, ...(store.get("mtg.scan.settings", {}) || {}) }));
   const [scans, setScans] = useState(null);
+  const [scanTotals, setScanTotals] = useState(null); // GET /api/scans totals.staged (fallback for rows without price_eur)
   const [listError, setListError] = useState(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -5120,6 +5189,7 @@ function ScanTab({ active, health, onCommitted }) {
       const d = await api("/api/scans?status=staged");
       const list = asList(d, "scans", "rows").slice().sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
       setScans(list);
+      setScanTotals(d && !Array.isArray(d) ? d.totals?.staged ?? null : null);
       setListError(null);
       setSelected((sel) => new Set([...sel].filter((id) => list.some((s) => s.id === id))));
     } catch (e) {
@@ -5488,6 +5558,31 @@ function ScanTab({ active, health, onCommitted }) {
   const allSelected = list.length > 0 && selIds.length === list.length;
   const scanner = health?.scanner;
   const sheetOpen = Boolean(sheet);
+  // Money (beta.3): the staged list's value and the last card's unit price. The staged row is
+  // fresher than the scan answer (a finish switch re-prices it); undefined = no priced last card.
+  const totals = stagedValue(list, scanTotals);
+  const lastRow = last?.scan?.id ? list.find((s) => s.id === last.scan.id) || null : null;
+  const lastPrice = !last || !["auto", "suggest", "duplicate"].includes(last.kind) || (!lastRow && !last.scan) ? undefined
+    : lastRow && "price_eur" in lastRow ? lastRow.price_eur ?? null
+      : last.result?.price_eur !== undefined ? last.result.price_eur ?? null : undefined;
+  const resultProps = {
+    busy, slow, last, busyPreview, queued: v2 ? queued : 0, row: lastRow, price: lastPrice,
+    onFinish: (f) => last?.scan?.id && patchScan(last.scan.id, { finish: f }),
+    onCancel: () => cancelRef.current?.(),
+    onPick: () => openPickerFor(last?.scan, last?.result, { payload: last?.payload }),
+    onConfirm: () => last?.scan?.id && patchScan(last.scan.id, { printing_id: last.scan.printing_id }, { status: "auto" }),
+    onIncrement: () => last?.scan?.id && increment(last.scan.id), onForce: forceAdd, onUndo: undo,
+    onDiscard: () => last?.scan?.id && discard(last.scan),
+    onResend: () => last?.payload && resend(last.payload, last.preview),
+    onAskClaude: v2 ? askClaude : null,
+    onRetry: () => {
+      // A rescan replaces the open review row of this card instead of adding a second one.
+      replaceRef.current = last?.scan?.id && ["review", "failed"].includes(last.kind) ? last.scan.id : null;
+      setLast(null);
+      if (v2) probeRef.current?.rearm({ rescan: Boolean(replaceRef.current) }); else bumpRearm();
+    },
+    onSearch: () => setSheet({ type: "manual" }),
+  };
 
   return (
     <div className="scan">
@@ -5503,19 +5598,10 @@ function ScanTab({ active, health, onCommitted }) {
           onCapture={onCapture} onError={showError} onUnlock={unlockSounds}
           probeRef={probeRef} detRef={detRef} queued={queued} record={rec} sendProbe={sendProbe} onManual={onManual}
           onFoil={(f) => setSetting("foil", f)} onStart={() => { probeSessionRef.current = newProbeSession(); }}
-          onRecorded={(p) => setRec((r) => (r && r.session === p.session ? { ...r, frames: p.frames, bytes: p.bytes, errors: p.errors } : r))} />
-        {(busy || last) && <ResultCard busy={busy} slow={slow} last={last} busyPreview={busyPreview} queued={v2 ? queued : 0} onCancel={() => cancelRef.current?.()} onPick={() => openPickerFor(last?.scan, last?.result, { payload: last?.payload })}
-          onConfirm={() => last?.scan?.id && patchScan(last.scan.id, { printing_id: last.scan.printing_id }, { status: "auto" })}
-          onIncrement={() => last?.scan?.id && increment(last.scan.id)} onForce={forceAdd} onUndo={undo}
-          onDiscard={() => last?.scan?.id && discard(last.scan)}
-          onResend={() => last?.payload && resend(last.payload, last.preview)}
-          onAskClaude={v2 ? askClaude : null}
-          onRetry={() => {
-            // A rescan replaces the open review row of this card instead of adding a second one.
-            replaceRef.current = last?.scan?.id && ["review", "failed"].includes(last.kind) ? last.scan.id : null;
-            setLast(null);
-            if (v2) probeRef.current?.rearm({ rescan: Boolean(replaceRef.current) }); else bumpRearm();
-          }} onSearch={() => setSheet({ type: "manual" })} />}
+          onRecorded={(p) => setRec((r) => (r && r.session === p.session ? { ...r, frames: p.frames, bytes: p.bytes, errors: p.errors } : r))}
+          overlay={(busy || last) && !sheetOpen ? <ResultCard {...resultProps} compact /> : null}
+          valuePill={<CamValue last={lastPrice} total={totals} />} />
+        {(busy || last) && <ResultCard {...resultProps} />}
 
         <div className="scan-settings">
           <div className="segmented" role="group" aria-label="Finish when the card doesn't show it">
@@ -5584,7 +5670,7 @@ function ScanTab({ active, health, onCommitted }) {
       <div className="scan-side">
 
         <div className="list-head">
-          <h2 style={{ fontSize: "1.1rem" }}>Scanned {list.length > 0 && <span className="muted small">{plural(list.length, "card")} · {plural(copies, "copy", "copies")}</span>}</h2>
+          <h2 style={{ fontSize: "1.1rem" }}>Scanned {list.length > 0 && <span className="muted small">{plural(list.length, "card")} · {plural(copies, "copy", "copies")}{totals.value != null && <> · <b style={{ color: "var(--text)" }}>{fmtEur(totals.value)}</b>{totals.unpriced ? ` (${totals.unpriced} unpriced)` : ""}</>}</span>}</h2>
           <div className="row">
             <button type="button" className="btn sm" onClick={() => setSheet({ type: "manual" })}><Icon.plus /> Add by name</button>
             <button type="button" className="btn sm" onClick={undo} disabled={!list.length}><Icon.undo /> Undo</button>
@@ -5670,17 +5756,26 @@ function ScanElapsed({ since }) {
   return <span className="small muted">{Math.max(0, Math.round((now - since) / 1000))} s</span>;
 }
 
-function ResultCard({ busy, slow, last, busyPreview, queued = 0, onCancel, onPick, onConfirm, onIncrement, onForce, onResend, onUndo, onDiscard, onRetry, onSearch, onAskClaude }) {
+/**
+ * The last scan's result. Below the camera (full, with explanations) and, with `compact`, as the
+ * overlay at the bottom of the camera view (beta.3: visible without scrolling on a phone).
+ * row: the staged list row of last.scan (fresher finish/price after a toggle), price: its EUR unit
+ * price (undefined = unknown), onFinish(next): tap the finish to switch it (staged rows only).
+ */
+function ResultCard({ busy, slow, last, busyPreview, queued = 0, compact = false, row = null, price, onFinish, onCancel, onPick, onConfirm, onIncrement, onForce, onResend, onUndo, onDiscard, onRetry, onSearch, onAskClaude }) {
+  const cls = compact ? "result cam-result" : "result";
+  // Only the full card below the camera announces results (the overlay repeats them).
+  const live = compact ? {} : { role: "status", "aria-live": "polite" };
   if (busy) {
     // slow.warming: true = the matcher is loading, false = it is ready (just slow), null = /healthz unknown.
-    const title = !slow ? "Identifying…" : slow.warming === false ? "Still identifying…" : "Identifying… (warming up the scanner)";
+    const title = !slow ? "Identifying…" : slow.warming === false ? "Still identifying…" : compact ? "Identifying… (warming up)" : "Identifying… (warming up the scanner)";
     const detail = !slow ? "Reading the collector line and matching the art."
       : slow.warming === false ? "The server is busy; this is taking longer than usual."
         : "The first scan after a server start waits for the card fingerprints to load. This can take up to a minute.";
     return (
-      <div className="result st-busy" role="status" aria-live="polite">
+      <div className={`${cls} st-busy`} {...live}>
         {busyPreview || last?.preview ? <img className="th" src={busyPreview || last.preview} alt="" /> : <span className="th" />}
-        <div className="body"><span className="nm">{title}</span><span className="small muted">{detail}</span>
+        <div className="body"><span className="nm">{title}</span>{!compact && <span className="small muted">{detail}</span>}
           {queued > 1 && <span className="small muted">{plural(queued - 1, "more card")} waiting</span>}
           {slow && <ScanElapsed since={slow.since} />}
           <div className="progress" aria-hidden="true" /></div>
@@ -5694,9 +5789,9 @@ function ResultCard({ busy, slow, last, busyPreview, queued = 0, onCancel, onPic
   const { kind, scan, result: r = {} } = last;
   if (kind === "error") {
     return (
-      <div className="result st-error" role="alert">
+      <div className={`${cls} st-error`} {...(compact ? {} : { role: "alert" })}>
         {last.preview ? <img className="th" src={last.preview} alt="" /> : <span className="th" />}
-        <div className="body"><span className="nm">{last.timeout ? "Scan stopped" : "Scan failed"}</span><span className="small">{last.error}</span></div>
+        <div className="body"><span className="nm">{last.timeout ? "Scan stopped" : "Scan failed"}</span><span className="small err-text">{last.error}</span></div>
         <div className="actions">
           {last.payload && <button type="button" className={`btn sm${last.timeout ? " primary" : ""}`} onClick={onResend}>{last.timeout ? <><Icon.refresh /> Retry</> : "Send again"}</button>}
           <button type="button" className="btn sm" onClick={onRetry}><Icon.camera /> Rescan</button>
@@ -5704,45 +5799,104 @@ function ResultCard({ busy, slow, last, busyPreview, queued = 0, onCancel, onPic
       </div>
     );
   }
-  const store_ = normPrinting(r.store || r.printing) || (scan ? normPrinting({ ...scan, id: scan.store_printing_id || scan.printing_id }) : null);
-  const name = scan?.name || store_?.name || "Unknown card";
-  const thumb = (scan && scanThumb(scan)) || store_?.imgSmall || last.preview;
-  const ld = (r.lang_detected || scan?.lang_detected || "").toUpperCase(), ls = (scan?.store_lang || r.store?.lang || "").toUpperCase();
-  const finish = normFinish(r.finish || scan?.finish);
-  const guessed = scan ? finishGuessed(scan) : r.finishSource === "toggle";
+  const cur = row ? { ...scan, ...row } : scan;
+  const store_ = normPrinting(r.store || r.printing) || (cur ? normPrinting({ ...cur, id: cur.store_printing_id || cur.printing_id }) : null);
+  const name = cur?.name || store_?.name || "Unknown card";
+  const thumb = (cur && scanThumb(cur)) || store_?.imgSmall || last.preview;
+  const ld = (r.lang_detected || cur?.lang_detected || "").toUpperCase(), ls = (cur?.store_lang || r.store?.lang || "").toUpperCase();
+  // The staged row knows the current finish (a tap may have switched it); else the scan answer's.
+  const finish = normFinish(row?.finish || r.finish || scan?.finish);
+  const guessed = row ? finishGuessed(row) : scan ? finishGuessed(scan) : r.finishSource === "toggle";
+  const fins = cur ? scanFinishes(cur) : [];
+  const nextFinish = fins.length > 1 ? fins[(fins.indexOf(finish) + 1) % fins.length] : null;
+  const canToggle = Boolean(onFinish && scan?.id && row && nextFinish && kind !== "duplicate");
+  const finishText = <>{finish !== "nonfoil" && "✦ "}{FINISH_LABEL[finish] || finish}{guessed && "?"}</>;
+  const finishEl = canToggle
+    ? <button type="button" className={`finish-tag ${finish}${guessed ? " finish-q" : ""}`} onClick={() => onFinish(nextFinish)}
+      aria-label={`Finish ${FINISH_LABEL[finish] || finish}${guessed ? " (not read from the card)" : ""}. Switch to ${FINISH_LABEL[nextFinish]}`}>{finishText}</button>
+    : <span className={`finish-tag static ${finish}`} title={guessed ? "Not read from the card: the session's finish setting. Tap the finish in the list to change it." : undefined}>{finishText}</span>;
+  const showPrinting = store_ && (scan || kind !== "failed");
+  const priceEl = price !== undefined && showPrinting ? <span className="price">{price == null ? "no price" : fmtEur(price)}</span> : null;
+  const title = kind === "failed" && !scan ? "Card not recognised" : name;
   return (
-    <div className={`result st-${kind}`} role="status" aria-live="polite">
+    <div className={`${cls} st-${kind}`} {...live}>
       {thumb ? <img className="th" src={thumb} alt="" /> : <span className="th" />}
       <div className="body">
-        <span className="row" style={{ gap: 6 }}><span className={`badge st-chip ${kind}`}>{STATUS_LABEL[kind] || kind}</span>{r.claude_used && <span className="badge accent">✦ Claude</span>}</span>
-        <span className="nm">{kind === "failed" && !scan ? "Card not recognised" : name}</span>
-        {store_ && (scan || kind !== "failed") && (
-          <span className="small muted">{printingLabel(store_)}{ld && ls && ld !== ls ? ` · read ${ld}, stored ${ls}` : ""} · {FINISH_LABEL[finish] || finish}{guessed && <span title="Not read from the card: the session's finish setting. Tap the finish in the list to change it.">?</span>}</span>
+        {compact ? (
+          <span className="head"><span className={`badge st-chip ${kind}`} title={STATUS_LABEL[kind] || kind}>{(STATUS_LABEL[kind] || kind).split(" ")[0]}</span><span className="nm" title={title}>{title}</span></span>
+        ) : (
+          <>
+            <span className="row" style={{ gap: 6 }}><span className={`badge st-chip ${kind}`}>{STATUS_LABEL[kind] || kind}</span>{r.claude_used && <span className="badge accent">✦ Claude</span>}</span>
+            <span className="nm">{title}</span>
+          </>
         )}
-        {kind === "duplicate" && <span className="small">Same printing as your last scan, so it was not added again.</span>}
-        {kind === "suggest" && <span className="small">Probably right: please confirm.</span>}
-        {kind === "review" && <span className="small">Not sure: pick the right printing.</span>}
-        {kind === "failed" && last.payload?.capture?.fallback && <span className="small">Couldn't identify – adjust the card and retry.</span>}
+        {showPrinting && (
+          <span className="small sub">
+            <span className={compact ? "" : "muted"}>{printingLabel(store_)}{ld && ls && ld !== ls ? (compact ? ` · ${ld}→${ls}` : ` · read ${ld}, stored ${ls}`) : ""}</span>
+            {finishEl}{priceEl}{compact && r.claude_used && <span>✦ Claude</span>}
+          </span>
+        )}
+        {!compact && kind === "duplicate" && <span className="small">Same printing as your last scan, so it was not added again.</span>}
+        {!compact && kind === "suggest" && <span className="small">Probably right: please confirm.</span>}
+        {!compact && kind === "review" && <span className="small">Not sure: pick the right printing.</span>}
+        {!compact && kind === "failed" && last.payload?.capture?.fallback && <span className="small">Couldn't identify – adjust the card and retry.</span>}
       </div>
       <div className="actions">
         {kind === "duplicate" && scan?.id && <button type="button" className="btn sm primary" onClick={onIncrement}><Icon.plus /> +1 copy</button>}
-        {kind === "duplicate" && last.payload && <button type="button" className="btn sm" onClick={onForce}>Different card, add it</button>}
+        {kind === "duplicate" && last.payload && <button type="button" className="btn sm" onClick={onForce}>{compact ? "Different card" : "Different card, add it"}</button>}
         {kind === "suggest" && scan?.id && <button type="button" className="btn sm primary" onClick={onConfirm}><Icon.check /> Confirm</button>}
         {(kind === "suggest" || kind === "review" || ((kind === "auto") && jsonArr(r.variants || scan?.variants).length > 0)) && (
-          <button type="button" className={`btn sm${kind === "review" ? " primary" : ""}`} onClick={onPick}>{kind === "auto" ? "variant?" : "Pick printing"}</button>
+          <button type="button" className={`btn sm${kind === "review" ? " primary" : ""}`} onClick={onPick}>{kind === "auto" ? "variant?" : compact ? "Pick" : "Pick printing"}</button>
         )}
-        {kind === "failed" && <button type="button" className="btn sm primary" onClick={onSearch}><Icon.search /> Find by name</button>}
+        {kind === "failed" && <button type="button" className="btn sm primary" onClick={onSearch}><Icon.search /> {compact ? "Find" : "Find by name"}</button>}
         {(kind === "failed" || kind === "review") && <button type="button" className="btn sm" onClick={onRetry}><Icon.camera /> Rescan</button>}
         {(kind === "failed" || kind === "review") && onAskClaude && last.payload?.allowClaude === false && !r.claude_used && (
-          <button type="button" className="btn sm" onClick={onAskClaude}><Icon.sparkle /> Ask Claude</button>
+          <button type="button" className="btn sm" onClick={onAskClaude}><Icon.sparkle /> {compact ? "Claude" : "Ask Claude"}</button>
         )}
-        {(kind === "auto" || kind === "suggest") && scan?.id && <button type="button" className="btn sm" onClick={onIncrement}><Icon.plus /> +1</button>}
+        {(kind === "auto" || kind === "suggest") && scan?.id && <button type="button" className="btn sm" onClick={onIncrement} aria-label={compact ? "One more copy" : undefined}>{compact ? "+1" : <><Icon.plus /> +1</>}</button>}
         {scan?.id && kind !== "duplicate" && (onDiscard
-          ? <button type="button" className="btn sm danger undo-btn" onClick={onDiscard} style={{ marginLeft: "auto" }} title="Not this card / not a card: remove it from the scanned list"><Icon.trash /> Discard</button>
+          ? <button type="button" className="btn sm danger undo-btn" onClick={onDiscard} style={{ marginLeft: "auto" }} title="Not this card / not a card: remove it from the scanned list"
+            aria-label={compact ? `Discard ${name}` : undefined}><Icon.trash />{compact ? null : " Discard"}</button>
           : <button type="button" className="btn sm danger undo-btn" onClick={onUndo} style={{ marginLeft: "auto" }}><Icon.undo /> Undo</button>)}
       </div>
     </div>
   );
+}
+
+/**
+ * Top-right camera pill: the last card's EUR price and the staged list's value (scan session sum).
+ * last: unit price (null = unpriced, undefined = no last card), total: {value, copies, unpriced}.
+ */
+function CamValue({ last, total }) {
+  if (last === undefined && !total?.copies) return null;
+  const label = [
+    last !== undefined ? `Last card ${last == null ? "no price" : fmtEur(last)}` : null,
+    total?.copies ? `scanned ${plural(total.copies, "copy", "copies")}${total.value == null ? "" : ` worth ${fmtEur(total.value)}`}${total.unpriced ? `, ${total.unpriced} without a price` : ""}` : null,
+  ].filter(Boolean).join(", ");
+  return (
+    <div className="cam-value" role="status" aria-label={label} title={label}>
+      {last !== undefined && <span className="v-last">{last == null ? "–" : fmtEur(last)}</span>}
+      {total?.copies > 0 && <span className="v-sum">Σ {total.value == null ? "—" : fmtEur(total.value)}{total.unpriced ? "+" : ""} · {fmtInt(total.copies)}</span>}
+    </div>
+  );
+}
+
+/**
+ * Value of the staged list: Σ quantity × price_eur (GET /api/scans rows, store printing + finish).
+ * Computed from the visible rows (pending discards left out); an older server without per-row
+ * prices falls back to its totals.staged. unpriced = rows without a price.
+ */
+function stagedValue(list, serverTotals = null) {
+  let value = 0, copies = 0, unpriced = 0, priced = false;
+  for (const s of list) {
+    const q = s.quantity ?? 1;
+    copies += q;
+    if (typeof s.price_eur === "number" && Number.isFinite(s.price_eur)) { value += q * s.price_eur; priced = true; }
+    else unpriced += 1;
+  }
+  const hasField = list.some((s) => "price_eur" in s);
+  if (!hasField && serverTotals) return { value: serverTotals.value_eur ?? null, copies, unpriced: serverTotals.unpriced ?? 0 };
+  return { value: priced || !unpriced ? Math.round(value * 100) / 100 : null, copies, unpriced };
 }
 
 // ===========================================================================

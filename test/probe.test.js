@@ -351,7 +351,7 @@ describe("POST /api/scan mode probe", () => {
     assert.equal(r.body.result.status, "failed");
     assert.equal(r.body.result.name, undefined);
     assert.equal(files(scanDir).length, 0);
-    assert.equal((await call("GET", "/api/scans")).body.length, 0);
+    assert.equal((await call("GET", "/api/scans")).body.scans.length, 0);
     assert.equal(visionCalls(), 0);
     assert.equal((await call("GET", "/api/scans/capture-log")).body.dropped.length, 0);
   });

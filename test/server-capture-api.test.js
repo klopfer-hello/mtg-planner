@@ -43,6 +43,9 @@ before(async () => {
   const bolt = SCRYFALL_CARDS.find((c) => c.id === ID.lightning);
   const printing = { id: bolt.id, oracle_id: bolt.oracle_id, name: bolt.name, lang: "en", set_code: bolt.set, collector_number: bolt.collector_number, finishes: ["nonfoil", "foil"] };
   staged = stageScan(db, { status: "auto", printing, store: printing, finish: "normal", features: {} }, { imageDir: path.join(dir, "scans") }).scan;
+  // A second staged card, priced only by the card index (not in the app's cards table).
+  const indexed = { id: "idx-1", oracle_id: "o-1", name: "Index Card", lang: "en", set_code: "m15", collector_number: "1", finishes: ["nonfoil"] };
+  stageScan(db, { status: "auto", printing: indexed, store: indexed, finish: "normal", features: {} }, { imageDir: path.join(dir, "scans"), force: true });
   db.close();
 
   // a one-printing index, so /api/scan gets past "index still being built"
@@ -187,5 +190,25 @@ describe("record session API", () => {
     assert.equal((await call("DELETE", "/api/debug/sessions/a.b")).status, 400);
     assert.equal((await call("GET", "/api/debug/nope")).status, 404);
     assert.equal(existsSync(path.join(debugDir, "ok")), false);
+  });
+});
+
+describe("GET /api/scans prices", () => {
+  test("rows carry price_eur (index, else the cards table); the staged list carries totals", async () => {
+    const r = await call("GET", "/api/scans?status=staged");
+    assert.equal(r.status, 200);
+    const bolt = r.body.scans.find((x) => x.id === staged.id);
+    const idxRow = r.body.scans.find((x) => x.store_printing_id === "idx-1");
+    assert.equal(bolt.price_eur, 2); // not in the index: app cards table eur
+    assert.equal(idxRow.price_eur, 6.5); // index EUR
+    const copies = bolt.quantity + idxRow.quantity;
+    assert.deepEqual(r.body.totals, {
+      staged: { cards: 2, copies, value_eur: Math.round((bolt.quantity * 2 + idxRow.quantity * 6.5) * 100) / 100, unpriced: 0 },
+    });
+    const all = await call("GET", "/api/scans?status=all");
+    assert.equal(all.status, 200);
+    assert.equal(all.body.totals, undefined);
+    assert.equal(all.body.scans.length, 2);
+    assert.ok(all.body.scans.every((x) => typeof x.price_eur === "number"));
   });
 });

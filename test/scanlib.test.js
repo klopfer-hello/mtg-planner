@@ -5,7 +5,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  AutoCapture, CAPTURE_DEFAULTS, DET_STORAGE_KEY, SOUND_DEFAULTS, captureAdvice, chooseScanSound, createDetAnalyzer,
+  AutoCapture, CAPTURE_DEFAULTS, DET_BLANK_SHARP, DET_STORAGE_KEY, SOUND_DEFAULTS, captureAdvice, chooseScanSound, createDetAnalyzer,
   createScanSounds, glareMap, mapToPhoto, photoMapping, quadSize, scanDetVersion, warpQuad, workSize,
 } from "../public/scanlib.js";
 import { CaptureController, ProbeController } from "../public/capture.js";
@@ -357,6 +357,22 @@ describe("createDetAnalyzer", () => {
     assert.equal(o.corners, null);
     assert.equal(o.cardThumb, null);
     assert.equal(o.sharp, null);
+  });
+
+  test("a tracked outline with a blank strip (the empty scan box) is no card; a card in the same outline is", () => {
+    // a tracker that keeps reporting the box outline, as box mode does with a learned prior
+    const tracker = { update: () => ({ corners: boxQ.map(([x, y]) => [x * (480 / VW), y * (480 / VW)]), seen: true, found: true, accepted: true, stable: true, jitter: 0, drift: 0 }), reset() {} };
+    const { step } = rig({ tracker, glare: false });
+    const o = step(empty());
+    assert.ok(Number.isFinite(o.sharp) && o.sharp > 0 && o.sharp < DET_BLANK_SHARP, `empty box strip ${o.sharp}`);
+    assert.equal(o.blank, true);
+    assert.equal(o.found, false); assert.equal(o.accepted, false); assert.equal(o.stable, false);
+    assert.equal(o.corners, null); assert.equal(o.cardThumb, null);
+    assert.ok(o.rawCorners === null || o.rawCorners.length === 4);
+    const c = step(boxCard(70));
+    assert.ok(c.sharp >= DET_BLANK_SHARP, `card strip ${c.sharp}`);
+    assert.equal(c.blank, false);
+    assert.equal(c.found, true); assert.ok(c.corners && c.cardThumb);
   });
 
   test("hashCrop: 244x340 RGB from the full-res frame; same card ≈ 0, another card far", () => {

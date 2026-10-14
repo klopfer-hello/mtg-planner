@@ -817,8 +817,23 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
  *
  * @param {HTMLVideoElement|{videoWidth:number, videoHeight:number}} video
  * @param {object} [opts] {workShort, storage, makeCanvas (tests), prior/tracker (instances),
- *   priorOpts, trackerOpts, glare (true), glareDelayMs (800), glareEveryMs (1500), now}
+ *   priorOpts, trackerOpts, glare (true), glareDelayMs (800), glareEveryMs (1500), blankSharp (DET_BLANK_SHARP), now}
+ *
+ * An outline whose strip is blank (sharp < blankSharp) is reported as no card
+ * (found/accepted/stable false, corners/cardThumb null, blank true; sharp and
+ * rawCorners kept): the capture controller then asks for a card instead of
+ * calling the empty box "Too blurry".
  */
+/**
+ * Strip sharpness (Laplacian variance, full-res bottom 14 %, <= 640 px wide)
+ * below which a tracked outline holds no card: the outline of an empty scan
+ * box (box mode / learned prior) has a flat white bottom strip. Recorded
+ * session 2026-10-14 (1002 frames, 167 probes): the empty box read 7-19, every
+ * frame around a staged/same probe 163+ (p1 612, p50 1543), so the old
+ * "Too blurry" hint at the start was the empty box, not a blurry card.
+ */
+export const DET_BLANK_SHARP = 40;
+
 export function createDetAnalyzer(video, opts = {}) {
   const workShort = opts.workShort || CAPTURE_DEFAULTS.workShort;
   const mk = opts.makeCanvas || makeCanvas;
@@ -826,6 +841,7 @@ export function createDetAnalyzer(video, opts = {}) {
   const clock = opts.now || (() => (globalThis.performance ? performance.now() : Date.now()));
   const prior = opts.prior || new BoxPrior({ mode: "auto", ...(opts.priorOpts || {}) });
   const tracker = opts.tracker || new QuadTracker(opts.trackerOpts || {});
+  const blankSharp = opts.blankSharp ?? DET_BLANK_SHARP;
   const glareOn = opts.glare !== false, glareEveryMs = opts.glareEveryMs ?? 1500, glareDelayMs = opts.glareDelayMs ?? 800;
   const noGlare = () => ({ advice: null, code: "ok", regions: null });
   let work = null, strip = null, last = null, wasStable = false, runId = 0, addedRun = -1;
@@ -878,10 +894,14 @@ export function createDetAnalyzer(video, opts = {}) {
       if (!prior.active && tr.corners) prior.observe(tr.corners, W, H);
     }
     wasStable = Boolean(tr.stable);
-    const seen = Boolean(tr.corners && tr.seen && tr.found);
-    const corners = seen ? toVideo(tr.corners, s) : null;
+    const tracked = Boolean(tr.corners && tr.seen && tr.found);
+    const trackedV = tracked ? toVideo(tr.corners, s) : null;
     let sharp = null;
-    if (corners) { try { sharp = sharpness(vw, vh, corners); } catch { sharp = null; } }
+    if (trackedV) { try { sharp = sharpness(vw, vh, trackedV); } catch { sharp = null; } }
+    // sharpness() is 0 when the strip lies outside the frame: that is no measurement, not a blank card
+    const blank = tracked && Number.isFinite(sharp) && sharp > 0 && sharp < blankSharp;
+    const seen = tracked && !blank;
+    const corners = seen ? trackedV : null;
     const stable = Boolean(seen && tr.stable);
     if (!seen) glare = noGlare();
     else if (glareOn && stable && now - stableSince >= glareDelayMs && now - glareAt >= glareEveryMs) {
@@ -903,7 +923,7 @@ export function createDetAnalyzer(video, opts = {}) {
       mode: r.mode || "free", score: Number.isFinite(r.score) ? r.score : null,
       orientConf: Number.isFinite(r.orientConf) ? r.orientConf : null,
       thumb: frameThumb(img), cardThumb: seen ? quadThumb(img, tr.corners) : null,
-      sharp, glare, priorQuad: pq ? toVideo(pq, s) : null, priorLearned: Boolean(prior.active),
+      sharp, blank, glare, priorQuad: pq ? toVideo(pq, s) : null, priorLearned: Boolean(prior.active),
       now, ms: clock() - t0,
     };
   }

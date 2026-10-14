@@ -34,7 +34,7 @@ import {
 } from "./lib/backups.js";
 import {
   CONDITIONS, PROBE_SESSION_RE, ProbeRunner, ScanError, probeKey, captureLog, commitScans, createScanSlots, defaultImageDir, normFinish,
-  deleteScan, exportCalibration, getScan, incrementScan, listScans, recordTruth, scanImagePath, scanStripPath, stageScan, undoLast,
+  deleteScan, exportCalibration, getScan, incrementScan, listScans, priceScans, recordTruth, scanImagePath, scanStripPath, stageScan, undoLast,
   updateScan,
 } from "./lib/scans.js";
 import {
@@ -836,7 +836,10 @@ async function handleScanApi(req, res, url) {
   if (pathname === "/api/scans" && method === "GET") {
     const status = query.get("status") || "staged";
     if (!["staged", "committed", "all"].includes(status)) throw new HttpError(400, "status must be staged, committed or all");
-    return sendJson(res, 200, listScans(db, { status }));
+    // Rows carry price_eur; the staged list also its totals (the scanner's running value).
+    const scans = listScans(db, { status });
+    const totals = await priceScans(db, scans, { indexPrices: idx ? (items) => indexLookup("printingPricesEur", items) : null });
+    return sendJson(res, 200, status === "staged" ? { scans, totals: { staged: totals } } : { scans });
   }
   if (pathname === "/api/scans/undo" && method === "POST") return sendJson(res, 200, undoLast(db));
   if (pathname === "/api/scans/capture-log" && method === "GET") return sendJson(res, 200, captureLog(db));
@@ -1219,7 +1222,10 @@ async function handleApi(req, res, url) {
     if (handled !== null) return handled;
   }
 
-  if (pathname === "/api/stats" && method === "GET") return sendJson(res, 200, stats(db));
+  if (pathname === "/api/stats" && method === "GET") {
+    // ?binder= restricts the counts and value to that binder (exact, case-insensitive; '' = Unsorted).
+    return sendJson(res, 200, stats(db, { binder: query.has("binder") ? query.get("binder").slice(0, 200) : null }));
+  }
   if (pathname === "/api/query-help" && method === "GET") return sendJson(res, 200, { help: QUERY_HELP });
   if (pathname === "/api/collection" && method === "GET") return sendJson(res, 200, collectionRows(query));
   if ((m = /^\/api\/cards\/([0-9a-f-]{36})$/i.exec(pathname)) && method === "GET") {

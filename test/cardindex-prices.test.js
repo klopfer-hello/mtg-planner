@@ -11,7 +11,8 @@ import { DatabaseSync } from "node:sqlite";
 import { gzipSync } from "node:zlib";
 import os from "node:os";
 import path from "node:path";
-import { getPrinting, lookupCollector, openIndex, printingPriceEur, refreshIndex, storagePrinting } from "../lib/cardindex.js";
+import { getPrinting, lookupCollector, openIndex, printingPriceEur, printingPricesEur, refreshIndex, storagePrinting } from "../lib/cardindex.js";
+import { priceScans } from "../lib/scans.js";
 import { scanPriceEur } from "../lib/scanner.js";
 import { tempDb } from "./fixtures.js";
 
@@ -120,5 +121,55 @@ describe("scanPriceEur", () => {
     } finally {
       app.cleanup();
     }
+  });
+});
+
+describe("batch prices for the staged list", () => {
+  test("printingPricesEur: own price per finish, the English twin for other languages, unknown ids null", () => {
+    const out = printingPricesEur(idx, [
+      { id: "p-0001", finish: "foil" }, { id: "p-0002", finish: "normal" }, { id: "p-0003", finish: "etched" }, { id: "nope" }, { id: "p-0001" },
+    ]);
+    assert.deepEqual(out, [
+      { id: "p-0001", finish: "foil", eur: 7.25, en_id: null, en_eur: null },
+      { id: "p-0002", finish: "normal", eur: null, en_id: "p-0001", en_eur: 1.5 },
+      { id: "p-0003", finish: "etched", eur: 12, en_id: null, en_eur: null },
+      { id: "nope", finish: "normal", eur: null, en_id: null, en_eur: null },
+      { id: "p-0001", finish: "normal", eur: 1.5, en_id: null, en_eur: null },
+    ]);
+  });
+
+  test("priceScans: same order as scanPriceEur (index, cards, English twin), totals per quantity", async () => {
+    const app = tempDb();
+    try {
+      app.db.prepare("INSERT INTO cards (scryfall_id, oracle_id, name, prices, fetched_at) VALUES (?, ?, ?, ?, 'x')")
+        .run("p-0005", "o-No Prices", "No Prices", JSON.stringify({ eur: "3.10", usd: "9" }));
+      const rows = [
+        { id: 1, store_printing_id: "p-0001", finish: "foil", quantity: 2, match_status: "auto" },
+        { id: 2, store_printing_id: "p-0002", finish: "normal", quantity: 1, match_status: "suggest" },
+        { id: 3, store_printing_id: "p-0005", finish: "normal", quantity: 3, match_status: "auto" },
+        { id: 4, store_printing_id: "p-0005", finish: "foil", quantity: 1, match_status: "auto" },
+        { id: 5, store_printing_id: null, finish: "normal", quantity: 1, match_status: "failed" },
+      ];
+      const indexPrices = async (items) => printingPricesEur(idx, items);
+      const totals = await priceScans(app.db, rows, { indexPrices });
+      assert.deepEqual(rows.map((r) => r.price_eur), [7.25, 1.5, 3.1, null, null]);
+      assert.deepEqual(totals, { cards: 5, copies: 8, value_eur: 25.3, unpriced: 2 });
+
+      // Index unavailable: only the cards table prices
+      const fresh = rows.map(({ price_eur, ...r }) => r);
+      const t2 = await priceScans(app.db, fresh, { indexPrices: async () => { throw new Error("worker gone"); } });
+      assert.deepEqual(fresh.map((r) => r.price_eur), [null, null, 3.1, null, null]);
+      assert.equal(t2.value_eur, 9.3);
+      assert.deepEqual(await priceScans(app.db, []), { cards: 0, copies: 0, value_eur: 0, unpriced: 0 });
+    } finally {
+      app.cleanup();
+    }
+  });
+
+  test("printingPricesEur stays fast for a long staged list", () => {
+    const items = Array.from({ length: 600 }, (_, i) => ({ id: ["p-0001", "p-0002", "p-0003", "p-0005", `x-${i}`][i % 5], finish: "normal" }));
+    const t0 = performance.now();
+    assert.equal(printingPricesEur(idx, items).length, 600);
+    assert.ok(performance.now() - t0 < 500);
   });
 });

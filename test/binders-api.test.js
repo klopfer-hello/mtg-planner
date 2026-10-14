@@ -70,6 +70,20 @@ async function call(method, p, json, headers = {}) {
 const enc = encodeURIComponent;
 
 describe("binder API", () => {
+  test("GET /api/stats?binder= counts and values one binder (case-insensitive, empty = Unsorted)", async () => {
+    const all = (await call("GET", "/api/stats")).body;
+    assert.equal(all.binder, undefined);
+    assert.equal(all.total_cards, 6);
+    assert.equal(all.value_eur, 3 * 1.5 + 2 * 2 + 0.1);
+    const box = (await call("GET", "/api/stats?binder=box")).body;
+    assert.deepEqual([box.binder, box.total_cards, box.unique_cards, box.printings, box.value_eur], ["box", 3, 1, 1, 4.5]);
+    assert.equal(box.decks, all.decks);
+    assert.equal(box.collection_master, "manabox");
+    const unsorted = (await call("GET", "/api/stats?binder=")).body;
+    assert.deepEqual([unsorted.binder, unsorted.total_cards, unsorted.value_eur], ["", 1, 0.1]);
+    const none = (await call("GET", "/api/stats?binder=Nope")).body;
+    assert.deepEqual([none.total_cards, none.unique_cards, none.value_eur], [0, 0, 0]);
+  });
   test("GET /api/binders lists binders and the unsorted bucket; settings and stats expose the master", async () => {
     const { status, body } = await call("GET", "/api/binders");
     assert.equal(status, 200);
