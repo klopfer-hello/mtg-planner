@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { openDb } from "../lib/db.js";
+import { SCHEMA_VERSION, openDb } from "../lib/db.js";
 import { importManaBoxCsv } from "../lib/manabox.js";
 import { deckDetail } from "../lib/decks.js";
 import {
@@ -85,7 +85,7 @@ describe("migration", () => {
       const db = openDb(file);
       const cols = db.prepare("PRAGMA table_info(collection)").all().map((c) => c.name);
       assert.ok(cols.includes("source"));
-      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 7);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
       assert.deepEqual(db.prepare("SELECT name, origin FROM binders").all().map((r) => ({ ...r })), [{ name: "Trade", origin: "manabox" }], "v4 binders backfill");
       assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE name = 'meta'").get(), "v3 meta table");
       assert.ok(db.prepare("PRAGMA table_info(scans)").all().some((c) => c.name === "undo"));

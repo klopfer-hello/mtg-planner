@@ -115,13 +115,19 @@ describe("planner prompt", () => {
     }
   });
 
+  test("edits: exact change first, ask when unclear, no deleting", () => {
+    for (const s of ["edit_copies", "state the exact change", "from → to", "ask instead", "Never delete", "point the user to the app"]) {
+      assert.ok(PLANNER_PROMPT.includes(s), `prompt mentions ${s}`);
+    }
+  });
+
   test("asks for short phone-friendly answers", () => {
     assert.match(PLANNER_PROMPT, /1-2 short sentences/);
     assert.match(PLANNER_PROMPT, /3-5 short bullets/);
     assert.match(PLANNER_PROMPT, /No tables/);
     assert.match(PLANNER_PROMPT, /Never list the whole deck/);
     assert.match(PLANNER_PROMPT, /no text before or between tool calls/);
-    assert.ok(PLANNER_PROMPT.length < 2500, `prompt stays short (${PLANNER_PROMPT.length} chars)`);
+    assert.ok(PLANNER_PROMPT.length < 2700, `prompt stays short (${PLANNER_PROMPT.length} chars)`);
   });
 });
 
@@ -145,5 +151,29 @@ describe("stored answer", () => {
     assert.equal(r.error, null);
     assert.equal(r.text, "You own **1 Sol Ring**.");
     assert.equal(r.tools.length, 2);
+  });
+
+  test("the line announcing an edit_copies change stays, and its chip shows the change", async () => {
+    const announce = "Changing **2x Counterspell** (7ED #67, binder Blue) from English to German.";
+    const lines = [
+      { type: "system", subtype: "init", session_id: "s2" },
+      { type: "assistant", message: { content: [{ type: "text", text: announce }, {
+        type: "tool_use", name: "mcp__collection__edit_copies",
+        input: { card: "Counterspell", match: { set: "7ed", binder: "Blue" }, quantity: 2, set: { language: "de" } },
+      }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "Done: **Edit #3**." }] } },
+      { type: "result", subtype: "success", is_error: false, result: "Done.", session_id: "s2", total_cost_usd: 0.01 },
+    ];
+    const data = path.join(tmp, "stream-edit.jsonl");
+    writeFileSync(data, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    const bin = path.join(tmp, "fake-claude-edit");
+    writeFileSync(bin, `#!${process.execPath}\nprocess.stdin.resume();\nprocess.stdin.on("end", () => process.stdout.write(require("fs").readFileSync(${JSON.stringify(data)})));\n`);
+    chmodSync(bin, 0o755);
+    setEnv({ CLAUDE_BIN: bin });
+    const r = await runTurn({ prompt: "fix it" });
+    assert.equal(r.error, null);
+    assert.match(r.text, /^Changing \*\*2x Counterspell\*\* \(7ED #67, binder Blue\) from English to German\./);
+    assert.match(r.text, /Edit #3/);
+    assert.deepEqual(r.tools, [{ name: "collection.edit_copies", input: "2x Counterspell {set:7ed, binder:Blue} → language de" }]);
   });
 });

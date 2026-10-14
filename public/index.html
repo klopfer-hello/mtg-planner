@@ -600,6 +600,7 @@ ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
 .cam-result .body { gap: 2px; }
 .cam-result .head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .cam-result .head .badge { flex: none; }
+.cam-result .head .lang-tag { flex: none; background: rgba(255, 255, 255, .9); color: #222; }
 .cam-result .nm { font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .cam-result .sub { font-size: .78rem; color: #e6e4ee; }
 .cam-result .muted { color: #cfcdd8; }
@@ -793,6 +794,32 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 .list-row .sel-mark { position: static; width: 28px; height: 28px; background: var(--surface); border-color: var(--border); color: var(--accent-ink); }
 .list-row[aria-pressed="true"] { background: var(--accent-soft); }
 .move-btn { min-height: 40px; padding: 0 10px; }
+.row-acts { display: grid; gap: 4px; }
+.row-acts .btn { min-height: 34px; padding: 0 10px; justify-content: flex-start; }
+/* Printed language of a non-English copy (names stay English). */
+.lang-tag {
+  display: inline-flex; align-items: center; padding: 0 5px; border-radius: 5px; font-size: .7rem; font-weight: 800;
+  letter-spacing: .03em; line-height: 1.5; background: var(--accent-soft); color: var(--accent); white-space: nowrap; vertical-align: middle;
+}
+.tile .langs { position: absolute; right: 5px; top: 5px; display: flex; gap: 3px; }
+.tile .langs .lang-tag { background: rgba(15, 12, 30, .82); color: #fff; height: 20px; }
+.btn.danger-fill { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn.danger-fill:hover:not(:disabled) { background: var(--bad); filter: brightness(1.08); }
+.toast.over { z-index: 130; }
+@media (max-width: 400px) { .sel-del-label { display: none; } }
+.settings-h {
+  font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 800;
+  margin: 8px 2px -8px; display: flex; align-items: center; gap: 8px;
+}
+.settings-h::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.edit-diff { display: grid; gap: 4px; margin: 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); font-size: .88rem; }
+.edit-diff li { list-style: none; overflow-wrap: anywhere; }
+.edit-printing { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.edit-printing img, .edit-printing .ph { width: 56px; flex: none; aspect-ratio: 488 / 680; border-radius: 4.75% / 3.5%; background: var(--surface-2); object-fit: cover; }
+.change-item { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--border); min-width: 0; }
+.change-item:first-child { border-top: 0; }
+.change-item .sum { overflow-wrap: anywhere; }
+.change-item.undone .sum { text-decoration: line-through; color: var(--muted); }
 .radio-list { display: grid; gap: 8px; max-height: 46vh; max-height: 46dvh; overflow: auto; overscroll-behavior: contain; }
 .master-box { display: grid; gap: 8px; }
 .binder-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--border); }
@@ -1172,6 +1199,7 @@ const Icon = {
   zoomOut: () => <Svg><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5M8 11h6" /></Svg>,
   cart: () => <Svg><path d="M3 4h2l2.4 11h10.2L20 8H6.2" /><circle cx="9" cy="19.5" r="1.3" /><circle cx="17" cy="19.5" r="1.3" /></Svg>,
   box: () => <Svg><path d="M3 8l9-4 9 4v9l-9 4-9-4z" /><path d="M3 8l9 4 9-4M12 12v9" /></Svg>,
+  gear: () => <Svg><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></Svg>,
 };
 
 // ===========================================================================
@@ -1203,6 +1231,54 @@ function ErrorNotice({ error, onRetry, onDismiss }) {
 const SOURCE_BADGE = { manabox: "warn", claude: "accent", manual: "", scan: "ok", app: "accent" };
 function SourceBadge({ source }) {
   return <span className={`badge ${SOURCE_BADGE[source] ?? ""}`}>{source === "claude" ? "✦ claude" : source}</span>;
+}
+
+/** Small "IT" / "DE" tag for a copy printed in another language than English (names stay English). */
+function LangTag({ lang, title }) {
+  const l = String(lang || "").toLowerCase();
+  if (!l || l === "en") return null;
+  return <span className="lang-tag" title={title || `Printed in ${LANG_NAME[l] || l.toUpperCase()}`}>{l.toUpperCase()}</span>;
+}
+/** Distinct languages of a collection row: `languages` ("en,it" or an array) or `language`. */
+const rowLangs = (r) => {
+  const v = r?.languages ?? r?.language ?? "";
+  return [...new Set((Array.isArray(v) ? v : String(v).split(",")).map((x) => String(x).trim().toLowerCase()).filter((x) => x && x !== "en"))];
+};
+
+/**
+ * Toast for collection edits/deletes with Undo (POST /api/collection/edits/:id/undo).
+ * show({text, editId?}); onUndone runs after a successful undo. `portal` renders it on
+ * document.body above open sheets.
+ */
+function useEditToast(onUndone, { portal = false } = {}) {
+  const [t, setT] = useState(null); // {text, editId, ms}
+  const cb = useRef(onUndone);
+  cb.current = onUndone;
+  useEffect(() => {
+    if (!t) return;
+    const h = setTimeout(() => setT(null), t.ms || (t.editId ? 10000 : 4000));
+    return () => clearTimeout(h);
+  }, [t]);
+  const undo = async () => {
+    const id = t?.editId;
+    if (id == null) return;
+    setT({ text: "Undoing…", ms: 30000 });
+    try {
+      await api(`/api/collection/edits/${encodeURIComponent(id)}/undo`, { method: "POST" });
+      setT({ text: "Undone" });
+      cb.current?.();
+    } catch (e) {
+      setT({ text: e.data?.code === "conflict" ? "Can't undo: these copies changed since." : `Undo failed: ${e.message}`, ms: 6000 });
+    }
+  };
+  const el = t ? (
+    <div className={`toast${portal ? " over" : ""}`} role="status" aria-live="polite">
+      <span>{t.text}</span>
+      {t.editId != null && <button type="button" className="btn ghost sm" onClick={undo}><Icon.undo /> Undo</button>}
+      <button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setT(null)} style={{ textDecoration: "none" }}><Icon.close /></button>
+    </div>
+  ) : null;
+  return [setT, portal && el ? ReactDOM.createPortal(el, document.body) : el];
 }
 
 /**
@@ -1281,13 +1357,25 @@ const PRICE_KEYS = [
   ["usd", "USD", "$"], ["usd_foil", "USD foil", "$"], ["usd_etched", "USD etched", "$"],
 ];
 
+// Own price, else (EUR only) the English twin's `*_en` key the server copies in.
+const priceOf = (prices, k) => prices?.[k] ?? (k.startsWith("eur") ? prices?.[`${k}_en`] : null) ?? null;
+
 function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [attempt, setAttempt] = useState(0);
   const [moveRow, setMoveRow] = useState(null); // an owned row to move
   const [moved, setMoved] = useState(null); // confirmation text
+  const [editRow, setEditRow] = useState(null); // an owned row to edit (EditCopySheet)
+  const [deleteRow, setDeleteRow] = useState(null); // an owned row to delete (DeleteCopySheet)
   const [guarded, masterDialog] = useMasterConfirm();
+  const [showToast, toastEl] = useEditToast(() => { setAttempt((a) => a + 1); onChanged?.(); }, { portal: true });
+  const afterEdit = (text, editId) => {
+    setEditRow(null); setDeleteRow(null); setMoved(null);
+    showToast({ text, editId });
+    setAttempt((a) => a + 1);
+    onChanged?.();
+  };
   useEffect(() => {
     let alive = true;
     setError(null);
@@ -1340,10 +1428,12 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged }) {
             <section className="stack" aria-label="Prices">
               <h3>Prices</h3>
               <div className="row">
-                {PRICE_KEYS.filter(([k]) => card.prices?.[k] != null).map(([k, label, sym]) => (
-                  <span key={k} className="badge accent">{label} {sym}{Number(card.prices[k]).toFixed(2)}</span>
+                {PRICE_KEYS.filter(([k]) => priceOf(card.prices, k) != null).map(([k, label, sym]) => (
+                  <span key={k} className="badge accent" title={card.prices?.[k] == null ? "Price of the English printing (same set and number)" : undefined}>
+                    {label}{card.prices?.[k] == null ? " (EN)" : ""} {sym}{Number(priceOf(card.prices, k)).toFixed(2)}
+                  </span>
                 ))}
-                {!PRICE_KEYS.some(([k]) => card.prices?.[k] != null) && <span className="muted">No price data.</span>}
+                {!PRICE_KEYS.some(([k]) => priceOf(card.prices, k) != null) && <span className="muted">No price data.</span>}
               </div>
             </section>
 
@@ -1365,19 +1455,25 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged }) {
                 : (
                   <div className="table-wrap">
                     <table className="t">
-                      <thead><tr><th><span className="sr-only">Move</span></th><th>Set</th><th>Finish</th><th>Lang</th><th>Condition</th><th>Binder</th>{data.owned.some((r) => r.source) && <th>Source</th>}<th className="num">Qty</th></tr></thead>
+                      <thead><tr><th><span className="sr-only">Actions</span></th><th>Set</th><th>Finish</th><th>Lang</th><th>Condition</th><th>Binder</th>{data.owned.some((r) => r.source) && <th>Source</th>}<th className="num">Qty</th></tr></thead>
                       <tbody>
                         {data.owned.map((r, i) => (
                           <tr key={r.id ?? i} aria-current={r.scryfall_id === id || undefined}>
-                            <td style={{ paddingRight: 0 }}><button type="button" className="btn sm move-btn" onClick={() => { setMoved(null); setMoveRow(r); }}
-                              aria-label={`Move ${r.quantity > 1 ? "copies" : "copy"} of ${(r.set_code || "").toUpperCase()} #${r.collector_number} in ${r.binder || "Unsorted"} to another binder`}>Move…</button></td>
+                            <td style={{ paddingRight: 0 }}><div className="row-acts">
+                              <button type="button" className="btn sm move-btn" onClick={() => { setMoved(null); setMoveRow(r); }}
+                                aria-label={`Move ${r.quantity > 1 ? "copies" : "copy"} of ${(r.set_code || "").toUpperCase()} #${r.collector_number} in ${r.binder || "Unsorted"} to another binder`}>Move…</button>
+                              <button type="button" className="btn sm" onClick={() => { setMoved(null); setEditRow(r); }}
+                                aria-label={`Edit ${r.quantity > 1 ? "copies" : "copy"} of ${(r.set_code || "").toUpperCase()} #${r.collector_number} in ${r.binder || "Unsorted"}`}><Icon.edit /> Edit…</button>
+                              <button type="button" className="btn sm danger" onClick={() => { setMoved(null); setDeleteRow(r); }}
+                                aria-label={`Delete ${r.quantity > 1 ? "copies" : "copy"} of ${(r.set_code || "").toUpperCase()} #${r.collector_number} in ${r.binder || "Unsorted"}`}><Icon.trash /> Delete…</button>
+                            </div></td>
                             <td>
                               {r.scryfall_id === id
                                 ? <b title={r.set_name}>{(r.set_code || "").toUpperCase()} #{r.collector_number}</b>
                                 : <button type="button" className="linkbtn" title={`Show ${r.set_name}`} onClick={() => onOpenCard(r.scryfall_id)}>{(r.set_code || "").toUpperCase()} #{r.collector_number}</button>}
                             </td>
                             <td>{r.finish === "normal" ? "—" : r.finish}</td>
-                            <td>{(r.language || "").toUpperCase()}</td>
+                            <td>{r.language && r.language !== "en" ? <LangTag lang={r.language} /> : <span className="muted">EN</span>}</td>
                             <td>{conditionLabel(r.condition)}</td>
                             <td>{r.binder || <span className="muted">Unsorted</span>}</td>
                             {data.owned.some((x) => x.source) && <td>{r.source ? <SourceBadge source={r.source} /> : "—"}</td>}
@@ -1429,7 +1525,16 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged }) {
             return true;
           }} />
       )}
+      {editRow && card && (
+        <EditCopySheet card={card} row={editRow} onClose={() => setEditRow(null)}
+          onDone={(res) => afterEdit(`Edited ${plural(res?.edited_copies ?? editRow.quantity, "copy", "copies")}.`, res?.edit_id)} />
+      )}
+      {deleteRow && card && (
+        <DeleteCopySheet card={card} row={deleteRow} onClose={() => setDeleteRow(null)}
+          onDone={(res, n) => afterEdit(`Deleted ${plural(res?.deleted_copies ?? n, "copy", "copies")}.`, res?.edit_id)} />
+      )}
       {masterDialog}
+      {toastEl}
     </Sheet>
   );
 }
@@ -1517,7 +1622,8 @@ function QueryHelp() {
 function CardTile({ row, group, onOpen, selecting = false, selected = false, onToggle }) {
   // Badge text names the special finish(es) owned: "foil", "etched" or both.
   const foil = (row.finishes || "").split(",").filter((f) => f === "foil" || f === "etched").join(" · ");
-  const label = `${selecting ? "Select " : ""}${row.name}, ${row.qty} owned${row.price ? `, ${fmtPrice(row.price)}` : ""}`;
+  const langs = rowLangs(row);
+  const label = `${selecting ? "Select " : ""}${row.name}, ${row.qty} owned${langs.length ? ` (${langs.map((l) => l.toUpperCase()).join(", ")})` : ""}${row.price ? `, ${fmtPrice(row.price)}` : ""}`;
   return (
     <button type="button" className="tile" onClick={() => (selecting ? onToggle() : onOpen(row.scryfall_id))} aria-label={label}
       aria-pressed={selecting ? selected : undefined}>
@@ -1527,6 +1633,7 @@ function CardTile({ row, group, onOpen, selecting = false, selected = false, onT
           ? <img src={row.image_small} alt="" loading="lazy" decoding="async" width="146" height="204" />
           : <div className="ph">{row.name}</div>}
         {foil && <span className="foil" aria-hidden="true">✦ {foil}</span>}
+        {rowLangs(row).length > 0 && <span className="langs">{rowLangs(row).slice(0, 3).map((l) => <LangTag key={l} lang={l} />)}</span>}
         <span className="qty" aria-hidden="true">×{row.qty}</span>
       </div>
       <div className="cap" aria-hidden="true">
@@ -1547,7 +1654,7 @@ function CardListRow({ row, group, onOpen, selecting = false, selected = false, 
         ? <span className="sel-mark" aria-hidden="true">{selected && <Icon.check />}</span>
         : <span className="q">{row.qty}×</span>}
       <span className="main">
-        <span className="nm"><b>{row.name}</b> <ManaCost cost={row.mana_cost} /></span>
+        <span className="nm"><b>{row.name}</b> {rowLangs(row).map((l) => <LangTag key={l} lang={l} />)} <ManaCost cost={row.mana_cost} /></span>
         <span className="sub">{selecting ? `${row.qty}× · ` : ""}{row.type_line} · {where}</span>
       </span>
       <span className="end">
@@ -1570,8 +1677,7 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
   const binderList = useBinderList(dataVersion);
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState(() => new Map()); // key -> {key, oracle_id, scryfall_id, name}
-  const [sheet, setSheet] = useState(null); // "new" | "manage" | "move"
-  const [toast, setToast] = useState(null);
+  const [sheet, setSheet] = useState(null); // "new" | "manage" | "move" | "delete"
   const [guarded, masterDialog] = useMasterConfirm();
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(null);
@@ -1591,11 +1697,6 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
   }, [binderList.data, binder]);
   // Selection keys depend on the grouping and the binder scope.
   useEffect(() => { setSelected(new Map()); }, [group, binder]);
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 4000);
-    return () => clearTimeout(t);
-  }, [toast]);
 
   const load = useCallback(async (offset) => {
     const id = ++reqId.current;
@@ -1660,7 +1761,8 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
   });
   const stopSelecting = () => { setSelecting(false); setSelected(new Map()); };
   const binderName = binder == null ? null : binder || UNSORTED;
-  const afterChange = (text) => { if (text) setToast(text); binderList.reload(); onChanged?.(); };
+  const [showToast, toastEl] = useEditToast(() => { binderList.reload(); onChanged?.(); });
+  const afterChange = (text, editId = null) => { if (text) showToast({ text, editId }); binderList.reload(); onChanged?.(); };
 
   return (
     <div className="stack-lg">
@@ -1753,6 +1855,7 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
         <div className="commit-bar" role="region" aria-label="Selection">
           <span className="grow small">{selected.size ? plural(selected.size, group === "card" ? "card" : "printing") + " selected" : "Tap cards to select"}</span>
           <button type="button" className="btn ghost" onClick={selectPage} disabled={!rows.length}>{allOnPage ? "None" : "All"}</button>
+          <button type="button" className="btn danger" disabled={!selected.size} onClick={() => setSheet("delete")} aria-label="Delete the selected copies"><Icon.trash /><span className="sel-del-label"> Delete</span></button>
           <button type="button" className="btn primary" disabled={!selected.size} onClick={() => setSheet("move")}>Move to…</button>
         </div>
       )}
@@ -1773,13 +1876,16 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
             afterChange(`Moved ${plural(res.moved_copies, "copy", "copies")} to ${res.to_binder || UNSORTED}`);
           }} />
       )}
-      {masterDialog}
-      {toast && (
-        <div className="toast" role="status" aria-live="polite">
-          <span>{toast}</span>
-          <button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setToast(null)} style={{ textDecoration: "none" }}><Icon.close /></button>
-        </div>
+      {sheet === "delete" && (
+        <BulkDeleteSheet items={[...selected.values()]} group={group} binder={binder} onClose={() => setSheet(null)}
+          onDone={(res, n) => {
+            setSheet(null);
+            stopSelecting();
+            afterChange(`Deleted ${plural(res?.deleted_copies ?? n, "copy", "copies")}`, res?.edit_id ?? null);
+          }} />
       )}
+      {masterDialog}
+      {toastEl}
     </div>
   );
 }
@@ -3337,6 +3443,7 @@ function ImportSummary({ s }) {
     (s.added_copies ?? s.copies_added) != null && s.mode === "delta" ? [`+${fmtInt(s.added_copies ?? s.copies_added)}`, "Copies added"] : null,
     s.printings_added != null && s.mode !== "delta" ? [`+${fmtInt(s.printings_added)}`, "Printings added"] : null,
     s.kept_app_copies ? [fmtInt(s.kept_app_copies), "Already sorted here"] : null,
+    s.matched_edit_copies ? [fmtInt(s.matched_edit_copies), "Already edited here"] : null,
     s.printings_removed != null && s.mode !== "delta" ? [`−${fmtInt(s.printings_removed)}`, "Printings removed"] : null,
     s.printings_changed != null && s.mode !== "delta" ? [fmtInt(s.printings_changed), "Qty changed"] : null,
     (s.decreased_copies ?? s.copies_decreased) ? [`−${fmtInt(s.decreased_copies ?? s.copies_decreased)}`, "Fewer in ManaBox"] : null,
@@ -3388,6 +3495,7 @@ function MasterPanel({ master, busy, error, onSwitch }) {
           the last export, nothing is deleted. Cards you moved, scanned or sorted here are never touched by an import.
         </p>
       )}
+      {master && <span className="small">Default import mode: <b>{IMPORT_MODE_LABEL[master === "app" ? "delta" : "replace"]}</b></span>}
       <ErrorNotice error={error} />
       {master && (
         <div className="row">
@@ -3397,7 +3505,7 @@ function MasterPanel({ master, busy, error, onSwitch }) {
         </div>
       )}
       {master === "app" && (
-        <span className="small muted">Switching back only changes the default import mode to Replace. Cards already organised here stay in their binders and are not counted twice.</span>
+        <span className="small muted">Switching back only changes the default import mode to Replace. Cards organised or edited here stay where they are and are not counted twice; copies you deleted here come back if ManaBox still lists them.</span>
       )}
     </section>
   );
@@ -3566,7 +3674,7 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
   }, []);
   useEffect(loadMaster, [loadMaster, dataVersion]);
   const switchMaster = async (to) => {
-    if (to === "manabox" && !window.confirm("Make ManaBox the master again? The import mode defaults to Replace again, which replaces every card that came from ManaBox. Cards you organised here stay where they are; a replace counts them against the file instead of adding them again.")) return;
+    if (to === "manabox" && !window.confirm("Make ManaBox the master again? The import mode defaults to Replace again, which replaces every card that came from ManaBox. Cards you organised or edited here stay where they are; a replace counts them against the file instead of adding them again. Copies you deleted here come back if ManaBox still lists them.")) return;
     setMasterState({ busy: true, error: null });
     try {
       const d = await api("/api/settings", { method: "PATCH", json: { collection_master: to } });
@@ -3649,7 +3757,7 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
 
   return (
     <div className="stack-lg" style={{ maxWidth: 760 }}>
-      <div className="page-title"><h1>Import</h1></div>
+      <div className="page-title"><h1>Settings</h1></div>
       {restored && (
         <div className="notice ok" role="status">
           <span aria-hidden="true">✓</span>
@@ -3661,6 +3769,7 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
         </div>
       )}
 
+      <h2 className="settings-h" id="settings-import">Import</h2>
       <form className="card stack" onSubmit={submit} aria-labelledby="import-title" aria-busy={busy}>
         <h2 id="import-title">ManaBox collection CSV</h2>
         <Collapsible label="How to export from ManaBox">
@@ -3724,24 +3833,6 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
         )}
       </form>
 
-      <MasterPanel master={master} busy={masterState.busy} error={masterState.error} onSwitch={switchMaster} />
-
-      <section className="card stack" aria-labelledby="prices-title">
-        <h2 id="prices-title">Prices</h2>
-        <p className="small muted" style={{ margin: 0 }}>Imports already fetch current prices. Refresh in between to update prices and card data for everything you own and every deck card.</p>
-        <div className="row">
-          <button type="button" className="btn" onClick={refreshPrices} disabled={refresh.busy || busy}>
-            {refresh.busy ? <><span className="spinner" aria-hidden="true" /> Refreshing…</> : <><Icon.refresh /> Refresh prices</>}
-          </button>
-          {refresh.result && <span className="small" role="status">Refreshed {fmtInt(refresh.result.refreshed)} cards{refresh.result.not_found ? `, ${fmtInt(refresh.result.not_found)} not found` : ""}.</span>}
-        </div>
-        <ErrorNotice error={refresh.error} />
-      </section>
-
-      <ScannerIndexPanel health={health} />
-
-      <BackupPanel dataVersion={dataVersion} onRestored={onRestored} />
-
       <section className="card stack" aria-labelledby="history-title">
         <h2 id="history-title">Import history</h2>
         <ErrorNotice error={historyError} onRetry={loadHistory} />
@@ -3772,6 +3863,27 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
         )}
       </section>
 
+      <h2 className="settings-h" id="settings-collection">Collection</h2>
+      <MasterPanel master={master} busy={masterState.busy} error={masterState.error} onSwitch={switchMaster} />
+      <RecentChanges dataVersion={dataVersion} onChanged={onImported} />
+
+      <h2 className="settings-h" id="settings-backups">Backups</h2>
+      <BackupPanel dataVersion={dataVersion} onRestored={onRestored} />
+
+      <h2 className="settings-h" id="settings-data">Scanner &amp; data</h2>
+      <ScannerIndexPanel health={health} />
+      <section className="card stack" aria-labelledby="prices-title">
+        <h2 id="prices-title">Prices</h2>
+        <p className="small muted" style={{ margin: 0 }}>Imports already fetch current prices. Refresh in between to update prices and card data for everything you own and every deck card.</p>
+        <div className="row">
+          <button type="button" className="btn" onClick={refreshPrices} disabled={refresh.busy || busy}>
+            {refresh.busy ? <><span className="spinner" aria-hidden="true" /> Refreshing…</> : <><Icon.refresh /> Refresh prices</>}
+          </button>
+          {refresh.result && <span className="small" role="status">Refreshed {fmtInt(refresh.result.refreshed)} cards{refresh.result.not_found ? `, ${fmtInt(refresh.result.not_found)} not found` : ""}.</span>}
+        </div>
+        <ErrorNotice error={refresh.error} />
+      </section>
+
       <p className="footer-note">mtg-planner {health ? health.version : ""} · card data and images © Scryfall / Wizards of the Coast · unofficial fan tool</p>
     </div>
   );
@@ -3785,6 +3897,12 @@ const SCAN_LANGS = [
   ["en", "English"], ["de", "Deutsch"], ["fr", "Français"], ["it", "Italiano"], ["es", "Español"], ["pt", "Português"],
   ["ja", "日本語"], ["ko", "한국어"], ["ru", "Русский"], ["zhs", "简体中文"], ["zht", "繁體中文"],
 ];
+// Every language code Scryfall uses (owned copies can be any of them; the scanner reads SCAN_LANGS).
+const CARD_LANGS = [
+  ...SCAN_LANGS, ["he", "עברית"], ["la", "Latina"], ["grc", "Ancient Greek"], ["ar", "العربية"], ["sa", "Sanskrit"],
+  ["ph", "Phyrexian"], ["qya", "Quenya"],
+];
+const LANG_NAME = Object.fromEntries(CARD_LANGS);
 const CONDITIONS = [
   ["mint", "Mint", "M"], ["near_mint", "Near Mint", "NM"], ["excellent", "Excellent", "EX"], ["good", "Good", "GD"],
   ["light_played", "Light Played", "LP"], ["played", "Played", "PL"], ["poor", "Poor", "PR"],
@@ -3794,7 +3912,8 @@ const FINISH_LABEL = { nonfoil: "Non-foil", foil: "Foil", etched: "Etched" };
 const STATUS_LABEL = { auto: "✓ matched", suggest: "? confirm", review: "✗ pick", failed: "✗ unknown", duplicate: "= same as last" };
 const STATUS_COLOR = { auto: "#62d18d", suggest: "#f0c062", duplicate: "#f0c062", review: "#ff8274", failed: "#ff8274", error: "#ff8274" };
 // (Sound settings moved to mtg.scan.sound, see loadSoundSettings.)
-const SCAN_DEFAULTS = { storageLang: "en", foil: "auto", condition: "near_mint", setHint: "", auto: true, photo: true, calibration: false };
+// storageLang "scanned" (beta.4 default): the collection keeps the detected printing and its language.
+const SCAN_DEFAULTS = { storageLang: "scanned", foil: "auto", condition: "near_mint", setHint: "", auto: true, photo: true, calibration: false };
 
 /** Array from an API answer that may be a bare array or wrap it in a key. */
 const asList = (d, ...keys) => (Array.isArray(d) ? d : keys.map((k) => d?.[k]).find(Array.isArray) || []);
@@ -5037,7 +5156,9 @@ function ScanRow({ s, status, selected, onSelect, onPatch, onDelete, onIncrement
         </div>
         <div className="sub">
           {s.set_code && <span>{String(s.set_code).toUpperCase()} #{s.collector_number}</span>}
-          {(ld || ls) && <span className="badge" title="Detected language → stored language">{ld && ls && ld !== ls ? `${ld}→${ls}` : ls || ld}</span>}
+          {ld && ls && ld !== ls
+            ? <span className="badge" title="Detected language → stored language">{`${ld}→${ls}`}</span>
+            : <LangTag lang={ls || ld} />}
           {s.method && <span className="muted">{s.method}{typeof s.confidence === "number" ? ` ${Math.round(s.confidence * 100)}%` : ""}</span>}
           {"price_eur" in s && <span className="scan-price" title="EUR price of the stored printing and finish (each copy)">{s.price_eur == null ? "no price" : fmtEur(s.price_eur)}</span>}
         </div>
@@ -5079,6 +5200,9 @@ function ScanTab({ active, health, onCommitted }) {
   const [lib, setLib] = useState(null);
   const [libError, setLibError] = useState(null);
   const [settings, setSettings] = useState(() => ({ ...SCAN_DEFAULTS, ...(store.get("mtg.scan.settings", {}) || {}) }));
+  // One-time notice for users whose saved setting is the old default "Store as English".
+  const [langNotice, setLangNotice] = useState(() => (store.get("mtg.scan.settings", {}) || {}).storageLang === "en" && !store.get("mtg.scan.langNoticeSeen", false));
+  const closeLangNotice = () => { store.set("mtg.scan.langNoticeSeen", true); setLangNotice(false); };
   const [scans, setScans] = useState(null);
   const [scanTotals, setScanTotals] = useState(null); // GET /api/scans totals.staged (fallback for rows without price_eur)
   const [listError, setListError] = useState(null);
@@ -5589,7 +5713,7 @@ function ScanTab({ active, health, onCommitted }) {
       <div className="scan-main">
         {libError && <ErrorNotice error={libError} />}
         {scanner && scanner.index_ready === false && (
-          <div className="notice warn" role="status"><span aria-hidden="true">⏳</span><div className="grow">The card index is still being built. Scanning works once it's ready (see Import → Scanner index).</div></div>
+          <div className="notice warn" role="status"><span aria-hidden="true">⏳</span><div className="grow">The card index is still being built. Scanning works once it's ready (see Settings → Scanner &amp; data).</div></div>
         )}
         {scanner && (scanner.tesseract === false || scanner.djpeg === false) && (
           <div className="notice warn" role="status"><div className="grow">Text recognition is not installed on the server{scanner.tesseract === false ? " (tesseract missing)" : ""}{scanner.djpeg === false ? " (djpeg missing)" : ""}. Scans will be less accurate.</div></div>
@@ -5610,11 +5734,25 @@ function ScanTab({ active, health, onCommitted }) {
             ))}
           </div>
           <label className="sr-only" htmlFor="scan-lang">Store cards as language</label>
-          <select id="scan-lang" className="select" value={settings.storageLang} onChange={(e) => setSetting("storageLang", e.target.value)} title="Store scanned cards in this language">
+          <select id="scan-lang" className="select" value={settings.storageLang} onChange={(e) => { setSetting("storageLang", e.target.value); if (langNotice) closeLangNotice(); }}
+            title="Language the scanned cards are stored in">
+            <option value="scanned">Store as scanned</option>
             {SCAN_LANGS.map(([k, l]) => <option key={k} value={k}>Store as {l}</option>)}
           </select>
           <label className="switch"><input type="checkbox" checked={settings.auto} onChange={(e) => setSetting("auto", e.target.checked)} /> Auto-scan</label>
         </div>
+        {langNotice && settings.storageLang !== "scanned" && (
+          <div className="notice" role="status">
+            <span aria-hidden="true">✦</span>
+            <div className="grow stack" style={{ gap: 8 }}>
+              <span><b>New: store cards in the language they were scanned in.</b> An Italian card stays Italian in your collection (names stay English; a small “IT” shows the language). Right now every scan is stored as {LANG_NAME[settings.storageLang] || settings.storageLang}.</span>
+              <div className="row">
+                <button type="button" className="btn sm primary" onClick={() => { setSetting("storageLang", "scanned"); closeLangNotice(); }}>Store as scanned</button>
+                <button type="button" className="btn sm ghost" onClick={closeLangNotice}>Keep {LANG_NAME[settings.storageLang] || settings.storageLang}</button>
+              </div>
+            </div>
+          </div>
+        )}
         <details className="disclosure">
           <summary>More scan settings{settings.calibration ? " · calibration on" : ""}</summary>
           <div className="settings-grid">
@@ -5823,11 +5961,11 @@ function ResultCard({ busy, slow, last, busyPreview, queued = 0, compact = false
       {thumb ? <img className="th" src={thumb} alt="" /> : <span className="th" />}
       <div className="body">
         {compact ? (
-          <span className="head"><span className={`badge st-chip ${kind}`} title={STATUS_LABEL[kind] || kind}>{(STATUS_LABEL[kind] || kind).split(" ")[0]}</span><span className="nm" title={title}>{title}</span></span>
+          <span className="head"><span className={`badge st-chip ${kind}`} title={STATUS_LABEL[kind] || kind}>{(STATUS_LABEL[kind] || kind).split(" ")[0]}</span><span className="nm" title={title}>{title}</span>{showPrinting && <LangTag lang={ls || ld} />}</span>
         ) : (
           <>
             <span className="row" style={{ gap: 6 }}><span className={`badge st-chip ${kind}`}>{STATUS_LABEL[kind] || kind}</span>{r.claude_used && <span className="badge accent">✦ Claude</span>}</span>
-            <span className="nm">{title}</span>
+            <span className="nm">{title} {showPrinting && <LangTag lang={ls || ld} />}</span>
           </>
         )}
         {showPrinting && (
@@ -5923,9 +6061,12 @@ function useBinderList(dataVersion = 0) {
 }
 
 /**
- * Moves that touch ManaBox copies need the user's one-time OK (the server
+ * Moves and edits that touch ManaBox copies need the user's one-time OK (the server
  * answers 409 {code:'confirm_master'}). guarded(run) calls run(false), asks on
  * that 409, then calls run(true); it resolves null when the user cancels.
+ * Deletes answer 409 {code:'manabox_rows'} while ManaBox is the master: the same
+ * question; the retry's confirm_master flips the master to the app on the server
+ * (otherwise a replace import would bring the deleted copies back).
  */
 function useMasterConfirm() {
   const [ask, setAsk] = useState(null); // {copies, resolve}
@@ -5933,8 +6074,9 @@ function useMasterConfirm() {
     try {
       return await run(false);
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 409 && e.data?.code === "confirm_master")) throw e;
-      const ok = await new Promise((resolve) => setAsk({ copies: e.data.manabox_copies, resolve }));
+      const code = e instanceof ApiError && e.status === 409 ? e.data?.code : null;
+      if (code !== "confirm_master" && code !== "manabox_rows") throw e;
+      const ok = await new Promise((resolve) => setAsk({ copies: e.data.manabox_copies ?? e.data.copies, resolve }));
       setAsk(null);
       return ok ? run(true) : null;
     }
@@ -5951,7 +6093,7 @@ function MasterConfirmSheet({ copies, onAnswer }) {
         <ul className="small" style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 4 }}>
           <li>Cards you move here stay where you put them. A ManaBox import can't move them back.</li>
           <li>ManaBox imports only <b>add new copies</b> (compared with the last export) instead of replacing the collection.</li>
-          <li>A full replace stays possible in <b>Import</b>, behind a warning. You can switch back there too.</li>
+          <li>A full replace stays possible in <b>Settings → Import</b>, behind a warning. You can switch back in <b>Settings → Collection</b>.</li>
         </ul>
         <p className="small muted" style={{ margin: 0 }}>You are only asked once.</p>
         <div className="row">
@@ -6025,6 +6167,7 @@ function NewBinderSheet({ onClose, onCreated }) {
 /** Rename and delete binders. Delete asks what happens to the cards (Unsorted or delete). */
 function ManageBindersSheet({ data, onClose, onChanged }) {
   const [guarded, masterDialog] = useMasterConfirm();
+  const [toast, toastEl] = useEditToast(onChanged, { portal: true });
   const [editing, setEditing] = useState(null); // {name, value}
   const [deleting, setDeleting] = useState(null); // {binder, cards}
   const [busy, setBusy] = useState(false);
@@ -6046,7 +6189,11 @@ function ManageBindersSheet({ data, onClose, onChanged }) {
   };
   const remove = () => {
     const { binder, cards } = deleting;
-    run(() => guarded((confirm) => api(`/api/binders/${encodeURIComponent(binder.name)}?cards=${cards}${confirm ? "&confirm_master=1" : ""}`, { method: "DELETE" })));
+    run(async () => {
+      const r = await guarded((confirm) => api(`/api/binders/${encodeURIComponent(binder.name)}?cards=${cards}${confirm ? "&confirm_master=1" : ""}`, { method: "DELETE" }));
+      if (r?.edit_id != null) toast({ text: `Deleted “${binder.name}” and ${plural(r.deleted_copies ?? 0, "copy", "copies")}`, editId: r.edit_id });
+      return r;
+    });
   };
 
   return (
@@ -6071,7 +6218,7 @@ function ManageBindersSheet({ data, onClose, onChanged }) {
                       <label className="radio-card" style={canDelete ? undefined : { opacity: .6 }}>
                         <input type="radio" name="del-cards" disabled={!canDelete} checked={deleting.cards === "delete"} onChange={() => setDeleting({ ...deleting, cards: "delete" })} />
                         <span><b>Delete the cards too</b><br /><span className="small muted">
-                          {canDelete ? `Removes ${plural(b.copies, "copy", "copies")} from your collection.` : `Not possible: ${plural(mb, "copy", "copies")} came from ManaBox and ManaBox is the master. Delete them in ManaBox or keep them here.`}
+                          {canDelete ? `Removes ${plural(b.copies, "copy", "copies")} from your collection (undo in Settings → Collection → Recent changes).` : `Not possible: ${plural(mb, "copy", "copies")} came from ManaBox and ManaBox is the master. Delete them in ManaBox or keep them here.`}
                         </span></span>
                       </label>
                     </div>
@@ -6116,6 +6263,7 @@ function ManageBindersSheet({ data, onClose, onChanged }) {
         </p>
       </div>
       {masterDialog}
+      {toastEl}
     </Sheet>
   );
 }
@@ -6198,7 +6346,428 @@ function MoveSheet({ title, intro, maxQty = null, exclude = null, children, subm
 }
 
 // ===========================================================================
-// Scanner index (import tab)
+// Edit / delete owned copies (card sheet, collection Select mode) and the
+// edit log (Settings → Collection → Recent changes). Every edit and delete is
+// logged on the server and can be undone (POST /api/collection/edits/:id/undo).
+// ===========================================================================
+
+const COPY_FINISH_LABEL = { normal: "Non-foil", foil: "Foil", etched: "Etched" };
+// Index printings say "nonfoil", collection rows "normal".
+const collFinish = (f) => (f === "nonfoil" || !f ? "normal" : f);
+const FINISH_PRICE_KEY = { normal: "eur", foil: "eur_foil", etched: "eur_etched" };
+const copyLabel = (r) => `${(r.set_code || "").toUpperCase()} #${r.collector_number}`;
+
+/** EUR price of one copy of an owned row: the row's own price_eur, else the open card's price when it is that printing. */
+function rowUnitEur(card, r) {
+  if (typeof r.price_eur === "number" && Number.isFinite(r.price_eur)) return r.price_eur;
+  const prices = r.prices && typeof r.prices === "object" ? r.prices : card && r.scryfall_id === card.scryfall_id ? card.prices : null;
+  const v = prices?.[FINISH_PRICE_KEY[collFinish(r.finish)] || "eur"];
+  return v != null && Number.isFinite(Number(v)) ? Number(v) : null;
+}
+/** The row key the edit/delete/move endpoints take, plus the quantity. */
+const rowItem = (r, quantity) => ({
+  scryfall_id: r.scryfall_id, finish: r.finish, language: r.language, condition: r.condition, binder: r.binder ?? "",
+  ...(r.source ? { source: r.source } : {}), quantity,
+});
+
+function QtyStepper({ label, value, max, onChange }) {
+  return (
+    <div className="row between">
+      <span className="label">{label}</span>
+      <div className="stepper" role="group" aria-label={label}>
+        <button type="button" aria-label="One less" disabled={value <= 1} onClick={() => onChange(value - 1)} style={{ width: 44, height: 44 }}><Icon.minus /></button>
+        <output aria-live="polite">{value}</output>
+        <button type="button" aria-label="One more" disabled={value >= max} onClick={() => onChange(value + 1)} style={{ width: 44, height: 44 }}><Icon.plus /></button>
+      </div>
+    </div>
+  );
+}
+
+/** One owned row: "MOM #12 · IT · Foil · Near Mint · in Trade binder". */
+function CopyLine({ row, extra = null }) {
+  return (
+    <span className="small muted" style={{ overflowWrap: "anywhere" }}>
+      {copyLabel(row)} {row.language && row.language !== "en" ? <LangTag lang={row.language} /> : "· EN"} · {COPY_FINISH_LABEL[collFinish(row.finish)] || row.finish} · {conditionLabel(row.condition)} · in <b>{row.binder || UNSORTED}</b>
+      {row.source && <> <SourceBadge source={row.source} /></>}{extra}
+    </span>
+  );
+}
+
+/**
+ * Edit owned copies: language, printing (same card, picker with images), finish (only
+ * the printing's finishes), condition, and how many copies (a smaller number splits the row).
+ * ManaBox copies become app copies (confirm_master once, like a move).
+ */
+function EditCopySheet({ card, row, onClose, onDone }) {
+  const [guarded, masterDialog] = useMasterConfirm();
+  const origLang = row.language || "en";
+  const [lang, setLang] = useState(origLang);
+  const [pid, setPid] = useState(row.scryfall_id);
+  const [finish, setFinish] = useState(collFinish(row.finish));
+  const [condition, setCondition] = useState(row.condition || "near_mint");
+  const [qty, setQty] = useState(row.quantity);
+  const [prints, setPrints] = useState(null); // normPrinting[] of this card, every language
+  const [printsError, setPrintsError] = useState(null);
+  const [picked, setPicked] = useState({}); // printings chosen in the picker: id → normPrinting
+  const [picking, setPicking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    api(`/api/printings?${new URLSearchParams({ oracle_id: card.oracle_id })}`)
+      .then((d) => { if (alive) setPrints(asList(d, "printings", "rows").map(normPrinting).filter((p) => p && p.id)); })
+      .catch((e) => { if (alive) setPrintsError(e.status === 503 ? "The card index is not ready, so only this printing can be used." : e.message); });
+    return () => { alive = false; };
+  }, [card.oracle_id]);
+
+  const fromRow = { id: row.scryfall_id, set: String(row.set_code || "").toLowerCase(), cn: row.collector_number, set_name: row.set_name || "", lang: "", imgSmall: row.image_small, finishes: [] };
+  const byId = (id) => picked[id] || prints?.find((p) => p.id === id) || (id === row.scryfall_id ? fromRow : null);
+  const cur = byId(pid) || fromRow;
+  const orig = byId(row.scryfall_id) || fromRow;
+  const finishes = cur.finishes?.length ? [...new Set(cur.finishes.map(collFinish))] : [...new Set(["normal", "foil", collFinish(row.finish)])];
+  const effFinish = finishes.includes(finish) ? finish : finishes[0];
+  const pLabel = (p) => `${String(p.set || "").toUpperCase()} #${p.cn}${p.lang ? ` (${p.lang.toUpperCase()})` : ""}`;
+
+  // A new language switches to the same set + number in that language when the index has it.
+  const changeLang = (l) => {
+    setLang(l);
+    const sib = prints?.find((p) => p.lang === l && p.set === cur.set && String(p.cn) === String(cur.cn));
+    if (sib) setPid(sib.id);
+  };
+  const noSibling = prints && cur.lang && cur.lang !== lang;
+
+  const changes = [];
+  if (pid !== row.scryfall_id) changes.push(["Printing", pLabel(orig), pLabel(cur)]);
+  if (lang !== origLang) changes.push(["Language", LANG_NAME[origLang] || origLang.toUpperCase(), LANG_NAME[lang] || lang.toUpperCase()]);
+  if (effFinish !== collFinish(row.finish)) changes.push(["Finish", COPY_FINISH_LABEL[collFinish(row.finish)] || row.finish, COPY_FINISH_LABEL[effFinish] || effFinish]);
+  if (condition !== (row.condition || "near_mint")) changes.push(["Condition", conditionLabel(row.condition), conditionLabel(condition)]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!changes.length || busy) return;
+    const set = {};
+    if (lang !== origLang) set.language = lang;
+    if (pid !== row.scryfall_id) set.printing_id = pid;
+    if (effFinish !== collFinish(row.finish)) set.finish = effFinish;
+    if (condition !== (row.condition || "near_mint")) set.condition = condition;
+    setBusy(true); setError(null);
+    try {
+      const res = await guarded((confirm) => api("/api/collection/edit", { method: "POST", json: { items: [rowItem(row, qty)], set, confirm_master: confirm, actor: "app" } }));
+      if (res) onDone(res);
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <Sheet title={`Edit ${card.name}`} onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
+        <CopyLine row={row} extra={<> · {plural(row.quantity, "copy", "copies")}</>} />
+        <div className="field">
+          <span className="label" id="edit-printing-label">Printing</span>
+          <div className="edit-printing" aria-labelledby="edit-printing-label">
+            {cur.imgSmall || cur.img ? <img src={cur.imgSmall || cur.img} alt="" /> : <span className="ph" />}
+            <span className="grow" style={{ minWidth: 0 }}>
+              <b>{pLabel(cur)}</b><br /><span className="small muted" style={{ overflowWrap: "anywhere" }}>{cur.set_name}</span>
+            </span>
+            <button type="button" className="btn sm" onClick={() => setPicking(true)} disabled={Boolean(printsError)}>Change…</button>
+          </div>
+          {printsError && <span className="small muted">{printsError}</span>}
+        </div>
+        <div className="field">
+          <label htmlFor="edit-lang">Language</label>
+          <select id="edit-lang" className="select" value={lang} onChange={(e) => changeLang(e.target.value)}>
+            {CARD_LANGS.map(([k, l]) => <option key={k} value={k}>{l} ({k.toUpperCase()})</option>)}
+          </select>
+          {noSibling && <span className="small muted">The card index has no {LANG_NAME[lang] || lang} printing of {String(cur.set).toUpperCase()} #{cur.cn}. The copy keeps this printing and is marked {lang.toUpperCase()}.</span>}
+        </div>
+        <div className="field">
+          <span className="label" id="edit-finish-label">Finish</span>
+          <div className="segmented" role="group" aria-labelledby="edit-finish-label" style={{ justifySelf: "start" }}>
+            {finishes.map((f) => (
+              <button key={f} type="button" aria-pressed={effFinish === f} onClick={() => setFinish(f)}>{f !== "normal" && "✦ "}{COPY_FINISH_LABEL[f] || f}</button>
+            ))}
+          </div>
+          {finishes.length === 1 && cur.finishes?.length > 0 && <span className="small muted">This printing only exists as {COPY_FINISH_LABEL[finishes[0]] || finishes[0]}.</span>}
+        </div>
+        <div className="field">
+          <label htmlFor="edit-cond">Condition</label>
+          <select id="edit-cond" className="select" value={condition} onChange={(e) => setCondition(e.target.value)}>
+            {CONDITIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </div>
+        {row.quantity > 1 && (
+          <div className="stack" style={{ gap: 4 }}>
+            <QtyStepper label="Copies to change" value={qty} max={row.quantity} onChange={setQty} />
+            {qty < row.quantity && <span className="small muted">The other {plural(row.quantity - qty, "copy", "copies")} stay as they are.</span>}
+          </div>
+        )}
+        {changes.length > 0 && (
+          <ul className="edit-diff" aria-label="Changes">
+            {changes.map(([k, a, b]) => <li key={k}><b>{k}:</b> {a} → <b>{b}</b></li>)}
+          </ul>
+        )}
+        {row.source === "manabox" && changes.length > 0 && (
+          <span className="small muted">These copies came from ManaBox. After the edit they belong to mtg-planner, so a ManaBox import won't change them back.</span>
+        )}
+        <ErrorNotice error={error} />
+        <button type="submit" className="btn primary" disabled={!changes.length || busy}>
+          {busy ? "Saving…" : changes.length ? `Save: ${plural(qty, "copy", "copies")}` : "No changes"}
+        </button>
+      </form>
+      {picking && (
+        <PrintingPicker title={`Printing of ${card.name}`} oracleId={card.oracle_id} lang={lang} currentId={pid}
+          onClose={() => setPicking(false)}
+          onPick={(p) => {
+            setPicked((m) => ({ ...m, [p.id]: p }));
+            setPid(p.id);
+            if (p.lang) setLang(p.lang);
+            setPicking(false);
+          }} />
+      )}
+      {masterDialog}
+    </Sheet>
+  );
+}
+
+/** Delete owned copies of one row: 1st step shows what goes, 2nd a red "Delete N copies". */
+function DeleteCopySheet({ card, row, onClose, onDone }) {
+  const [guarded, masterDialog] = useMasterConfirm();
+  const [step, setStep] = useState(1);
+  const [qty, setQty] = useState(row.quantity);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const unit = rowUnitEur(card, row);
+  const what = plural(qty, "copy", "copies");
+  const run = async () => {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await guarded((confirm) => api("/api/collection/delete", { method: "POST", json: { items: [rowItem(row, qty)], confirm: true, expected_copies: qty, confirm_master: confirm } }));
+      if (res) onDone(res, qty);
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+  return (
+    <Sheet title={`Delete ${card.name}?`} onClose={onClose}>
+      <div className="stack">
+        <dl className="kv">
+          <dt>Card</dt><dd><b>{card.name}</b></dd>
+          <dt>Printing</dt><dd>{copyLabel(row)} {row.language && row.language !== "en" ? <LangTag lang={row.language} /> : "· EN"} · {COPY_FINISH_LABEL[collFinish(row.finish)] || row.finish} · {conditionLabel(row.condition)}</dd>
+          <dt>Binder</dt><dd>{row.binder || UNSORTED}{row.source && <> <SourceBadge source={row.source} /></>}</dd>
+          <dt>Copies</dt><dd>{step === 1 ? `${qty} of ${row.quantity}` : <b>{what}</b>}</dd>
+          <dt>Value</dt><dd>{unit == null ? "no price" : `${fmtEur(unit * qty)}${qty > 1 ? ` (${fmtEur(unit)} each)` : ""}`}</dd>
+        </dl>
+        {step === 1 ? (
+          <>
+            {row.quantity > 1 && <QtyStepper label="Copies to delete" value={qty} max={row.quantity} onChange={setQty} />}
+            {row.source === "manabox" && <span className="small muted">These copies came from ManaBox. If ManaBox is still the master you'll be asked to make mtg-planner the master first, so an import doesn't bring them back.</span>}
+            <div key="step1" className="row">
+              <button type="button" className="btn danger grow" onClick={() => setStep(2)}><Icon.trash /> Delete {what}…</button>
+              <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="notice error" role="alert">
+              <span aria-hidden="true">⚠️</span>
+              <div className="grow"><b>{what} of {card.name}</b> leave your collection. You can undo it right after, or later in Settings → Collection → Recent changes.</div>
+            </div>
+            <ErrorNotice error={error} />
+            {/* Own key + focus on Back: a held Enter on step 1's button must not also press this one. */}
+            <div key="step2" className="row">
+              <button type="button" className="btn danger-fill grow" disabled={busy} onClick={run}>
+                {busy ? "Deleting…" : <><Icon.trash /> Delete {what}</>}
+              </button>
+              <button type="button" className="btn ghost" disabled={busy} onClick={() => setStep(1)} autoFocus>Back</button>
+            </div>
+          </>
+        )}
+      </div>
+      {masterDialog}
+    </Sheet>
+  );
+}
+
+/**
+ * Delete every copy of the selected cards/printings (only those in `binder` when a binder
+ * filter is on). Counts the copies first (GET /api/cards/:id per selection, so copies a search
+ * hides are counted too); the 2nd step needs that number typed in.
+ */
+function BulkDeleteSheet({ items, group, binder, onClose, onDone }) {
+  const [guarded, masterDialog] = useMasterConfirm();
+  const [step, setStep] = useState(1);
+  const [count, setCount] = useState(null); // {copies, value, unpriced, manabox}
+  const [countError, setCountError] = useState(null);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [recount, setRecount] = useState(0);
+  const scoped = binder != null;
+  const itemsKey = items.map((i) => i.key || i.scryfall_id).join("|");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const queue = [...items];
+      let copies = 0, value = 0, unpriced = 0, manabox = 0;
+      const worker = async () => {
+        while (queue.length && alive) {
+          const it = queue.shift();
+          const d = await api(`/api/cards/${encodeURIComponent(it.scryfall_id)}`);
+          for (const r of asList(d?.owned)) {
+            if (group !== "card" && r.scryfall_id !== it.scryfall_id) continue;
+            if (scoped && !sameName(r.binder || "", binder) && !(binder === "" && !r.binder)) continue;
+            copies += r.quantity;
+            if (r.source === "manabox") manabox += r.quantity;
+            const u = rowUnitEur(d.card, r);
+            if (u == null) unpriced += r.quantity; else value += u * r.quantity;
+          }
+        }
+      };
+      try {
+        await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+        if (alive) setCount({ copies, value: Math.round(value * 100) / 100, unpriced, manabox });
+      } catch (e) { if (alive) setCountError(`Could not count the copies: ${e.message}`); }
+    })();
+    return () => { alive = false; };
+    // The parent passes a fresh array each render: count once per selection.
+  }, [itemsKey, group, binder, scoped, recount]); // eslint-disable-line react-hooks/exhaustive-deps
+  const n = count?.copies ?? 0;
+  const run = async () => {
+    if (busy || Number(typed) !== n) return;
+    setBusy(true); setError(null);
+    const from = scoped ? { from_binder: binder } : {};
+    const list = items.map((i) => (group === "card" && i.oracle_id ? { oracle_id: i.oracle_id, ...from } : { printing_id: i.scryfall_id, ...from }));
+    try {
+      const res = await guarded((confirm) => api("/api/collection/delete", { method: "POST", json: { items: list, confirm: true, expected_copies: n, confirm_master: confirm } }));
+      if (res) onDone(res, n);
+    } catch (err) {
+      if (err.data?.code === "changed") {
+        // Copies were added or removed since the count: nothing was deleted; count again.
+        setError(`The copies changed meanwhile (now ${plural(err.data.copies ?? 0, "copy", "copies")}); nothing was deleted. Check the new count.`);
+        setCount(null); setTyped(""); setStep(1); setRecount((x) => x + 1);
+      } else setError(err.message);
+    } finally { setBusy(false); }
+  };
+  const what = plural(items.length, group === "card" ? "card" : "printing");
+  return (
+    <Sheet title={`Delete ${what}?`} onClose={onClose}>
+      <div className="stack">
+        <span className="small" style={{ overflowWrap: "anywhere" }}>{items.slice(0, 6).map((i) => i.name).join(", ")}{items.length > 6 ? ` and ${items.length - 6} more` : ""}</span>
+        <span className="small muted">{scoped
+          ? `Only copies in ${binder || UNSORTED} are deleted.`
+          : `Every copy of the selected ${group === "card" ? "cards (all printings)" : "printings"} is deleted, from all binders, also copies your search hides.`}</span>
+        <ErrorNotice error={countError} />
+        {!count && !countError && <Spinner label="Counting copies…" />}
+        {count && (
+          <dl className="kv">
+            <dt>Copies</dt><dd><b>{fmtInt(n)}</b>{count.manabox ? <span className="muted"> ({fmtInt(count.manabox)} from ManaBox)</span> : null}</dd>
+            <dt>Value</dt><dd>{fmtEur(count.value)}{count.unpriced ? <span className="muted"> + {fmtInt(count.unpriced)} without a price</span> : null}</dd>
+          </dl>
+        )}
+        {count && n === 0 && <p className="muted" style={{ margin: 0 }}>Nothing to delete.</p>}
+        {step === 1 && <ErrorNotice error={error} />}
+        {step === 1 ? (
+          <div key="step1" className="row">
+            <button type="button" className="btn danger grow" disabled={!count || n === 0} onClick={() => setStep(2)}><Icon.trash /> Delete {count ? plural(n, "copy", "copies") : "copies"}…</button>
+            <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          </div>
+        ) : (
+          <>
+            <div className="notice error" role="alert">
+              <span aria-hidden="true">⚠️</span>
+              <div className="grow"><b>{plural(n, "copy", "copies")} leave your collection.</b> You can undo it right after, or later in Settings → Collection → Recent changes.</div>
+            </div>
+            <div className="field">
+              <label htmlFor="bulk-del-count">Type <b>{n}</b> to confirm</label>
+              <input id="bulk-del-count" className="input" style={{ fontSize: 16 }} inputMode="numeric" autoComplete="off" autoFocus
+                value={typed} onChange={(e) => setTyped(e.target.value.replace(/\D/g, ""))} placeholder={String(n)} />
+            </div>
+            <ErrorNotice error={error} />
+            <div key="step2" className="row">
+              <button type="button" className="btn danger-fill grow" disabled={busy || Number(typed) !== n || !typed} onClick={run}>
+                {busy ? "Deleting…" : <><Icon.trash /> Delete {plural(n, "copy", "copies")}</>}
+              </button>
+              <button type="button" className="btn ghost" disabled={busy} onClick={() => { setStep(1); setTyped(""); setError(null); }}>Back</button>
+            </div>
+          </>
+        )}
+      </div>
+      {masterDialog}
+    </Sheet>
+  );
+}
+
+const EDIT_KIND_LABEL = { edit: "edit", delete: "delete", relanguage: "language fix" };
+const EDIT_KIND_BADGE = { edit: "accent", delete: "bad", relanguage: "warn" };
+const EDIT_ACTOR_LABEL = { app: "you", claude: "✦ Claude", maintenance: "maintenance" };
+
+/** Settings → Collection: the edit log (GET /api/collection/edits) with Undo per entry. */
+function RecentChanges({ dataVersion, onChanged }) {
+  const [edits, setEdits] = useState(null);
+  const [error, setError] = useState(null);
+  const [missing, setMissing] = useState(false);
+  const [busy, setBusy] = useState(null); // edit id being undone
+  const [rowError, setRowError] = useState(null); // {id, text}
+  const [all, setAll] = useState(false);
+  const load = useCallback(() => {
+    api("/api/collection/edits?limit=50")
+      .then((d) => { setEdits(asList(d, "edits")); setError(null); })
+      .catch((e) => { if (e.status === 404) setMissing(true); else setError(`Could not load recent changes: ${e.message}`); });
+  }, []);
+  useEffect(load, [load, dataVersion]);
+  const undo = async (ed) => {
+    if (!window.confirm(`Undo this change?\n\n${ed.summary}\n\nAn undo can't be redone.`)) return;
+    setBusy(ed.id); setRowError(null);
+    try {
+      await api(`/api/collection/edits/${encodeURIComponent(ed.id)}/undo`, { method: "POST" });
+      onChanged?.();
+      load();
+    } catch (e) {
+      setRowError({ id: ed.id, text: e.data?.code === "conflict" ? "Can't undo: these copies were changed again since. Undo the newer change first." : e.message });
+    } finally { setBusy(null); }
+  };
+  if (missing) return null;
+  const shown = edits ? (all ? edits : edits.slice(0, 8)) : [];
+  return (
+    <section className="card stack" aria-labelledby="changes-title">
+      <h2 id="changes-title">Recent changes</h2>
+      <p className="small muted" style={{ margin: 0 }}>Copies you (or Claude) edited or deleted. Undo puts them back exactly as they were.</p>
+      <ErrorNotice error={error} onRetry={load} />
+      {!edits && !error && <Spinner />}
+      {edits && edits.length === 0 && <p className="muted small" style={{ margin: 0 }}>No changes yet.</p>}
+      {shown.length > 0 && (
+        <div>
+          {shown.map((ed) => (
+            <div key={ed.id} className={`change-item${ed.undone_at ? " undone" : ""}`}>
+              <div className="row between" style={{ gap: 6 }}>
+                <span className="row small" style={{ gap: 6 }}>
+                  <span className={`badge ${EDIT_KIND_BADGE[ed.kind] || ""}`}>{EDIT_KIND_LABEL[ed.kind] || ed.kind}</span>
+                  <span className="muted">{EDIT_ACTOR_LABEL[ed.actor] || ed.actor}</span>
+                  <span className="muted nowrap" title={fmtDate(ed.at)}>{fmtAgo(ed.at)}</span>
+                  {ed.copies != null && <span className="muted nowrap">· {plural(ed.copies, "copy", "copies")}</span>}
+                </span>
+                {ed.undone_at
+                  ? <span className="badge" title={fmtDate(ed.undone_at)}>undone</span>
+                  : ed.undoable && (
+                    <button type="button" className="btn sm" disabled={busy != null} onClick={() => undo(ed)}>
+                      {busy === ed.id ? "Undoing…" : <><Icon.undo /> Undo</>}
+                    </button>
+                  )}
+              </div>
+              <span className="small sum">{ed.summary}</span>
+              {!ed.undone_at && !ed.undoable && ed.reason && <span className="small muted">{ed.reason}</span>}
+              {rowError?.id === ed.id && <span className="small" role="alert" style={{ color: "var(--bad)" }}>{rowError.text}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {edits && edits.length > 8 && (
+        <button type="button" className="btn ghost sm" style={{ justifySelf: "start" }} onClick={() => setAll(!all)}>{all ? "Show fewer" : `Show all ${edits.length}`}</button>
+      )}
+    </section>
+  );
+}
+
+// ===========================================================================
+// Scanner index (Settings tab)
 // ===========================================================================
 
 function JobLine({ label, job }) {
@@ -6355,7 +6924,8 @@ const TABS = [
   { id: "collection", label: "Collection", icon: Icon.collection },
   { id: "decks", label: "Decks", icon: Icon.decks },
   { id: "planner", label: "Planner", icon: Icon.planner },
-  { id: "import", label: "Import", icon: Icon.import },
+  // Settings (beta.4: was "Import"); the id stays "import" for saved tabs and #import links.
+  { id: "import", label: "Settings", icon: Icon.gear },
 ];
 const isTab = (t) => TABS.some((x) => x.id === t);
 

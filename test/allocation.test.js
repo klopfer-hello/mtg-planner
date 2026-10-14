@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { openDb } from "../lib/db.js";
+import { SCHEMA_VERSION, openDb } from "../lib/db.js";
 import {
   allocation, cardUsage, deckDetail, deckToText, listDecks, saveDeck, saveDeckRows, setDeckStatus, shoppingList,
 } from "../lib/decks.js";
@@ -45,7 +45,7 @@ describe("migrations v5/v6 from a v4 database", () => {
 
     for (let i = 0; i < 2; i++) {
       const db = openDb(ctx.file);
-      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 7);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
       const snap = db.prepare("SELECT scryfall_id, lower(binder) AS b, quantity FROM manabox_snapshot ORDER BY scryfall_id, b").all().map((r) => ({ ...r }));
       assert.deepEqual(snap, [
         { scryfall_id: ID.sol, b: "box", quantity: 3 },

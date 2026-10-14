@@ -14,8 +14,9 @@ import path from "node:path";
 import { SCHEMA_VERSION, cardPrice, getAppMeta, openDb, setAppMeta, stats } from "./lib/db.js";
 import { QUERY_HELP, searchCollection } from "./lib/query.js";
 import { IMPORT_MODES, importManaBoxCsv, refreshOwnedCards } from "./lib/manabox.js";
+import { syncEnglishPrices } from "./lib/prices.js";
 import {
-  DECK_STATUSES, DeckError, cardUsage, deckDetail, exportDeck, listDecks, normalizeFormat, parseDecklist, saveDeck, setCommander,
+  DECK_STATUSES, DeckError, cardUsage, deckDetail, eurForFinish, exportDeck, listDecks, normalizeFormat, parseDecklist, saveDeck, setCommander,
   shoppingList, updateDeckCard,
 } from "./lib/decks.js";
 import * as claudeLib from "./lib/claude.js";
@@ -41,6 +42,7 @@ import {
   BinderError, collectionMaster, createBinder, deckToBinder, defaultImportMode, deleteBinder, listBinders, moveCopies, renameBinder,
   setCollectionMaster,
 } from "./lib/binders.js";
+import { deleteCopies, editCopies, listEdits, relanguageScans, undoEdit } from "./lib/edits.js";
 
 const PORT = Number(process.env.PORT) || 8080;
 const STATIC_DIR = path.resolve(process.env.STATIC_DIR || "/app/public");
@@ -55,7 +57,8 @@ const INCREMENT_LIMIT = 16 * 1024;
 // Record session frame upload: ≤ 300 KB JPEG as base64 plus a decision record.
 const DEBUG_FRAME_LIMIT = 512 * 1024;
 const SCAN_MAX_CONCURRENT = Math.max(1, Number(process.env.SCAN_MAX_CONCURRENT) || 2);
-const STORAGE_LANGS = ["en", "de", "fr", "it", "es", "pt", "ja", "ko", "ru", "zhs", "zht"];
+// "scanned" (indexModule.STORE_AS_SCANNED, the default): keep the detected printing and its language.
+const STORAGE_LANGS = [indexModule.STORE_AS_SCANNED, "en", "de", "fr", "it", "es", "pt", "ja", "ko", "ru", "zhs", "zht"];
 const INDEX_FILE = process.env.INDEX_DB_FILE || "/data/cardindex.db";
 // Declared JPEG size caps for uploads (djpeg writes the full declared raster).
 const MAX_CARD_PIXELS = 6_000_000; // the browser sends 1000x1400
@@ -209,11 +212,11 @@ function cardDetail(id) {
   card.price = cardPrice(card);
   const owned = db.prepare(
     `SELECT col.id, c.scryfall_id, c.set_code, c.set_name, c.collector_number, col.finish, col.language,
-            col.condition, col.binder, col.source, col.quantity, c.image_small
+            col.condition, col.binder, col.source, col.quantity, c.image_small, c.prices
        FROM collection col JOIN cards c ON c.scryfall_id = col.scryfall_id
       WHERE c.oracle_id = ?
       ORDER BY c.set_code, c.collector_number, col.finish, col.binder COLLATE NOCASE, col.source`,
-  ).all(card.oracle_id);
+  ).all(card.oracle_id).map(({ prices, ...r }) => ({ ...r, price_eur: eurForFinish(prices, r.finish) })); // EUR per copy (English twin fallback)
   const decks = db.prepare(
     `SELECT d.id, d.name, d.status, dc.board, SUM(dc.quantity) AS quantity
        FROM deck_cards dc JOIN decks d ON d.id = dc.deck_id
@@ -233,7 +236,35 @@ let importBusy = false;
 async function exclusive(fn) {
   if (importBusy) throw new HttpError(409, "Another import or price refresh is running");
   importBusy = true;
-  try { return await fn(); } finally { importBusy = false; }
+  try { return await fn(); } finally { importBusy = false; scheduleEnglishPrices(); }
+}
+
+// Foreign printings are valued at their English twin's EUR price when they
+// have none (lib/prices.js): the twin prices are copied into the card rows
+// after every collection write (exclusive), index job, chat turn (Claude can
+// edit copies) and at boot. Debounced, in the background, one batched index
+// call through the matcher worker; skipped while a write or restore runs.
+let englishPricesTimer = null;
+let englishPricesRunning = false;
+function scheduleEnglishPrices(delay = 1000) {
+  if (shuttingDown) return;
+  clearTimeout(englishPricesTimer);
+  englishPricesTimer = setTimeout(runEnglishPrices, delay);
+  englishPricesTimer.unref?.();
+}
+async function runEnglishPrices() {
+  if (shuttingDown) return;
+  if (importBusy || restoring || englishPricesRunning) return scheduleEnglishPrices(5000);
+  englishPricesRunning = true;
+  try {
+    const conn = db;
+    const r = await syncEnglishPrices(conn, { indexPrices: idx ? (items) => indexLookup("printingPricesEur", items) : null });
+    if (r.updated) console.log(`[prices] English twin prices: ${r.updated} of ${r.checked} foreign printings updated${r.index ? "" : " (cards table only)"}`);
+  } catch (err) {
+    console.warn(`[prices] English twin prices: ${err.message}`);
+  } finally {
+    englishPricesRunning = false;
+  }
 }
 
 /**
@@ -447,6 +478,7 @@ async function postMessage(req, res, chatId) {
   } finally {
     runs.delete(chatId);
     clearInterval(keepAlive);
+    scheduleEnglishPrices();
   }
 
   try {
@@ -483,6 +515,9 @@ function scanErr(err) {
   return err;
 }
 const scanCall = (fn) => { try { return fn(); } catch (err) { throw scanErr(err); } };
+
+/** Card index lookup for lib/edits.js (printing facts: oracle, language, finishes), or null without an index. */
+const editPrintingLookup = () => (idx ? (id) => indexLookup("getPrinting", id) : null);
 
 function requireIndex() {
   if (!idx) throw new HttpError(503, "The card index is not available");
@@ -589,6 +624,7 @@ function startIndexJob(kind, { then = null } = {}) {
     indexJob.controller = null;
     indexReadyCache = false;
     setCodesCache = null;
+    scheduleEnglishPrices();
   });
   // [JOB_DONE] settles when this job and its follow-up (`then`) are finished; it
   // rejects when either fails. Not enumerable: state is sent to the UI as JSON.
@@ -641,7 +677,7 @@ function decodeImage(v, field, { required = true, maxPixels } = {}) {
 
 function scanSettings(raw = {}) {
   if (raw == null || typeof raw !== "object" || Array.isArray(raw)) throw new HttpError(400, "settings must be an object");
-  const storageLang = raw.storageLang ?? "en";
+  const storageLang = raw.storageLang ?? indexModule.STORE_AS_SCANNED;
   if (!STORAGE_LANGS.includes(storageLang)) throw new HttpError(400, `settings.storageLang must be one of ${STORAGE_LANGS.join(", ")}`);
   const foil = raw.foil ?? "auto";
   if (!["auto", "foil", "nonfoil"].includes(foil)) throw new HttpError(400, "settings.foil must be auto, foil or nonfoil");
@@ -808,7 +844,7 @@ async function postManualScan(req) {
   try { variants = (await indexLookup("variantsOf", printing)).map((p) => printingSummary(p)); } catch { variants = []; }
   const result = {
     status: "manual", printing, store, finish, finishSource: "user", method: "manual", confidence: 1,
-    candidates: [], variants, quantity, features: { manual: true },
+    candidates: [], variants, quantity, features: { manual: true, settings: { storageLang: settings.storageLang } },
   };
   const staged = scanCall(() => stageScan(db, result, { force: true, condition: settings.condition }));
   // Keep the chosen finish even when it is not listed (the row is the user's call).
@@ -1120,6 +1156,7 @@ async function restoreBackup({ name = null, upload = null }) {
     importBusy = false;
     restoring = false;
     backupBusy = false;
+    scheduleEnglishPrices();
   }
 }
 
@@ -1269,6 +1306,38 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/collection/move" && method === "POST") {
     const body = await readJson(req);
     return sendJson(res, 200, await exclusive(async () => scanCall(() => moveCopies(db, body))));
+  }
+  // Edit / delete owned copies, the edit log and its undo (lib/edits.js). Like moves they wait
+  // for imports and price refreshes (exclusive) and run in one transaction each.
+  if (pathname === "/api/collection/edit" && method === "POST") {
+    const body = await readJson(req);
+    if (body.actor !== undefined && body.actor !== "app") throw new HttpError(400, 'actor must be "app"');
+    return sendJson(res, 200, await exclusive(() => editCopies(db, {
+      items: body.items, set: body.set, confirm_master: body.confirm_master === true, actor: "app",
+    }, { getPrinting: editPrintingLookup() }).catch((err) => { throw scanErr(err); })));
+  }
+  if (pathname === "/api/collection/delete" && method === "POST") {
+    const body = await readJson(req);
+    if (body.actor !== undefined && body.actor !== "app") throw new HttpError(400, 'actor must be "app"');
+    return sendJson(res, 200, await exclusive(async () => scanCall(() => deleteCopies(db, {
+      items: body.items, confirm: body.confirm, expected_copies: body.expected_copies ?? null,
+      confirm_master: body.confirm_master === true, actor: "app",
+    }))));
+  }
+  if (pathname === "/api/collection/edits" && method === "GET") {
+    return sendJson(res, 200, { edits: listEdits(db, { limit: query.get("limit") || 50 }) });
+  }
+  if ((m = /^\/api\/collection\/edits\/(\d+)\/undo$/.exec(pathname))) {
+    if (method !== "POST") throw new HttpError(405, "Method not allowed");
+    const id = Number(m[1]);
+    return sendJson(res, 200, await exclusive(async () => scanCall(() => undoEdit(db, id))));
+  }
+  if (pathname === "/api/maintenance/relanguage-scans" && method === "POST") {
+    const body = await readJson(req);
+    const dryRun = body.dry_run === undefined ? true : body.dry_run;
+    return sendJson(res, 200, await exclusive(() => relanguageScans(db, { scan_ids: body.scan_ids, dry_run: dryRun }, {
+      getPrinting: editPrintingLookup(),
+    }).catch((err) => { throw scanErr(err); })));
   }
   if (pathname === "/api/refresh-prices" && method === "POST") {
     const result = await exclusive(() => refreshOwnedCards(db).catch((err) => { throw importError(err); }));
@@ -1501,7 +1570,10 @@ server.listen(PORT, () => {
     matcher.whenReady(10 * 60 * 1000).then((ok) => {
       const st = matcher.status();
       if (ok) console.log(`[scanner] matcher ready: ${st.size} fingerprints, load ${st.load_ms} ms, ready after ${st.ready_ms} ms${st.backfill ? ` (backfilled ${st.backfill.updated} in ${st.backfill.ms} ms)` : ""}`);
+      scheduleEnglishPrices();
     });
+  } else {
+    scheduleEnglishPrices(5000);
   }
 });
 

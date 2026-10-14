@@ -4,7 +4,7 @@
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { openDb, migrate } from "../lib/db.js";
+import { SCHEMA_VERSION, openDb, migrate } from "../lib/db.js";
 import { importManaBoxCsv } from "../lib/manabox.js";
 import { searchCollection } from "../lib/query.js";
 import {
@@ -44,7 +44,7 @@ describe("migration v4", () => {
     migrate(ctx.db);
     const b = () => ctx.db.prepare("SELECT name, origin FROM binders ORDER BY name").all().map((r) => ({ ...r }));
     assert.deepEqual(b(), [{ name: "Box", origin: "app" }, { name: "Trade", origin: "manabox" }]);
-    assert.equal(ctx.db.prepare("PRAGMA user_version").get().user_version, 7);
+    assert.equal(ctx.db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
     migrate(ctx.db);
     ctx.db.close();
     ctx.db = openDb(ctx.file);
@@ -196,6 +196,13 @@ describe("rename / delete", () => {
     seed([[ID.forest, 1, { binder: "L", source: "scan" }], [ID.forest, 1, { binder: "L" }]]);
     assert.equal(deleteBinder(ctx.db, "L", { source: "scan" }).deleted, 1);
     assert.throws(() => deleteBinder(ctx.db, "L", { source: "manabox" }), (e) => e.status === 400);
+  });
+
+  test("delete cards with confirm_master flips the master to the app (like POST /api/collection/delete)", () => {
+    seed([[ID.sol, 2, { binder: "A" }]]);
+    const r = deleteBinder(ctx.db, "A", { cards: "delete", confirm_master: true });
+    assert.deepEqual([r.deleted_copies, r.collection_master], [2, "app"]);
+    assert.deepEqual(summary(), { named: [], unsorted: 0 });
   });
 });
 
