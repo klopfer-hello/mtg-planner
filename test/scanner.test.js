@@ -39,7 +39,7 @@ process.env.CLAUDE_BIN = fakeBin;
 process.env.CLAUDE_CODE_OAUTH_TOKEN = "test-token-not-real";
 process.env.CLAUDE_MAX_CONCURRENT = "2";
 
-const { identify, identifyOriented, decideFinish, DEFAULT_THRESHOLDS, verifyClaude, resetLangGuess } = await import("../lib/scanner.js");
+const { identify, identifyOriented, decideFinish, finishFromLine, DEFAULT_THRESHOLDS, verifyClaude, resetLangGuess } = await import("../lib/scanner.js");
 // The speculative title language follows the last collector line: start every test from English.
 beforeEach(() => resetLangGuess());
 const { createHourlyCap, parseJsonReply, runVision, activeClaudeRuns, SCAN_PROMPT } = await import("../lib/claude.js");
@@ -291,6 +291,44 @@ describe("identify: finish rules", () => {
     const { r } = await run({ line, title: "Sword of Forge and Frontier", settings: { foil: "nonfoil" } });
     assert.equal(r.finish, "foil");
     assert.equal(r.finishSource, "finishes");
+  });
+
+  test("★ counts when the card was found by title/fingerprint and the line's set fits", async () => {
+    // number misread (no collector hit), set code read: beta.1 dropped this ★ (finish from the toggle)
+    const line = modernLine({ number: "999", numberCandidates: ["999"], separator: "star", separatorConfidence: 0.9 });
+    const { r } = await run({ line, title: "Shivan Devastator" });
+    assert.equal(r.printing.id, "dmu-107-en");
+    assert.equal(r.finish, "foil");
+    assert.equal(r.finishSource, "star");
+    // a line of another set says nothing about this card
+    const other = modernLine({ number: "999", numberCandidates: ["999"], setCandidates: [{ code: "one", score: 1, cost: 0 }], separator: "star", separatorConfidence: 0.9 });
+    const o = await run({ line: other, title: "Shivan Devastator" });
+    assert.equal(o.r.printing.id, "dmu-107-en");
+    assert.equal(o.r.finishSource, "toggle");
+  });
+
+  test("features.collector keeps the classifier's why/cap/fill", async () => {
+    const line = modernLine({ separator: "star", separatorConfidence: 0.9, separatorWhy: null, separatorCap: 22, separatorFill: 0.5 });
+    const { r } = await run({ line, title: "Shivan Devastator" });
+    assert.equal(r.features.collector.separatorCap, 22);
+    assert.equal(r.features.collector.separatorFill, 0.5);
+    assert.ok("separatorWhy" in r.features.collector);
+  });
+
+  test("finishFromLine re-decides the finish for a picked printing", () => {
+    const collector = modernLine({ separator: "star", separatorConfidence: 0.9 });
+    const dmu = PRINTINGS.find((p) => p.id === "dmu-107-en");
+    assert.deepEqual(finishFromLine(dmu, collector), { finish: "foil", source: "star" });
+    // the line is another set's: back to the toggle
+    const dmo = PRINTINGS.find((p) => p.id === "dmo-107-en");
+    assert.deepEqual(finishFromLine(dmo, collector, { foilMode: "auto" }), { finish: "normal", source: "toggle" });
+    // the parent set counts; a single-finish printing still decides; pre-M15 printings ignore the line
+    assert.deepEqual(finishFromLine(PRINTINGS.find((p) => p.id === "pdmu-107s-en"), collector), { finish: "foil", source: "finishes" });
+    const promo = { ...PRINTINGS.find((p) => p.id === "pdmu-107s-en"), finishes: ["nonfoil", "foil"] };
+    assert.deepEqual(finishFromLine(promo, modernLine({ separator: "dot", separatorConfidence: 0.9 })), { finish: "normal", source: "star" });
+    assert.equal(finishFromLine({ ...dmu, released_at: "2010-01-01" }, collector).source, "toggle");
+    assert.equal(finishFromLine(dmu, null, { foilMode: "foil" }).finish, "foil");
+    assert.equal(finishFromLine(dmu, { ...collector, format: "legacy" }).source, "toggle");
   });
 
   test("decideFinish: etched, special cases", () => {

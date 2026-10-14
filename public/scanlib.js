@@ -11,7 +11,7 @@
 //
 // Two detector paths (v0.5.x): 'v2' (default) = detector A2 (det/detect.mjs)
 // anywhere in the frame + QuadTracker + a per-device learned box prior
-// (createDetAnalyzer, feeding capture.js CaptureController); 'v1' = the old
+// (createDetAnalyzer, feeding capture.js ProbeController); 'v1' = the old
 // guide-frame finder (findCard, createAnalyzer, AutoCapture), kept unchanged as
 // the rollback (?det=v1 or localStorage mtg.scan.det = "v1", scanDetVersion()).
 // Also here: the scan sounds (Web Audio, synthesized, no files).
@@ -770,7 +770,7 @@ function lumAt(img, x, y) {
 
 /**
  * 12x16 luma thumbnail of a quad's region (4x4 bilinear samples per cell): the
- * card-region motion signal of capture.js (cardMad).
+ * card-region stillness signal of capture.js (ProbeController cmad).
  */
 export function quadThumb(img, q, TW = 12, TH = 16) {
   const t = new Float32Array(TW * TH);
@@ -803,7 +803,7 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
  * (800: a capture normally fires ~3 frames after stable, so the hint is for a
  * card that sits still without being taken) and then every glareEveryMs (1500).
  *
- * FrameAnalysis (capture.js CaptureController.step() input): {vw, vh, found
+ * FrameAnalysis (capture.js ProbeController.step() input): {vw, vh, found
  * (a tracked outline this frame), weak (found, detection below the bar),
  * accepted, stable, corners (smoothed, video px, TL,TR,BR,BL), rawCorners,
  * jitter, drift, mode, score, orientConf, thumb (24x40), cardThumb (12x16),

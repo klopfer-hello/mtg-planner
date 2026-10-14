@@ -233,6 +233,26 @@ describe("staging", () => {
     assert.throws(() => updateScan(ctx.db, 9999, {}), (e) => e.status === 404);
   });
 
+  test("updateScan: a picked printing re-decides the finish from the stored ★ read (not after a user finish)", () => {
+    const collector = { format: "m15", separator: "star", separatorConfidence: 0.9, setCandidates: [{ code: BOLT.set_code }] };
+    // matched to a non-foil-only printing first: the ★ could not apply
+    const s = stage(result(SERRA, { status: "review", finish: "normal", finishSource: "finishes", features: { collector, settings: { foil: "auto" } } })).scan;
+    let u = updateScan(ctx.db, s.id, { printing_id: BOLT.id }, { idx, index });
+    assert.equal(u.finish, "foil");
+    assert.equal(u.finish_source, "star");
+    // a line of another set: the toggle decides (auto → normal)
+    const t = stage(result(SERRA, { status: "review", finish: "normal", finishSource: "finishes", features: { collector: { ...collector, setCandidates: [{ code: "zzz" }] } } }), { force: true }).scan;
+    u = updateScan(ctx.db, t.id, { printing_id: BOLT.id }, { idx, index });
+    assert.equal(u.finish, "normal");
+    assert.equal(u.finish_source, "toggle");
+    // the user's own finish stays
+    const v = stage(result(BOLT, { features: { collector } }), { force: true }).scan;
+    updateScan(ctx.db, v.id, { finish: "normal" }, { idx, index });
+    u = updateScan(ctx.db, v.id, { printing_id: SOL.id }, { idx, index });
+    assert.equal(u.finish, "normal");
+    assert.equal(u.finish_source, "user");
+  });
+
   test("deleteScan removes the row and its image", () => {
     const s = stage(result(BOLT), { image: JPEG }).scan;
     deleteScan(ctx.db, s.id, { imageDir });

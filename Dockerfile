@@ -3,7 +3,8 @@
 # mtg-planner: Node stdlib web app + two stdio MCP servers (our own collection
 # server and bmurdock/scryfall-mcp), plus the card scanner's system binaries
 # (tesseract OCR with traineddata for every printed card language, djpeg from
-# libjpeg-turbo for server-side JPEG decoding).
+# libjpeg-turbo for server-side JPEG decoding), plus mtg-ocr, a small C helper
+# that keeps Tesseract loaded between OCR calls (native/mtg-ocr.c).
 #
 # The Claude Code CLI is proprietary and is deliberately NOT in this image:
 # scripts/entrypoint.sh installs the pinned CLAUDE_CODE_VERSION from npm into
@@ -28,7 +29,22 @@ RUN npm ci --no-audit --no-fund \
  && test -f dist/index.js && test -f mtgrules.txt && test -f LICENSE
 
 # ---------------------------------------------------------------------------
-# Stage 2: runtime.
+# Stage 2: mtg-ocr, the persistent Tesseract helper lib/ocr.js talks to
+# (native/mtg-ocr.c). Same base image as the runtime, so it links against the
+# very libtesseract/libleptonica the runtime's tesseract-ocr package installs.
+FROM node:24-slim AS mtg-ocr
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      gcc libc6-dev pkg-config libtesseract-dev libleptonica-dev \
+ && rm -rf /var/lib/apt/lists/*
+COPY native/mtg-ocr.c /src/mtg-ocr.c
+RUN mkdir -p /out \
+ && gcc -O2 -Wall -Wextra -Werror -o /out/mtg-ocr /src/mtg-ocr.c $(pkg-config --cflags --libs tesseract lept) \
+ && strip /out/mtg-ocr \
+ && dpkg-query -W -f='${Version}' libtesseract5 > /out/libtesseract.version
+
+# ---------------------------------------------------------------------------
+# Stage 3: runtime.
 FROM node:24-slim
 
 # Scanner: collector-line/title OCR (tesseract + per-language traineddata) and
@@ -42,6 +58,14 @@ RUN apt-get update \
       tesseract-ocr-chi-tra tesseract-ocr-kor tesseract-ocr-rus \
       libjpeg-turbo-progs \
  && rm -rf /var/lib/apt/lists/*
+
+# Persistent OCR helper (lib/ocr.js OCR_HELPER, ~20 KB). It must link against
+# the libtesseract build the tesseract CLI uses (identical OCR output).
+COPY --from=mtg-ocr /out/mtg-ocr /usr/local/bin/mtg-ocr
+COPY --from=mtg-ocr /out/libtesseract.version /tmp/libtesseract.version
+RUN test "$(dpkg-query -W -f='${Version}' libtesseract5)" = "$(cat /tmp/libtesseract.version)" \
+ && /usr/local/bin/mtg-ocr </dev/null \
+ && rm /tmp/libtesseract.version
 
 # scryfall-mcp reads ../../mtgrules.txt relative to dist/tools.
 # Its MIT LICENSE ships next to its code.

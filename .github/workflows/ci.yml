@@ -38,6 +38,18 @@ jobs:
       # and JPEG tests (skipped on the bare runner) are exercised too.
       - name: Tests in the image (OCR, djpeg)
         run: docker run --rm -v "$PWD":/app -w /app --entrypoint npm mtg-planner:ci test
+      # The persistent OCR helper must be in the image and start (else lib/ocr.js
+      # silently falls back to spawning tesseract and the equivalence tests skip).
+      - name: Image contains a working OCR helper
+        run: |
+          docker run --rm --entrypoint sh mtg-planner:ci -c 'test -x /usr/local/bin/mtg-ocr && /usr/local/bin/mtg-ocr </dev/null'
+          docker run --rm --entrypoint node mtg-planner:ci --input-type=module -e '
+            const o = await import("/app/lib/ocr.js");
+            const img = o.encodePgm({ width: 40, height: 20, data: new Uint8Array(800).fill(255) });
+            await o.ocrImage(img, { lang: "eng", psm: 7 });
+            const st = o.ocrHelperStatus();
+            console.log(JSON.stringify(st));
+            if (!st.active || st.spawned !== 1 || st.fallbacks || st.crashes) process.exit(1);'
       # The Claude Code CLI is proprietary: it is installed at runtime into the
       # /claude volume and must never end up in the published image.
       - name: Image contains no Claude Code CLI

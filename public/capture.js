@@ -1,6 +1,14 @@
 // capture.js: when the scanner takes a photo (pure ES module, browser + node, no deps).
 //
-// Why it exists: the camera loop sees the same card for many seconds, sees
+// v0.5.0 beta.2: the UI's scanner runs ProbeController (bottom of this file,
+// "recognition-driven capture"): while a card is tracked and lies still the
+// client sends the crop as a probe and the server decides (identified and not
+// the last card → staged). The beta.1 CaptureController below no longer drives
+// the UI; it stays for v0.5.x so the recorded beta.1 sessions can be replayed,
+// and goes with the classic scanner in v0.6.0. UploadQueue is still used for
+// shutter scans and resends.
+//
+// Why CaptureController exists: the camera loop sees the same card for many seconds, sees
 // hands, nudges and glare, and sees new cards slide onto a stack without the
 // old one ever leaving. The old AutoCapture (scanlib.js, kept for ?det=v1)
 // re-armed on art-hash bits and lost cards silently. This controller follows
@@ -649,6 +657,229 @@ export class CaptureController {
     // flush: a held chip photo, to be queued before this shot
     return { id: this.nextId++, kind: 'manual', quad, fallback: quadSource !== 'track', allowClaude: true, hold: false, h: hc?.h ?? null, rec, flush: this.takeHeld() };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Recognition-driven capture (beta.2, decision 18)
+//
+// Beta.1 decided on the client when a photo was a new card: it waited for an
+// *accepted* quad and a still whole frame (hand-held never settled: frame MAD
+// 7-30 vs settleMad 2), fell back to weak quads of an empty box floor, and
+// asked "Same card?" on every re-slide. Now the client only asks "is a card
+// lying still here?" and the server answers what it is: a probe (local
+// OCR + fingerprint, never Claude) is staged when it is identified and is not
+// the session's last card; the same card again is ignored; an unidentified
+// probe stores nothing. Values from the offline replay of the 3 recorded
+// beta.1 sessions (val2 probe replay: 25/25 cards staged once in the full-res
+// proxy, 19/25 on the 480-px floor, 0 false/wrong/duplicate stages):
+// - probe only on a tracked quad (accepted or weak): no-quad crops never
+//   identified anything (0 of ~690), so an empty box sends no requests;
+// - card-relative stillness: the 12x16 card thumbnail vs a frame >= 400 ms
+//   older, MAD <= 8 (hand-held p50 5; 4 missed hand-held cards, no gate
+//   staged wrong cards on motion frames);
+// - one probe in flight, at most one per second;
+// - after 'staged' or 'same' hold until the card region changes (MAD > 10),
+//   the quad is lost or 8 s pass (halves the load, changes no result);
+// - N=1: a second agreeing answer never prevented a wrong card and cost
+//   misses; the sharpness gate had no effect (kept as a floor guard only).
+
+/** Probe policy (tests/field overrides through probeConfig()). */
+export const PROBE_DEFAULTS = Object.freeze({
+  stillMad: 8,             // card-thumb MAD vs a frame >= stillAgeMs older: the card lies still
+  stillAgeMs: 400,
+  historyMs: 2000,         // card thumbnails kept for the stillness check
+  sharpFloor: 60,          // strip sharpness guard (Laplacian variance; null = not measured = ok)
+  intervalMs: 1000,        // probe start to probe start
+  holdMad: 10,             // after staged/same: card region change that releases the hold
+  holdMs: 8000,            // ... or this long
+  lostFrames: 3,           // ... or the quad lost this many frames in a row
+  slowAfter: 3,            // unidentified answers on an unchanged card before backing off
+  slowMs: 3000,            // ... to this interval
+  hintAfterMs: 3000,       // unidentified for this long on a still card: "Not recognised – tap to capture"
+  errorMs: 3000,           // after a network/server error
+  warmingMs: 2500,         // after 'busy' with reason warming_up
+});
+
+/** Probe controller states (step().state). */
+export const PROBE_STATES = Object.freeze({
+  SEARCHING: 'searching', TRACKING: 'tracking', PROBING: 'probing', WAITING: 'waiting', HOLD: 'hold',
+  UNRECOGNISED: 'unrecognised', PAUSED: 'paused',
+});
+
+/** probeConfig(over) → {cfg, ignored}: PROBE_DEFAULTS with validated overrides. */
+export const probeConfig = (over = {}) => captureConfig(over, PROBE_DEFAULTS);
+
+/**
+ * The probe loop's decision state. Contract with the UI:
+ * - step(o) once per analysed frame (o: {found, weak, accepted, stable, corners, cardThumb, sharp, now,
+ *   paused?, busy?}) → {state, hint, probe, still, cmad, hold}. `probe` = {id, quad, rec} means: crop
+ *   `quad` now, POST it as mode 'probe', then answer(probe.id, response) or failed(probe.id).
+ *   paused (a sheet is open, auto-scan off) or busy (a shutter scan is being identified): no probes.
+ * - answer(id, res) with the server's {outcome, reason?, scan?, result?}; failed(id) on a crop or
+ *   network error; manual(o) after a shutter scan of the card in view (holds like 'staged'); reset().
+ * - rearm({rescan:true}) (the UI's Rescan of a review row) also starts a rescan track: `rescan` =
+ *   {id, thumb} follows the card in view and ends when the quad is lost for lostFrames, the card region
+ *   changes by more than holdMad, a probe answers 'staged'/'same', or endRescan()/reset(). Probes carry
+ *   `probe.rescan` (the id or null); the UI replaces the review row only when that id is still current,
+ *   so a probe of the next card never deletes it.
+ */
+export class ProbeController {
+  /** @param {{cfg?: object}} [opts] overrides (validated by probeConfig) */
+  constructor({ cfg = {} } = {}) {
+    const { cfg: merged, ignored } = probeConfig(cfg);
+    this.cfg = merged;
+    this.ignored = ignored;
+    this.nextId = 1;
+    this.nextRescan = 1;
+    this.reset();
+  }
+
+  /** Forget everything (camera restart). */
+  reset() {
+    this.hist = [];          // [{t, thumb}] card thumbnails of the current track
+    this.lost = 0;
+    this.flight = null;      // {id, at, thumb}
+    this.lastAt = -Infinity; // last probe start
+    this.notBefore = 0;      // backoff (error, warming up)
+    this.hold = null;        // {thumb, at, outcome}
+    this.unk = null;         // {n, thumb, since}: unidentified answers on an unchanged card
+    this.last = null;        // last answer {outcome, reason, at, ms}
+    this.warming = false;
+    this.cmad = null;
+    this.rescan = null;      // {id, thumb}: the card a Rescan was asked for (see the class comment)
+    this.stats = { sent: 0, staged: 0, same: 0, unidentified: 0, busy: 0, error: 0 };
+  }
+
+  /**
+   * One analysed frame.
+   * @returns {{state: string, hint: string, probe: object|null, still: boolean, cmad: number|null, hold: boolean}}
+   */
+  step(o) {
+    const c = this.cfg, now = o.now ?? Date.now();
+    const thumb = o.found && o.corners ? o.cardThumb || null : null;
+    // --- card-relative stillness: this frame's card region vs the newest one >= stillAgeMs older
+    if (thumb) {
+      this.lost = 0;
+      this.hist.push({ t: now, thumb });
+    } else {
+      this.lost++;
+      this.hist = [];
+    }
+    while (this.hist.length && now - this.hist[0].t > c.historyMs) this.hist.shift();
+    let ref = null; // the newest thumbnail at least stillAgeMs old
+    for (const h of this.hist) if (now - h.t >= c.stillAgeMs) ref = h;
+    const cmad = thumb && ref && ref.thumb.length === thumb.length ? thumbMad(thumb, ref.thumb) : null;
+    this.cmad = cmad;
+    const still = cmad !== null && cmad <= c.stillMad;
+    const sharpOk = !Number.isFinite(o.sharp) || o.sharp >= c.sharpFloor;
+
+    // --- hold after staged/same: released by a changed card region, a lost quad or time
+    if (this.hold) {
+      const changed = thumb && this.hold.thumb && thumbMad(thumb, this.hold.thumb) > c.holdMad;
+      if (changed || this.lost >= c.lostFrames || now - this.hold.at >= c.holdMs) this.hold = null;
+    }
+    // unidentified streak: forgotten when the card leaves or changes
+    if (this.unk && (this.lost >= c.lostFrames || (thumb && thumbMad(thumb, this.unk.thumb) > c.holdMad))) this.unk = null;
+    // rescan track: the card in view at Rescan (or the first one after it); gone when it leaves or changes
+    if (this.rescan) {
+      if (this.lost >= c.lostFrames) this.rescan = null;
+      else if (thumb && !this.rescan.thumb) this.rescan.thumb = thumb;
+      else if (thumb && thumbMad(thumb, this.rescan.thumb) > c.holdMad) this.rescan = null;
+    }
+
+    const out = { state: PROBE_STATES.SEARCHING, hint: '', probe: null, still, cmad, hold: Boolean(this.hold) };
+    const done = (state, hint) => Object.assign(out, { state, hint });
+
+    if (o.paused) return done(PROBE_STATES.PAUSED, 'Paused');
+    if (this.flight) return done(PROBE_STATES.PROBING, thumb ? 'Identifying…' : 'Place a card in view');
+    if (!thumb) return done(PROBE_STATES.SEARCHING, 'Place a card in view');
+    if (this.hold) return done(PROBE_STATES.HOLD, this.hold.outcome === 'same' ? 'Same card: tap +1 for another copy' : 'Done: next card');
+    if (o.busy) return done(PROBE_STATES.WAITING, 'Identifying…');
+    const unrecognised = this.unk && now - this.unk.since >= c.hintAfterMs;
+    if (!still || !sharpOk) {
+      if (unrecognised) return done(PROBE_STATES.UNRECOGNISED, 'Not recognised – tap to capture');
+      return done(PROBE_STATES.TRACKING, !still ? 'Hold steady' : 'Too blurry: more light or move back a little');
+    }
+    const gap = this.unk && this.unk.n >= c.slowAfter ? c.slowMs : c.intervalMs;
+    if (now - this.lastAt < gap || now < this.notBefore) {
+      if (unrecognised) return done(PROBE_STATES.UNRECOGNISED, 'Not recognised – tap to capture');
+      return done(PROBE_STATES.WAITING, this.warming ? 'Warming up the scanner…' : 'Hold steady');
+    }
+    const id = this.nextId++;
+    this.flight = { id, at: now, thumb };
+    this.lastAt = now;
+    this.stats.sent++;
+    out.probe = {
+      id, quad: o.corners, rescan: this.rescan ? this.rescan.id : null,
+      rec: {
+        kind: 'probe', id, state: 'probe', quad_source: o.accepted ? 'track' : 'weak', mad: round(cmad),
+        sharp: Number.isFinite(o.sharp) ? Math.round(o.sharp) : null, t: Math.round(now),
+      },
+    };
+    return done(PROBE_STATES.PROBING, unrecognised ? 'Not recognised – tap to capture' : 'Identifying…');
+  }
+
+  /**
+   * The server's answer to probe `id` ({outcome, reason?}). Unknown ids (a
+   * reset in between) are ignored. Returns the outcome, or null.
+   */
+  answer(id, res, now = Date.now()) {
+    const f = this.flight;
+    if (!f || f.id !== id) return null;
+    this.flight = null;
+    const outcome = res?.outcome;
+    this.last = { outcome: outcome ?? null, reason: res?.reason ?? null, at: now, ms: Math.round(now - f.at) };
+    this.warming = false;
+    if (outcome === 'staged' || outcome === 'same') {
+      this.stats[outcome]++;
+      this.hold = { thumb: f.thumb, at: now, outcome };
+      this.unk = null;
+      this.rescan = null; // the rescanned card was answered (the UI checked the id before this call)
+    } else if (outcome === 'unidentified') {
+      this.stats.unidentified++;
+      if (this.unk && thumbMad(f.thumb, this.unk.thumb) <= this.cfg.holdMad) this.unk.n++;
+      else this.unk = { n: 1, thumb: f.thumb, since: f.at };
+    } else if (outcome === 'busy') {
+      this.stats.busy++;
+      // warming up: a little longer; slots/session: simply the next interval
+      if (res?.reason === 'warming_up') { this.warming = true; this.notBefore = now + this.cfg.warmingMs; }
+    } else {
+      this.stats.error++;
+      this.notBefore = now + this.cfg.errorMs;
+    }
+    return outcome ?? null;
+  }
+
+  /** Probe `id` could not be cropped or sent (or the server failed): back off a little. */
+  failed(id, now = Date.now()) {
+    if (!this.flight || this.flight.id !== id) return;
+    this.flight = null;
+    this.stats.error++;
+    this.last = { outcome: 'error', reason: null, at: now, ms: null };
+    this.notBefore = now + this.cfg.errorMs;
+  }
+
+  /** A shutter scan of the card in view (o = the frame it was taken on): no probe of it until it changes. */
+  manual(o = {}, now = o.now ?? Date.now()) {
+    const thumb = o.found && o.cardThumb ? o.cardThumb : null;
+    this.unk = null;
+    this.hold = thumb ? { thumb, at: now, outcome: 'manual' } : null;
+  }
+
+  /**
+   * Forget the hold (the UI's "scan this card again"): the card in view is probed at the next still frame.
+   * rescan: true starts a rescan track of that card (a review row waits to be replaced), else none.
+   */
+  rearm({ rescan = false } = {}) {
+    this.hold = null;
+    this.unk = null;
+    this.notBefore = 0;
+    this.lastAt = -Infinity;
+    this.rescan = rescan ? { id: this.nextRescan++, thumb: this.hist.length ? this.hist[this.hist.length - 1].thumb : null } : null;
+  }
+
+  /** End the rescan track (its review row was replaced, discarded, or a shutter scan took it). */
+  endRescan() { this.rescan = null; }
 }
 
 /**

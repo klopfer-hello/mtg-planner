@@ -26,15 +26,16 @@ import {
 import * as indexModule from "./lib/cardindex.js";
 import { createScheduler, schedulerConfig } from "./lib/scheduler.js";
 import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker, checkJpegSize } from "./lib/fingerprint.js";
-import { ocrTools } from "./lib/ocr.js";
+import { ocrHelperStatus, ocrTools } from "./lib/ocr.js";
 import { decideFinish, identifyOriented, printingSummary, scanPriceEur } from "./lib/scanner.js";
 import { DebugError, DebugSessions } from "./lib/debugsessions.js";
 import {
   BackupError, backupConfig, backupPath, createBackup, dbCounts, deleteBackup, gunzipToFile, listBackups, swapDatabase, validateBackupDb,
 } from "./lib/backups.js";
 import {
-  CONDITIONS, ScanError, captureLog, commitScans, defaultImageDir, normFinish, deleteScan, exportCalibration, getScan, incrementScan,
-  listScans, recordTruth, scanImagePath, scanStripPath, stageScan, undoLast, updateScan,
+  CONDITIONS, PROBE_SESSION_RE, ProbeRunner, ScanError, probeKey, captureLog, commitScans, createScanSlots, defaultImageDir, normFinish,
+  deleteScan, exportCalibration, getScan, incrementScan, listScans, recordTruth, scanImagePath, scanStripPath, stageScan, undoLast,
+  updateScan,
 } from "./lib/scans.js";
 import {
   BinderError, collectionMaster, createBinder, deckToBinder, defaultImportMode, deleteBinder, listBinders, moveCopies, renameBinder,
@@ -683,7 +684,22 @@ function resultSummary(r) {
   };
 }
 
-let scansInFlight = 0;
+// Identify slots shared by normal scans and recognition probes.
+const scanSlots = createScanSlots(SCAN_MAX_CONCURRENT);
+// Probes answer 'busy' while the fingerprint matcher is still loading: a
+// probe must never sit on a slot for the SCAN_MATCHER_WAIT_MS warm-up.
+const prober = new ProbeRunner({
+  slots: scanSlots,
+  warming: () => matcher instanceof MatcherWorker && matcher.state === "loading",
+});
+
+/** body.probe_session: optional client-generated id ([A-Za-z0-9-]{1,40}). */
+function probeSession(body) {
+  const v = body.probe_session;
+  if (v == null || v === "") return null;
+  if (typeof v !== "string" || !PROBE_SESSION_RE.test(v)) throw new HttpError(400, "probe_session must be 1-40 letters, digits or dashes");
+  return v;
+}
 
 async function postScan(req, res) {
   // A client that gives up (UI timeout/cancel, closed tab) cancels the scan:
@@ -692,7 +708,10 @@ async function postScan(req, res) {
   const gone = new AbortController();
   res.on("close", () => { if (!res.writableFinished) gone.abort(new Error("client closed the request")); });
   const body = await readJson(req, SCAN_LIMIT);
+  if (body.mode != null && !["scan", "probe"].includes(body.mode)) throw new HttpError(400, "mode must be scan or probe");
+  const session = probeSession(body);
   const { capture, dupOf } = captureFields(body);
+  if (body.mode === "probe") return postProbe(body, { gone, session, capture });
   requireIndex();
   if (!indexReady()) throw new HttpError(503, "The card index is still being built; try again when it is ready");
   const card = decodeImage(body.card, "card", { maxPixels: MAX_CARD_PIXELS });
@@ -700,8 +719,7 @@ async function postScan(req, res) {
   const replaceId = body.replace_id == null ? null : Number(body.replace_id);
   if (replaceId != null && !(Number.isInteger(replaceId) && replaceId > 0)) throw new HttpError(400, "replace_id must be a scan id");
   const settings = scanSettings(body.settings ?? {});
-  if (scansInFlight >= SCAN_MAX_CONCURRENT) throw new HttpError(429, "Still identifying the previous scans; try again shortly");
-  scansInFlight++;
+  if (!scanSlots.tryAcquire()) throw new HttpError(429, "Still identifying the previous scans; try again shortly");
   let result;
   try {
     await loadSetCodes().catch(() => null);
@@ -711,18 +729,62 @@ async function postScan(req, res) {
       { card, strip, settings: { ...settings, allowClaude: body.allowClaude !== false } },
     );
   } finally {
-    scansInFlight--;
+    scanSlots.release();
   }
   if (gone.signal.aborted) throw new HttpError(499, "Scan cancelled: the client closed the request");
   const staged = stageScan(db, result, {
     image: result.upright?.card ?? card, strip: result.upright?.strip ?? strip, force: body.force === true, condition: settings.condition, calibration: body.calibration === true, replaceId,
     dupOf, capture,
   });
+  // A shutter scan inside a probe session: the next probe compares against it.
+  prober.noteScan(session, result, staged.scan);
   // EUR price of the stored printing + finish: the UI picks the scan sound by it.
   const price = await scanPriceEur(result, {
     db, lookupEn: (p) => indexLookup("storagePrinting", p, "en").catch(() => null),
   });
   return { scan: staged.scan, duplicate: staged.duplicate, result: { ...resultSummary(result), ...price } };
+}
+
+/**
+ * Recognition probe (body.mode 'probe'): local identification only (never
+ * Claude), staged only when identified and not the session's last card; see
+ * ProbeRunner in lib/scans.js. Always 200: {probe, outcome, reason?, scan?,
+ * finish_upgraded?, result}. 'busy' answers at once (no queueing behind slow scans).
+ */
+async function postProbe(body, { gone, session, capture }) {
+  requireIndex();
+  if (!indexReady()) throw new HttpError(503, "The card index is still being built; try again when it is ready");
+  const card = decodeImage(body.card, "card", { maxPixels: MAX_CARD_PIXELS });
+  const strip = decodeImage(body.strip, "strip", { required: false, maxPixels: MAX_STRIP_PIXELS });
+  const settings = scanSettings(body.settings ?? {});
+  // No Claude: no runVision and allowClaude false.
+  const identify = async () => {
+    await loadSetCodes().catch(() => null);
+    return identifyOriented(
+      { db, idx, index: scanIndex, matcher: readyMatcher(), signal: gone.signal, claude: { runVision: null, cap: visionCap } },
+      { card, strip, settings: { ...settings, allowClaude: false } },
+    );
+  };
+  const out = await prober.run(db, identify, { session, image: card, strip, condition: settings.condition, calibration: body.calibration === true, capture, signal: gone.signal });
+  if (out.outcome === "cancelled") throw new HttpError(499, "Probe cancelled: the client closed the request");
+  const response = {
+    probe: true, outcome: out.outcome, ...(out.reason ? { reason: out.reason } : {}), ...(out.scan ? { scan: out.scan } : {}),
+    ...(out.finish_upgraded ? { finish_upgraded: true } : {}),
+  };
+  const r = out.result;
+  if (!r) return { ...response, result: null };
+  const status = r.printing ? r.status ?? "failed" : "failed";
+  // Unidentified: only the status (a REVIEW guess is not something to show).
+  if (out.outcome === "unidentified") return { ...response, result: { status, timings: r.timings ?? null } };
+  const p = r.store || r.printing;
+  const price = await scanPriceEur(r, { db, lookupEn: (x) => indexLookup("storagePrinting", x, "en").catch(() => null) });
+  return {
+    ...response,
+    result: {
+      status, name: p.name ?? null, printing_id: r.printing.id, store_printing_id: p.id, finish: probeKey(r)?.finish ?? null,
+      confidence: r.confidence ?? null, price_eur: price.price_eur ?? null, timings: r.timings ?? null,
+    },
+  };
 }
 
 async function postManualScan(req) {
@@ -934,7 +996,7 @@ async function scannerHealth() {
     }
   }
   const value = healthCache?.value ?? { index_ready: indexReadyCache || null, fingerprints: null, tesseract: null, djpeg: null, pending: true };
-  return { ...value, matcher: matcherHealth() };
+  return { ...value, ocr_helper: ocrHelperStatus(), matcher: matcherHealth(), probes: prober.stats() };
 }
 
 /** scanner.matcher for /healthz: loading | ready | error (+ size, load time), never cached. */
@@ -1005,7 +1067,7 @@ function restoreBlocker() {
   if (backupBusy) return "a backup or restore is already running";
   if (importBusy) return "an import, price refresh or collection change is running";
   if (runs.size) return "the planner is answering a chat (its MCP server has the database open)";
-  if (scansInFlight) return "a scan is being identified";
+  if (scanSlots.used) return "a scan is being identified";
   return null;
 }
 

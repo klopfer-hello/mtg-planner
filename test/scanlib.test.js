@@ -8,7 +8,7 @@ import {
   AutoCapture, CAPTURE_DEFAULTS, DET_STORAGE_KEY, SOUND_DEFAULTS, captureAdvice, chooseScanSound, createDetAnalyzer,
   createScanSounds, glareMap, mapToPhoto, photoMapping, quadSize, scanDetVersion, warpQuad, workSize,
 } from "../public/scanlib.js";
-import { CaptureController } from "../public/capture.js";
+import { CaptureController, ProbeController } from "../public/capture.js";
 import { hashAt, score } from "../public/fphash.js";
 import { PRIOR_STORAGE_KEY } from "../public/det/track.mjs";
 import { addNoise, background, drawCard, makeCard, placeCard } from "./helpers/detscenes.js";
@@ -473,5 +473,34 @@ describe("createDetAnalyzer", () => {
     assert.ok(caps.every((c) => maxErr(c.quad, boxQ) / cardW(boxQ) < 0.03));
     assert.ok(quadSize(caps[0].quad).w > 0);
     assert.equal(CAPTURE_DEFAULTS.workShort, 480);
+  });
+
+  test("end to end with ProbeController: an empty box sends no probes; each card still in the box is probed and staged once", () => {
+    const { an, step } = rig();
+    const pc = new ProbeController();
+    const probes = [], staged = [];
+    let lastKey = null, pending = null;
+    const run = (img, key, n) => {
+      for (let i = 0; i < n; i++) {
+        const o = step(img);
+        // the server answers one frame later (key null = nothing identifiable in the crop)
+        if (pending) {
+          const res = pending.key == null ? { outcome: "unidentified" } : pending.key === lastKey ? { outcome: "same" } : { outcome: "staged" };
+          if (res.outcome === "staged") { lastKey = pending.key; staged.push(pending.key); an.savePrior(pending.quad); }
+          pc.answer(pending.id, res, o.now);
+          pending = null;
+        }
+        const r = pc.step(o);
+        if (r.probe) { probes.push({ key, quad: r.probe.quad }); pending = { id: r.probe.id, key, quad: r.probe.quad }; }
+      }
+    };
+    run(empty(), null, 16);
+    assert.equal(probes.length, 0, "empty box: no requests");
+    run(boxCard(80), 80, 20);
+    run(empty(), null, 10);
+    run(boxCard(81), 81, 20);
+    assert.deepEqual(staged, [80, 81]);
+    assert.ok(probes.every((p) => p.key !== null), "never an empty-box probe");
+    assert.ok(probes.every((p) => maxErr(p.quad, boxQ) / cardW(boxQ) < 0.03));
   });
 });

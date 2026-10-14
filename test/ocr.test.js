@@ -202,22 +202,25 @@ describe("parseTsv", () => {
   });
 });
 
-// Synthetic collector line: three letter blocks, a separator glyph, two letter blocks.
-function syntheticLine(sepH, sepW) {
-  const width = 140, height = 40, cap = 20, top = 10;
+// Synthetic collector line: three letter blocks, a separator glyph, two letter blocks, light glyphs on a
+// dark band. `floor` adds a light area below the band (the white box floor in the strip padding).
+function syntheticLine(sepH, sepW, { floor = 0, wordH = null, words = null } = {}) {
+  const width = 140, cap = 20, top = 10, height = 40 + floor;
   const data = new Uint8Array(width * height).fill(20); // dark border
-  const box = (x, y, w, h) => {
-    for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) data[yy * width + xx] = 230;
+  const box = (x, y, w, h, v = 230) => {
+    for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) data[yy * width + xx] = v;
   };
+  if (floor) box(0, 40, width, floor, 245);
   [10, 24, 38].forEach((x) => box(x, top, 10, cap)); // "NEO"
-  box(58 + Math.round((14 - sepW) / 2), top + Math.round((cap - sepH) / 2), sepW, sepH); // separator
+  if (sepH) box(58 + Math.round((14 - sepW) / 2), top + Math.round((cap - sepH) / 2), sepW, sepH); // separator
   [80, 94].forEach((x) => box(x, top, 10, cap)); // "DE"
+  const wt = wordH ? top - Math.round((wordH - cap) / 2) : top, wh = wordH ?? cap;
   const line = {
     left: 10, top, width: 94, height: cap,
-    words: [
-      { text: "NEO", left: 10, top, width: 38, height: cap },
+    words: words ?? [
+      { text: "NEO", left: 10, top: wt, width: 38, height: wh },
       { text: "+", left: 58, top: top + 4, width: 14, height: 12 },
-      { text: "DE", left: 80, top, width: 24, height: cap },
+      { text: "DE", left: 80, top: wt, width: 24, height: wh },
     ],
   };
   return { img: { width, height, data }, line };
@@ -226,7 +229,7 @@ function syntheticLine(sepH, sepW) {
 describe("classifySeparator", () => {
   test("a small round blob is a dot", () => {
     const { img, line } = syntheticLine(9, 9);
-    const r = classifySeparator(img, line);
+    const r = classifySeparator(img, line, { setText: "NEO" });
     assert.equal(r.separator, "dot");
     assert.ok(r.rel < 0.62);
     assert.ok(r.confidence > 0.5);
@@ -234,9 +237,11 @@ describe("classifySeparator", () => {
 
   test("a blob of >= 0.62 cap height is a star", () => {
     const { img, line } = syntheticLine(15, 14);
-    const r = classifySeparator(img, line);
+    const r = classifySeparator(img, line, { setText: "NEO" });
     assert.equal(r.separator, "star");
     assert.ok(r.rel >= 0.62);
+    assert.equal(r.cap, 20);
+    assert.ok(r.confidence > 0.5);
   });
 
   test("threshold is configurable", () => {
@@ -244,11 +249,52 @@ describe("classifySeparator", () => {
     assert.equal(classifySeparator(img, line, { starMin: 0.9 }).separator, "dot");
   });
 
-  test("no words or no language code means undecided", () => {
+  test("either polarity: dark glyphs on a light background read the same", () => {
+    const { img, line } = syntheticLine(15, 14);
+    const r = classifySeparator(invert(img), line, { setText: "NEO" });
+    assert.equal(r.separator, "star");
+    assert.equal(r.light, false);
+  });
+
+  test("a light box floor under a dark line does not flip the polarity", () => {
+    const { img, line } = syntheticLine(15, 14, { floor: 120 }); // whole-image median is light now
+    const r = classifySeparator(img, line, { setText: "NEO" });
+    assert.equal(r.separator, "star");
+    assert.equal(r.light, true);
+  });
+
+  test("★ glued into the language word and oversized word boxes", () => {
+    const glued = syntheticLine(15, 14, { words: [
+      { text: "NEO", left: 10, top: 10, width: 38, height: 20 },
+      { text: "*DE", left: 58, top: 10, width: 46, height: 20 },
+    ] });
+    assert.equal(classifySeparator(glued.img, glued.line, { setText: "NEO" }).separator, "star");
+    const tallBox = syntheticLine(15, 14, { wordH: 34 }); // tesseract's box 34 px for 20 px letters
+    const r = classifySeparator(tallBox.img, tallBox.line, { setText: "NEO" });
+    assert.equal(r.separator, "star");
+    assert.equal(r.cap, 20);
+  });
+
+  test("the set word is found by its text after a junk token", () => {
+    const { img, line } = syntheticLine(9, 9);
+    const junk = { ...line, words: [{ text: "i", left: 0, top: 10, width: 4, height: 20 }, ...line.words] };
+    assert.equal(classifySeparator(img, junk, { setText: "NEO" }).separator, "dot");
+  });
+
+  test("no words, a missing separator or language letters means undecided", () => {
     const { img, line } = syntheticLine(9, 9);
     assert.equal(classifySeparator(img, { ...line, words: [] }).separator, null);
-    const noLang = { ...line, words: line.words.slice(0, 1) };
-    assert.equal(classifySeparator(img, noLang).separator, null);
+    const noSep = syntheticLine(0, 0); // "NEO DE": the 'separator' column would be the D
+    const r = classifySeparator(noSep.img, noSep.line, { setText: "NEO" });
+    assert.equal(r.separator, null);
+    assert.equal(r.confidence, 0);
+  });
+
+  test("a separator column wider than a letter has no confidence", () => {
+    const { img, line } = syntheticLine(9, 9);
+    for (let y = 15; y < 24; y++) for (let x = 52; x < 79; x++) img.data[y * img.width + x] = 230; // a dash, not a dot
+    const r = classifySeparator(img, line, { setText: "NEO" });
+    assert.equal(r.confidence, 0);
   });
 });
 
@@ -332,5 +378,191 @@ describe("with tesseract and djpeg", { skip: skipBins }, () => {
     const pre = await readTitle(Buffer.from("not decoded"), { lang: "de", gray: decodeGray(jpegOf(card)) });
     assert.equal(pre.text, t.text);
     assert.equal(pre.confidence, t.confidence);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Persistent OCR helper (lib/ocr.js OCR_HELPER). Each block imports its own
+// module instance (query string) because OCR_HELPER is read at load time.
+
+async function ocrModule(tag, helperPath) {
+  const prev = process.env.OCR_HELPER;
+  process.env.OCR_HELPER = helperPath;
+  try {
+    return await import(`../lib/ocr.js?${tag}`);
+  } finally {
+    if (prev === undefined) delete process.env.OCR_HELPER;
+    else process.env.OCR_HELPER = prev;
+  }
+}
+
+// A fake helper speaking the mtg-ocr protocol; the mode comes from its file
+// name (ok|err|crash|hang). "ok" answers one TSV word
+// "<lang>|<psm>|<whitelist>|<image bytes>|<pid>".
+const FAKE_HELPER = String.raw`#!/usr/bin/env node
+const MODE = process.argv[1].match(/fake-(\w+)\.mjs$/)[1];
+let buf = Buffer.alloc(0);
+process.stdin.on("data", (d) => {
+  buf = Buffer.concat([buf, d]);
+  for (;;) {
+    if (buf.length < 20) return;
+    const psm = buf.readUInt32LE(4), ll = buf.readUInt32LE(8), wl = buf.readUInt32LE(12), il = buf.readUInt32LE(16);
+    if (buf.length < 20 + ll + wl + il) return;
+    const lang = buf.toString("utf8", 20, 20 + ll), white = buf.toString("utf8", 20 + ll, 20 + ll + wl);
+    buf = buf.subarray(20 + ll + wl + il);
+    if (MODE === "crash") process.exit(7);
+    if (MODE === "hang") return;
+    const reply = (status, text) => {
+      const body = Buffer.from(text), h = Buffer.alloc(12);
+      h.write("MOCR"); h.writeUInt32LE(status, 4); h.writeUInt32LE(body.length, 8);
+      process.stdout.write(Buffer.concat([h, body]));
+    };
+    if (MODE === "err") { reply(1, "boom"); continue; }
+    reply(0, "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n" +
+      "5\t1\t1\t1\t1\t1\t2\t3\t40\t20\t96.5\t" + [lang, psm, white, il, process.pid].join("|") + "\n");
+  }
+});
+`;
+
+const posix = process.platform !== "win32";
+describe("persistent OCR helper protocol (fake helper)", { skip: !posix && "needs a POSIX shebang helper" }, async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = posix ? fs.mkdtempSync(path.join(os.tmpdir(), "mtg-ocr-fake-")) : "";
+  const fake = (mode) => {
+    const f = path.join(dir, `fake-${mode}.mjs`);
+    fs.writeFileSync(f, FAKE_HELPER, { mode: 0o755 });
+    return f;
+  };
+  const img = encodePgm({ width: 4, height: 2, data: new Uint8Array(8).fill(255) });
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  test("answers come from one long-lived helper per slot, options reach it", async () => {
+    const M = await ocrModule("fake-ok", fake("ok"));
+    const a = await M.ocrImage(img, { lang: "deu+eng", psm: 7 });
+    const b = await M.ocrImage(img, { lang: "deu+eng", psm: 6, whitelist: "0123456789/" });
+    const [lang, psm, white, bytes, pid] = a.words[0].text.split("|");
+    assert.deepEqual([lang, psm, white, +bytes], ["deu+eng", "7", "", img.length]);
+    assert.equal(a.words[0].conf, 96.5);
+    assert.equal(b.words[0].text.split("|")[2], "0123456789/");
+    assert.equal(b.words[0].text.split("|")[4], pid, "same process answers the second call");
+    await Promise.all([1, 2, 3, 4].map(() => M.ocrImage(img, { lang: "eng" })));
+    const st = M.ocrHelperStatus();
+    assert.equal(st.active, true);
+    assert.ok(st.spawned <= 2, `at most OCR_MAX_CONCURRENT helpers, got ${st.spawned}`);
+    assert.equal(st.crashes + st.timeouts + st.fallbacks, 0);
+    M.closeOcrHelpers();
+    await settle();
+    assert.equal(M.ocrHelperStatus().running, 0);
+  });
+
+  test("an error answer rejects and keeps the helper", async () => {
+    const M = await ocrModule("fake-err", fake("err"));
+    await assert.rejects(M.ocrImage(img), /boom/);
+    assert.equal(M.ocrHelperStatus().running, 1);
+    M.closeOcrHelpers();
+  });
+
+  test("a hung helper times out, is killed and replaced on the next call", async () => {
+    const M = await ocrModule("fake-hang", fake("hang"));
+    await assert.rejects(M.ocrImage(img, { timeoutMs: 300 }), /timed out after 300 ms/);
+    await settle();
+    assert.equal(M.ocrHelperStatus().timeouts, 1);
+    assert.equal(M.ocrHelperStatus().running, 0);
+    await assert.rejects(M.ocrImage(img, { timeoutMs: 300 }), /timed out/);
+    assert.equal(M.ocrHelperStatus().spawned, 2);
+    M.closeOcrHelpers();
+  });
+
+  test("a crashed helper falls back to the tesseract CLI for that call", async () => {
+    const M = await ocrModule("fake-crash", fake("crash"));
+    const p = M.ocrImage(img, { timeoutMs: 10_000 });
+    if (tools.tesseract) await p; // the CLI answers
+    else await assert.rejects(p, /tesseract is not installed/);
+    const st = M.ocrHelperStatus();
+    assert.equal(st.crashes, 1);
+    assert.equal(st.fallbacks, 1);
+    assert.match(st.lastError, /exited \(7\)/);
+  });
+
+  test("a missing helper binary or OCR_HELPER=off means the spawn path", async () => {
+    const M = await ocrModule("fake-missing", path.join(dir || ".", "does-not-exist"));
+    assert.equal(M.ocrHelperStatus().installed, false);
+    assert.equal(M.ocrHelperStatus().active, false);
+    const off = await ocrModule("fake-off", "off");
+    assert.equal(off.ocrHelperStatus().active, false);
+  });
+
+  test("bad options are refused before any process starts", async () => {
+    const M = await ocrModule("fake-ok2", fake("ok"));
+    await assert.rejects(M.ocrImage(img, { lang: "eng; rm" }), /invalid tesseract language/);
+    await assert.rejects(M.ocrImage(img, { psm: 99 }), /invalid psm/);
+    await assert.rejects(M.ocrImage(img, { whitelist: "a\0b" }), /invalid whitelist/);
+    assert.equal(M.ocrHelperStatus().spawned, 0);
+  });
+});
+
+// The real helper (built into the image) must answer exactly like the CLI.
+const REAL_HELPER = process.env.OCR_HELPER || "/usr/local/bin/mtg-ocr";
+const hasHelper = posix && REAL_HELPER !== "off" && spawnSync("test", ["-x", REAL_HELPER]).status === 0;
+
+/** Blocky glyph-like shapes (I, L, T, O) on light gray: tesseract reads "something" with boxes and confidences. */
+function glyphImage(seed, { width = 360, height = 60 } = {}) {
+  const data = new Uint8Array(width * height).fill(235);
+  let s = seed;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const rect = (x0, y0, w, h) => {
+    for (let y = y0; y < Math.min(height, y0 + h); y++) for (let x = x0; x < Math.min(width, x0 + w); x++) data[y * width + x] = 20;
+  };
+  for (let x = 12; x < width - 30; x += 22 + Math.floor(rnd() * 10)) {
+    const k = Math.floor(rnd() * 4), top = 14, h = 30;
+    if (k === 0) rect(x, top, 5, h);
+    else if (k === 1) { rect(x, top, 5, h); rect(x, top + h - 5, 16, 5); }
+    else if (k === 2) { rect(x, top, 18, 5); rect(x + 7, top, 5, h); }
+    else { rect(x, top, 16, 5); rect(x, top + h - 5, 16, 5); rect(x, top, 5, h); rect(x + 11, top, 5, h); }
+  }
+  return { width, height, data };
+}
+
+describe("persistent OCR helper vs tesseract CLI", { skip: !(hasHelper && tools.tesseract) && "mtg-ocr helper or tesseract not installed" }, async () => {
+  const H = await ocrModule("real-helper", REAL_HELPER);
+  const S = await ocrModule("real-spawn", "off");
+  const strip = ({ ms, ...r }) => r;
+
+  test("identical words, boxes and confidences for every language set, psm and whitelist", async () => {
+    const cases = [];
+    for (const seed of [1, 2, 3]) for (const [lang, psm] of [["eng", 6], ["eng", 7], ["deu+eng", 7], ["jpn", 7]]) cases.push([seed, lang, psm, ""]);
+    cases.push([4, "eng", 7, "ILTO0"], [5, "eng", 6, "0123456789"], [4, "eng", 7, ""]); // the whitelist must not stick
+    for (const [seed, lang, psm, whitelist] of cases) {
+      const buf = encodePgm(glyphImage(seed));
+      const a = await H.ocrImage(buf, { lang, psm, whitelist });
+      const b = await S.ocrImage(buf, { lang, psm, whitelist });
+      assert.deepEqual(strip(a), strip(b), `seed ${seed} ${lang} psm ${psm} whitelist ${JSON.stringify(whitelist)}`);
+    }
+    const st = H.ocrHelperStatus();
+    assert.equal(st.active, true);
+    assert.equal(st.crashes + st.timeouts + st.fallbacks, 0);
+    assert.ok(st.spawned >= 1 && st.spawned <= 2);
+  });
+
+  test("an unknown language is an error on both paths and the helper survives", async () => {
+    const buf = encodePgm(glyphImage(7));
+    await assert.rejects(H.ocrImage(buf, { lang: "xxx" }), /failed loading language/);
+    await assert.rejects(S.ocrImage(buf, { lang: "xxx" }), /tesseract exited/);
+    assert.equal(H.ocrHelperStatus().crashes, 0);
+    const again = await H.ocrImage(buf, { lang: "eng", psm: 7 });
+    assert.deepEqual(strip(again), strip(await S.ocrImage(buf, { lang: "eng", psm: 7 })));
+  });
+
+  test("a killed helper is replaced and the next call still answers", async () => {
+    const buf = encodePgm(glyphImage(8));
+    const before = H.ocrHelperStatus().spawned;
+    H.closeOcrHelpers();
+    await new Promise((r) => setTimeout(r, 150));
+    const r = await H.ocrImage(buf, { lang: "eng", psm: 7 });
+    assert.deepEqual(strip(r), strip(await S.ocrImage(buf, { lang: "eng", psm: 7 })));
+    assert.equal(H.ocrHelperStatus().spawned, before + 1);
+    H.closeOcrHelpers();
   });
 });

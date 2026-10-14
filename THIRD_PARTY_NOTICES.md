@@ -48,6 +48,13 @@ Source: <https://github.com/tesseract-ocr/tesseract> and
 <https://github.com/tesseract-ocr/tessdata_fast>. Tesseract uses Leptonica
 (BSD-2-Clause style license).
 
+The image also contains `/usr/local/bin/mtg-ocr`, built from this
+repository's `native/mtg-ocr.c` and dynamically linked against the same
+Debian packages' libraries: the Tesseract API (`libtesseract5`, Apache
+License 2.0) and Leptonica (`liblept5`, BSD-2-Clause style license). Both
+libraries are used unmodified; their headers come from `libtesseract-dev` and
+`libleptonica-dev` at build time only.
+
 ## libjpeg-turbo (Debian package in the image)
 
 `djpeg` comes from `libjpeg-turbo-progs`. libjpeg-turbo is covered by the
