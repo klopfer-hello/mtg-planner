@@ -1,14 +1,14 @@
 # Local overrides. Copy to docker-compose.override.yml (gitignored);
 # `docker compose` merges it automatically.
 #
-# Local build instead of pulling the published image. scripts/deploy.sh sets
-# VERSION to <semver>+<git sha>.
+# Run a locally built image instead of pulling the published one.
+# scripts/deploy.sh builds and tests mtg-planner:<semver>-<git sha> (on this
+# machine or on another one, shipping it over SSH) and stores the tag as
+# MTG_PLANNER_IMAGE in .env.
 services:
   mtg-planner:
-    build:
-      context: .
-      args:
-        VERSION: ${VERSION:-dev}
+    image: ${MTG_PLANNER_IMAGE:?set by scripts/deploy.sh}
+    pull_policy: never
     # Behind a reverse proxy, drop the published port and attach the proxy's
     # network and labels here instead, e.g.:
     # ports: !reset []

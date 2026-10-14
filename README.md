@@ -647,7 +647,10 @@ dependencies to install.
 ```bash
 # local build instead of the GHCR image
 cp docker-compose.override.yml.example docker-compose.override.yml
-scripts/deploy.sh      # VERSION=<semver>+<sha>, docker compose up -d --build, waits for healthy
+scripts/deploy.sh      # builds mtg-planner:<semver>-<sha>, runs the tests in it, backs up, switches, waits for healthy
+# ...or build here and deploy to another Docker host over SSH (image shipped with docker save/load)
+DEPLOY_HOST=user@host DEPLOY_DIR=/path/to/compose/dir scripts/deploy.sh
+scripts/deploy.sh --image mtg-planner:<tag>   # switch back to an image still on the target
 
 # tests (node:test, offline: Scryfall and the Claude CLI are stubbed; OCR and
 # djpeg tests skip when tesseract/djpeg/cjpeg are not installed)
