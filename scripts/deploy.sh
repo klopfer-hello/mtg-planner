@@ -25,9 +25,10 @@
 #                          volume installs the Claude Code CLI first)
 #
 # Usage:
-#   scripts/deploy.sh                  build, test, ship, back up, switch
+#   scripts/deploy.sh                  build, test, ship, switch
 #   scripts/deploy.sh --image <tag>    switch to an image already on the target (rollback)
-#   options: --skip-tests  --skip-backup  --allow-dirty
+#   options: --skip-tests  --allow-dirty
+# Backups stay a manual step (Import tab), on purpose: a deploy takes none.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -45,12 +46,11 @@ DEPLOY_HEALTH_TIMEOUT=${DEPLOY_HEALTH_TIMEOUT:-360}
 # Git Bash on Windows would rewrite the container paths below.
 export MSYS_NO_PATHCONV=1
 
-image=''; skip_tests=0; skip_backup=0; allow_dirty=0
+image=''; skip_tests=0; allow_dirty=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --image) image=${2:?--image needs a tag}; shift 2 ;;
     --skip-tests) skip_tests=1; shift ;;
-    --skip-backup) skip_backup=1; shift ;;
     --allow-dirty) allow_dirty=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -116,32 +116,15 @@ if [[ -z "$image" ]]; then
 fi
 
 echo "==> Switching ${DEPLOY_HOST:-local} ${DEPLOY_DIR} to ${image}"
-target "$image" "$DEPLOY_DIR" "$CONTAINER" "$SERVICE" "$skip_backup" "$DEPLOY_KEEP" "$DEPLOY_HEALTH_TIMEOUT" <<'REMOTE'
+target "$image" "$DEPLOY_DIR" "$CONTAINER" "$SERVICE" "$DEPLOY_KEEP" "$DEPLOY_HEALTH_TIMEOUT" <<'REMOTE'
 set -euo pipefail
-image=$1; dir=$2; container=$3; service=$4; skip_backup=$5; keep=$6; timeout=$7
+image=$1; dir=$2; container=$3; service=$4; keep=$5; timeout=$6
 cd "$dir"
 docker image inspect "$image" >/dev/null || { echo "image $image not found on the target" >&2; exit 1; }
 
 previous=$(docker inspect -f '{{.Config.Image}}' "$container" 2>/dev/null || true)
 state=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo missing)
 echo "current: ${previous:-none} (${state})"
-
-# The pre-deploy backup goes through the app's own backup API, so it is
-# consistent and shows up in the Import tab (restore = rollback of the data).
-if [[ $skip_backup == 1 ]]; then
-  echo "==> Backup skipped (--skip-backup)"
-elif [[ $state == missing ]]; then
-  echo "==> No container yet, nothing to back up"
-elif [[ $state != running ]]; then
-  echo "container $container is $state: cannot back up through the API (start it, or pass --skip-backup)" >&2
-  exit 1
-else
-  echo "==> Backup before the switch"
-  docker exec "$container" node -e "
-    fetch('http://127.0.0.1:8080/api/backups', { method: 'POST' })
-      .then(async r => { const b = await r.json(); if (!r.ok) throw new Error(r.status + ' ' + (b.error || '')); console.log('backup', b.name) })
-      .catch(e => { console.error('backup failed:', e.message); process.exit(1) })"
-fi
 
 # Rewrite only our own line of .env; it also holds secrets, so never print it
 # and never replace it with a partial copy.
