@@ -458,8 +458,6 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
    track: an implicit `auto` track sizes to the content's min-content width, so one
    long URL, code line or table would widen the whole column past the phone screen. */
 .chat-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
-.chat-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.chat-title h2 { flex: 1; min-width: 0; font-size: 1.1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .messages { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
 .msg { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
 .msg > * { min-width: 0; max-width: 100%; }
@@ -713,12 +711,88 @@ ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
 }
 .toast .btn { min-height: 36px; background: none; border-color: transparent; color: inherit; text-decoration: underline; }
 @media (min-width: 768px) { .toast { bottom: 24px; } }
-.binder-bar { display: grid; gap: 8px; }
+.binder-bar { display: grid; gap: 8px; min-width: 0; }
+.chips.scroll { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; padding-bottom: 4px; scrollbar-width: thin; }
+.chip.lg { min-height: 44px; padding: 0 14px; flex: none; }
+.chip .cnt { opacity: .72; font-variant-numeric: tabular-nums; }
+.chip.dashed { border-style: dashed; }
+.tile { position: relative; }
+.sel-mark {
+  position: absolute; top: 6px; left: 6px; z-index: 1; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center; background: rgba(15, 12, 30, .55); border: 2px solid #fff; color: #fff;
+}
+.sel-mark svg { width: 18px; height: 18px; }
+.tile[aria-pressed="true"] .img { box-shadow: 0 0 0 3px var(--accent), var(--shadow); }
+.tile[aria-pressed="true"] .sel-mark, .list-row[aria-pressed="true"] .sel-mark { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.list-row .sel-mark { position: static; width: 28px; height: 28px; background: var(--surface); border-color: var(--border); color: var(--accent-ink); }
+.list-row[aria-pressed="true"] { background: var(--accent-soft); }
+.move-btn { min-height: 40px; padding: 0 10px; }
+.radio-list { display: grid; gap: 8px; max-height: 46vh; max-height: 46dvh; overflow: auto; overscroll-behavior: contain; }
+.master-box { display: grid; gap: 8px; }
 .binder-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--border); }
 .binder-row:first-child { border-top: 0; }
 .kv-inline { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .88rem; }
 .meter { height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
 .meter > span { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .4s; }
+
+/* ==========================================================================
+   Deck allocation (idea / built), shopping lists
+   ========================================================================== */
+.status-toggle button { min-height: 44px; padding: 0 14px; }
+.deck-row .conf { flex-basis: 100%; font-size: .78rem; color: var(--bad); font-weight: 600; overflow-wrap: anywhere; }
+.deck-row .free { flex-basis: 100%; font-size: .78rem; color: var(--muted); }
+.buy-list { display: grid; }
+.buy-row {
+  display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center;
+  min-height: 44px; padding: 6px 10px; border-top: 1px solid var(--border); font-size: .9rem;
+}
+.buy-row:first-child { border-top: 0; }
+.buy-row .q { font-weight: 800; color: var(--muted); font-variant-numeric: tabular-nums; }
+.buy-row .nm { min-width: 0; display: grid; gap: 1px; }
+.buy-row .nm b { font-weight: 600; overflow-wrap: anywhere; }
+.buy-row .nm .sub { font-size: .78rem; color: var(--muted); overflow-wrap: anywhere; }
+.buy-row .p { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.buy-total { display: flex; justify-content: space-between; gap: 8px; padding: 10px; border-top: 1px solid var(--border); font-weight: 700; }
+.usage-line { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: .9rem; }
+.conflict-list { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; font-size: .86rem; }
+.delta-list { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: .86rem; max-height: 40vh; overflow: auto; }
+
+/* ==========================================================================
+   Planner on phones: pinned chat bar + composer, "Latest" button
+   ========================================================================== */
+.planner-bar {
+  position: sticky; top: calc(var(--header-h) + env(safe-area-inset-top)); z-index: 25;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px;
+  margin: -16px -16px 0; padding: 6px max(8px, env(safe-area-inset-right)) 6px max(8px, env(safe-area-inset-left));
+  background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.planner-bar h2 { font-size: 1rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
+.planner-bar .btn { padding: 0 10px; }
+@media (min-width: 768px) { .planner-bar { margin: -24px 0 0; padding: 8px 0; } }
+@media (min-width: 960px) {
+  .planner-bar { grid-template-columns: minmax(0, 1fr) auto; }
+  .planner-bar h2 { font-size: 1.1rem; padding: 0; }
+}
+.to-latest {
+  position: fixed; z-index: 21; right: max(16px, env(safe-area-inset-right));
+  bottom: calc(var(--composer-bottom) + var(--composer-h, 64px) + 8px);
+  min-height: 44px; border-radius: 999px; box-shadow: var(--shadow-lg); padding: 0 16px;
+}
+.planner { --composer-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); }
+.planner.kb-open { --composer-bottom: var(--kb, 0px); }
+/* The keyboard covers --kb px: extend the page so its end can scroll above the lifted composer. */
+@media (max-width: 959px) {
+  .planner { padding-bottom: calc(var(--composer-h, 64px) + 8px); }
+  .planner.kb-open { padding-bottom: calc(var(--composer-h, 64px) + 8px + var(--kb, 0px)); }
+  .planner .composer {
+    position: fixed; left: 0; right: 0; bottom: var(--composer-bottom); z-index: 20;
+    padding: 8px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+  }
+  .planner .composer form { max-width: 1168px; margin: 0 auto; }
+}
+@media (min-width: 960px) {
+  .to-latest { bottom: 96px; }
+}
 </style>
 </head>
 <body>
@@ -759,9 +833,10 @@ const store = {
 };
 
 class ApiError extends Error {
-  constructor(status, message) {
+  constructor(status, message, data = null) {
     super(message);
     this.status = status;
+    this.data = data; // the JSON error body ({error, code, ...}) when there is one
   }
 }
 
@@ -795,7 +870,7 @@ async function api(path, { method = "GET", json, body, headers = {}, signal } = 
   if (!res.ok) {
     let message = data && typeof data === "object" && data.error;
     if (!message && typeof data === "string" && data.trim() && !data.trim().startsWith("<")) message = data.trim().slice(0, 300);
-    throw new ApiError(res.status, message || `Request failed: HTTP ${res.status} ${res.statusText}`.trim());
+    throw new ApiError(res.status, message || `Request failed: HTTP ${res.status} ${res.statusText}`.trim(), data && typeof data === "object" ? data : null);
   }
   return data;
 }
@@ -1022,6 +1097,8 @@ const Icon = {
   crown: () => <Svg><path d="M4 18h16M5 15l-1-9 5 4 3-6 3 6 5-4-1 9z" /></Svg>,
   zoomIn: () => <Svg><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5M8 11h6M11 8v6" /></Svg>,
   zoomOut: () => <Svg><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5M8 11h6" /></Svg>,
+  cart: () => <Svg><path d="M3 4h2l2.4 11h10.2L20 8H6.2" /><circle cx="9" cy="19.5" r="1.3" /><circle cx="17" cy="19.5" r="1.3" /></Svg>,
+  box: () => <Svg><path d="M3 8l9-4 9 4v9l-9 4-9-4z" /><path d="M3 8l9 4 9-4M12 12v9" /></Svg>,
 };
 
 // ===========================================================================
@@ -1050,7 +1127,7 @@ function ErrorNotice({ error, onRetry, onDismiss }) {
   );
 }
 
-const SOURCE_BADGE = { manabox: "warn", claude: "accent", manual: "", scan: "ok" };
+const SOURCE_BADGE = { manabox: "warn", claude: "accent", manual: "", scan: "ok", app: "accent" };
 function SourceBadge({ source }) {
   return <span className={`badge ${SOURCE_BADGE[source] ?? ""}`}>{source === "claude" ? "✦ claude" : source}</span>;
 }
@@ -1104,6 +1181,24 @@ function Sheet({ title, onClose, children, actions, pinned }) {
 // Card detail sheet
 // ===========================================================================
 
+/** "owned 1 · used in 3 decks (2 built) · 1 short" */
+function CardUsage({ usage }) {
+  if (!usage || typeof usage !== "object" || usage.owned == null) return null;
+  const decks = asList(usage.decks);
+  const ids = new Set(decks.map((d) => d.id ?? d.name));
+  const built = new Set(decks.filter((d) => d.status === "built").map((d) => d.id ?? d.name));
+  const available = usage.available ?? (usage.owned - (usage.built_demand ?? 0));
+  return (
+    <div className="usage-line" aria-label="Copies and decks">
+      <span>owned <b>{fmtInt(usage.owned)}</b></span>
+      {ids.size > 0 && <span className="muted">· used in {plural(ids.size, "deck")}{built.size ? ` (${fmtInt(built.size)} built)` : ""}</span>}
+      {available < 0
+        ? <span className="badge bad">{fmtInt(-available)} short</span>
+        : usage.built_demand > 0 && <span className="badge ok">{fmtInt(available)} free</span>}
+    </div>
+  );
+}
+
 const LEGAL_FORMATS = [
   ["commander", "Commander"], ["standard", "Standard"], ["pioneer", "Pioneer"], ["modern", "Modern"],
   ["legacy", "Legacy"], ["vintage", "Vintage"], ["pauper", "Pauper"], ["brawl", "Brawl"],
@@ -1113,10 +1208,13 @@ const PRICE_KEYS = [
   ["usd", "USD", "$"], ["usd_foil", "USD foil", "$"], ["usd_etched", "USD etched", "$"],
 ];
 
-function CardSheet({ id, onClose, onOpenCard, onOpenDeck }) {
+function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [attempt, setAttempt] = useState(0);
+  const [moveRow, setMoveRow] = useState(null); // an owned row to move
+  const [moved, setMoved] = useState(null); // confirmation text
+  const [guarded, masterDialog] = useMasterConfirm();
   useEffect(() => {
     let alive = true;
     setError(null);
@@ -1129,6 +1227,8 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck }) {
   const card = data?.card;
   const loadingOther = Boolean(data && data.card.scryfall_id !== id && !error);
   const totalOwned = data ? data.owned.reduce((a, r) => a + r.quantity, 0) : 0;
+  // usage.decks carries each deck's status; fall back to the plain list.
+  const inDecks = data ? (asList(data.usage?.decks).length ? asList(data.usage.decks) : asList(data.decks)) : [];
 
   return (
     <Sheet title={card ? card.name : error ? "Card" : "Loading…"} onClose={onClose}
@@ -1154,6 +1254,7 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck }) {
                 </span>
               </div>
               <div><b>{card.type_line}</b></div>
+              <CardUsage usage={data.usage} />
               <div className="oracle"><OracleText text={card.oracle_text} /></div>
               <dl className="kv">
                 <dt>Printing</dt>
@@ -1191,10 +1292,12 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck }) {
                 : (
                   <div className="table-wrap">
                     <table className="t">
-                      <thead><tr><th>Set</th><th>Finish</th><th>Lang</th><th>Condition</th><th>Binder</th>{data.owned.some((r) => r.source) && <th>Source</th>}<th className="num">Qty</th></tr></thead>
+                      <thead><tr><th><span className="sr-only">Move</span></th><th>Set</th><th>Finish</th><th>Lang</th><th>Condition</th><th>Binder</th>{data.owned.some((r) => r.source) && <th>Source</th>}<th className="num">Qty</th></tr></thead>
                       <tbody>
                         {data.owned.map((r, i) => (
-                          <tr key={i} aria-current={r.scryfall_id === id || undefined}>
+                          <tr key={r.id ?? i} aria-current={r.scryfall_id === id || undefined}>
+                            <td style={{ paddingRight: 0 }}><button type="button" className="btn sm move-btn" onClick={() => { setMoved(null); setMoveRow(r); }}
+                              aria-label={`Move ${r.quantity > 1 ? "copies" : "copy"} of ${(r.set_code || "").toUpperCase()} #${r.collector_number} in ${r.binder || "Unsorted"} to another binder`}>Move…</button></td>
                             <td>
                               {r.scryfall_id === id
                                 ? <b title={r.set_name}>{(r.set_code || "").toUpperCase()} #{r.collector_number}</b>
@@ -1203,7 +1306,7 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck }) {
                             <td>{r.finish === "normal" ? "—" : r.finish}</td>
                             <td>{(r.language || "").toUpperCase()}</td>
                             <td>{conditionLabel(r.condition)}</td>
-                            <td>{r.binder || <span className="muted">—</span>}</td>
+                            <td>{r.binder || <span className="muted">Unsorted</span>}</td>
                             {data.owned.some((x) => x.source) && <td>{r.source ? <SourceBadge source={r.source} /> : "—"}</td>}
                             <td className="num"><b>{r.quantity}</b></td>
                           </tr>
@@ -1212,18 +1315,20 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck }) {
                     </table>
                   </div>
                 )}
+              {moved && <div className="notice ok" role="status"><span aria-hidden="true">✓</span><div className="grow">{moved}</div></div>}
             </section>
 
             <section className="stack">
               <h3>In decks</h3>
-              {data.decks.length === 0
+              {inDecks.length === 0
                 ? <p className="muted" style={{ margin: 0 }}>Not in any deck.</p>
                 : (
                   <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 2 }}>
-                    {data.decks.map((d) => (
+                    {inDecks.map((d) => (
                       <li key={`${d.id}-${d.board}`}>
                         <button type="button" className="linkbtn" onClick={() => onOpenDeck(d.id)}>{d.name}</button>
                         <span className="muted"> · {d.quantity}× {d.board}</span>
+                        {d.status && <> <StatusBadge status={d.status} /></>}
                       </li>
                     ))}
                   </ul>
@@ -1236,6 +1341,22 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck }) {
           </div>
         </div>
       )}
+      {moveRow && card && (
+        <MoveSheet title={`Move ${card.name}`} maxQty={moveRow.quantity} exclude={moveRow.binder}
+          intro={<span className="small muted">{(moveRow.set_code || "").toUpperCase()} #{moveRow.collector_number} · {moveRow.finish === "normal" ? "non-foil" : moveRow.finish} · {(moveRow.language || "").toUpperCase()} · {conditionLabel(moveRow.condition)} · from <b>{moveRow.binder || "Unsorted"}</b></span>}
+          onClose={() => setMoveRow(null)}
+          onMove={async ({ quantity, to_binder, create }) => {
+            const item = { scryfall_id: moveRow.scryfall_id, finish: moveRow.finish, language: moveRow.language, condition: moveRow.condition, binder: moveRow.binder, source: moveRow.source, quantity };
+            const res = await guarded((confirm) => api("/api/collection/move", { method: "POST", json: { items: [item], to_binder, create, confirm_master: confirm } }));
+            if (!res) return false;
+            setMoveRow(null);
+            setMoved(`Moved ${plural(res.moved_copies, "copy", "copies")} to ${res.to_binder || "Unsorted"}.`);
+            setAttempt((a) => a + 1);
+            onChanged?.();
+            return true;
+          }} />
+      )}
+      {masterDialog}
     </Sheet>
   );
 }
@@ -1252,6 +1373,7 @@ const QUICK_FILTERS = [
   ["Foils", "is:foil"],
   ["Valuable", "eur>5"],
   ["Mythics", "r:mythic"],
+  ["Free copies", "avail>=1"],
 ];
 const SORTS = [
   ["name", "Name", "asc"], ["price", "Price", "desc"], ["cmc", "Mana value", "asc"],
@@ -1306,12 +1428,14 @@ function QueryHelp() {
   );
 }
 
-function CardTile({ row, group, onOpen }) {
+function CardTile({ row, group, onOpen, selecting = false, selected = false, onToggle }) {
   // Badge text names the special finish(es) owned: "foil", "etched" or both.
   const foil = (row.finishes || "").split(",").filter((f) => f === "foil" || f === "etched").join(" · ");
-  const label = `${row.name}, ${row.qty} owned${row.price ? `, ${fmtPrice(row.price)}` : ""}`;
+  const label = `${selecting ? "Select " : ""}${row.name}, ${row.qty} owned${row.price ? `, ${fmtPrice(row.price)}` : ""}`;
   return (
-    <button type="button" className="tile" onClick={() => onOpen(row.scryfall_id)} aria-label={label}>
+    <button type="button" className="tile" onClick={() => (selecting ? onToggle() : onOpen(row.scryfall_id))} aria-label={label}
+      aria-pressed={selecting ? selected : undefined}>
+      {selecting && <span className="sel-mark" aria-hidden="true">{selected && <Icon.check />}</span>}
       <div className="img">
         {row.image_small
           ? <img src={row.image_small} alt="" loading="lazy" decoding="async" width="146" height="204" />
@@ -1327,16 +1451,18 @@ function CardTile({ row, group, onOpen }) {
   );
 }
 
-function CardListRow({ row, group, onOpen }) {
+function CardListRow({ row, group, onOpen, selecting = false, selected = false, onToggle }) {
   const where = group === "printing" || row.printing_count === 1
     ? `${(row.set_code || "").toUpperCase()} #${row.collector_number}`
     : `${row.printing_count} printings`;
   return (
-    <button type="button" className="list-row" onClick={() => onOpen(row.scryfall_id)}>
-      <span className="q">{row.qty}×</span>
+    <button type="button" className="list-row" onClick={() => (selecting ? onToggle() : onOpen(row.scryfall_id))} aria-pressed={selecting ? selected : undefined}>
+      {selecting
+        ? <span className="sel-mark" aria-hidden="true">{selected && <Icon.check />}</span>
+        : <span className="q">{row.qty}×</span>}
       <span className="main">
         <span className="nm"><b>{row.name}</b> <ManaCost cost={row.mana_cost} /></span>
-        <span className="sub">{row.type_line} · {where}</span>
+        <span className="sub">{selecting ? `${row.qty}× · ` : ""}{row.type_line} · {where}</span>
       </span>
       <span className="end">
         <span>{fmtPrice(row.price)}</span>
@@ -1353,6 +1479,14 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
   const [sort, setSort] = useState(() => store.get("mtg.sort", "name"));
   const [dir, setDir] = useState(() => store.get("mtg.dir", "asc"));
   const [view, setView] = useState(() => store.get("mtg.view", "grid"));
+  // Exact binder filter: null = all, "" = Unsorted, else the binder's name.
+  const [binder, setBinder] = useState(() => store.get("mtg.binder", null));
+  const binderList = useBinderList(dataVersion);
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState(() => new Map()); // key -> {key, oracle_id, scryfall_id, name}
+  const [sheet, setSheet] = useState(null); // "new" | "manage" | "move"
+  const [toast, setToast] = useState(null);
+  const [guarded, masterDialog] = useMasterConfirm();
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1363,6 +1497,19 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
 
   useEffect(() => { store.set("mtg.q", q); }, [q]);
   useEffect(() => { store.set("mtg.group", group); store.set("mtg.sort", sort); store.set("mtg.dir", dir); store.set("mtg.view", view); }, [group, sort, dir, view]);
+  useEffect(() => { store.set("mtg.binder", binder); }, [binder]);
+  // A filter on a binder that no longer exists (renamed, deleted) falls back to all cards.
+  useEffect(() => {
+    const d = binderList.data;
+    if (d && binder && !d.binders.some((b) => sameName(b.name, binder))) setBinder(null);
+  }, [binderList.data, binder]);
+  // Selection keys depend on the grouping and the binder scope.
+  useEffect(() => { setSelected(new Map()); }, [group, binder]);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const load = useCallback(async (offset) => {
     const id = ++reqId.current;
@@ -1371,6 +1518,7 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
     setError(null);
     try {
       const params = new URLSearchParams({ q: dq, group, sort, dir, limit: String(PAGE_SIZE), offset: String(offset) });
+      if (binder != null) params.set("binder", binder);
       const data = await api(`/api/collection?${params}`);
       if (id !== reqId.current) return;
       setTotal(data.total);
@@ -1382,7 +1530,7 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
     } finally {
       if (id === reqId.current) { loadingRef.current = false; setLoading(false); }
     }
-  }, [dq, group, sort, dir]);
+  }, [dq, group, sort, dir, binder]);
 
   useEffect(() => { load(0); }, [load, dataVersion]);
 
@@ -1409,7 +1557,24 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
     setDir(SORTS.find(([k]) => k === s)?.[2] || "asc");
   };
 
-  const emptyCollection = total === 0 && !dq;
+  const emptyCollection = total === 0 && !dq && binder == null;
+  const keyOf = (r) => (group === "card" ? r.oracle_id || r.scryfall_id : r.scryfall_id);
+  const toggleRow = (r) => setSelected((m) => {
+    const n = new Map(m);
+    const k = keyOf(r);
+    if (n.has(k)) n.delete(k); else n.set(k, { key: k, oracle_id: r.oracle_id, scryfall_id: r.scryfall_id, name: r.name });
+    return n;
+  });
+  const allOnPage = rows.length > 0 && rows.every((r) => selected.has(keyOf(r)));
+  const selectPage = () => setSelected((m) => {
+    const n = new Map(m);
+    if (allOnPage) for (const r of rows) n.delete(keyOf(r));
+    else for (const r of rows) n.set(keyOf(r), { key: keyOf(r), oracle_id: r.oracle_id, scryfall_id: r.scryfall_id, name: r.name });
+    return n;
+  });
+  const stopSelecting = () => { setSelecting(false); setSelected(new Map()); };
+  const binderName = binder == null ? null : binder || UNSORTED;
+  const afterChange = (text) => { if (text) setToast(text); binderList.reload(); onChanged?.(); };
 
   return (
     <div className="stack-lg">
@@ -1430,7 +1595,8 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
               onClick={() => toggleFilter(term)}>{label}</button>
           ))}
         </div>
-        <BinderBar dataVersion={dataVersion} tokens={tokens} onToggle={toggleFilter} onChanged={onChanged} />
+        <BinderBar data={binderList.data} error={binderList.error} onRetry={binderList.reload} filter={binder} onFilter={setBinder}
+          onNew={() => setSheet("new")} onManage={() => setSheet("manage")} />
         <QueryHelp />
         <div className="toolbar">
           <div className="segmented" role="group" aria-label="Group by">
@@ -1445,6 +1611,8 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
             aria-label={dir === "asc" ? "Ascending, switch to descending" : "Descending, switch to ascending"} title={dir === "asc" ? "Ascending" : "Descending"}>
             {dir === "asc" ? <Icon.up /> : <Icon.down />}
           </button>
+          <button type="button" className={`btn${selecting ? " primary" : ""}`} aria-pressed={selecting} onClick={() => (selecting ? stopSelecting() : setSelecting(true))}
+            disabled={!rows.length && !selecting}><Icon.check /> {selecting ? "Done" : "Select"}</button>
           <div className="segmented" role="group" aria-label="View" style={{ marginLeft: "auto" }}>
             <button type="button" aria-pressed={view === "grid"} aria-label="Grid view" onClick={() => setView("grid")}><Icon.grid /></button>
             <button type="button" aria-pressed={view === "list"} aria-label="List view" onClick={() => setView("list")}><Icon.list /></button>
@@ -1454,7 +1622,7 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
 
       <div className="stack">
         <div className="result-count" aria-live="polite">
-          {total != null && !emptyCollection && `${plural(total, group === "card" ? "card" : "printing")}${dq ? " match" + (total === 1 ? "es" : "") : ""}`}
+          {total != null && !emptyCollection && `${plural(total, group === "card" ? "card" : "printing")}${dq ? " match" + (total === 1 ? "es" : "") : ""}${binderName ? ` in ${binderName}` : ""}`}
         </div>
 
         {error && <ErrorNotice error={error} onRetry={() => load(rows.length && hasMore ? rows.length : 0)} />}
@@ -1469,13 +1637,22 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
             </div>
           </div>
         )}
+        {total === 0 && !dq && binder != null && !error && (
+          <div className="empty card">
+            <h3>{binder ? `“${binder}” is empty` : "Nothing unsorted"}</h3>
+            <p style={{ margin: 0 }}>{binder ? "Show All, tap Select, pick cards and move them into this binder. Or use Move… on a card's owned printings." : "Every copy is in a binder."}</p>
+            <button type="button" className="btn" onClick={() => setBinder(null)}>Show all cards</button>
+          </div>
+        )}
         {total === 0 && dq && !error && (
           <div className="empty"><h3>No matches</h3><p style={{ margin: 0 }}>Nothing in your collection matches <code>{dq}</code>.</p></div>
         )}
 
         {rows.length > 0 && (view === "grid"
-          ? <div className="grid">{rows.map((r) => <CardTile key={r.scryfall_id} row={r} group={group} onOpen={onOpenCard} />)}</div>
-          : <div className="list">{rows.map((r) => <CardListRow key={r.scryfall_id} row={r} group={group} onOpen={onOpenCard} />)}</div>)}
+          ? <div className="grid">{rows.map((r) => <CardTile key={r.scryfall_id} row={r} group={group} onOpen={onOpenCard}
+              selecting={selecting} selected={selected.has(keyOf(r))} onToggle={() => toggleRow(r)} />)}</div>
+          : <div className="list">{rows.map((r) => <CardListRow key={r.scryfall_id} row={r} group={group} onOpen={onOpenCard}
+              selecting={selecting} selected={selected.has(keyOf(r))} onToggle={() => toggleRow(r)} />)}</div>)}
 
         {loading && <Spinner label={rows.length ? "Loading more…" : "Searching…"} />}
         <div ref={sentinel} aria-hidden="true" />
@@ -1485,7 +1662,66 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
           </button>
         )}
       </div>
+
+      {selecting && (
+        <div className="commit-bar" role="region" aria-label="Selection">
+          <span className="grow small">{selected.size ? plural(selected.size, group === "card" ? "card" : "printing") + " selected" : "Tap cards to select"}</span>
+          <button type="button" className="btn ghost" onClick={selectPage} disabled={!rows.length}>{allOnPage ? "None" : "All"}</button>
+          <button type="button" className="btn primary" disabled={!selected.size} onClick={() => setSheet("move")}>Move to…</button>
+        </div>
+      )}
+      {sheet === "new" && (
+        <NewBinderSheet onClose={() => setSheet(null)} onCreated={(name) => {
+          setSheet(null);
+          afterChange(`Created “${name}”. Tap Select to move cards into it.`);
+        }} />
+      )}
+      {sheet === "manage" && (
+        <ManageBindersSheet data={binderList.data} onClose={() => setSheet(null)} onChanged={() => afterChange(null)} />
+      )}
+      {sheet === "move" && (
+        <BulkMoveSheet items={[...selected.values()]} group={group} binder={binder} guarded={guarded} onClose={() => setSheet(null)}
+          onDone={(res) => {
+            setSheet(null);
+            stopSelecting();
+            afterChange(`Moved ${plural(res.moved_copies, "copy", "copies")} to ${res.to_binder || UNSORTED}`);
+          }} />
+      )}
+      {masterDialog}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite">
+          <span>{toast}</span>
+          <button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setToast(null)} style={{ textDecoration: "none" }}><Icon.close /></button>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** Move every copy of the selected cards (or only those in the filtered binder). */
+function BulkMoveSheet({ items, group, binder, guarded, onClose, onDone }) {
+  const [scoped, setScoped] = useState(binder != null);
+  const what = plural(items.length, group === "card" ? "card" : "printing");
+  return (
+    <MoveSheet title={`Move ${what}`} exclude={scoped ? binder : null} submitLabel="Move" onClose={onClose}
+      intro={<span className="small muted" style={{ overflowWrap: "anywhere" }}>{items.slice(0, 6).map((i) => i.name).join(", ")}{items.length > 6 ? ` and ${items.length - 6} more` : ""}</span>}
+      onMove={async ({ to_binder, create }) => {
+        const from = scoped && binder != null ? { from_binder: binder } : {};
+        const list = items.map((i) => (group === "card" && i.oracle_id ? { oracle_id: i.oracle_id, ...from } : { printing_id: i.scryfall_id, ...from }));
+        const res = await guarded((confirm) => api("/api/collection/move", { method: "POST", json: { items: list, to_binder, create, confirm_master: confirm } }));
+        if (!res) return false;
+        onDone(res);
+        return true;
+      }}>
+      {binder != null ? (
+        <label className="radio-card">
+          <input type="checkbox" checked={scoped} onChange={(e) => setScoped(e.target.checked)} />
+          <span><b>Only copies in {binder || UNSORTED}</b><br /><span className="small muted">{scoped ? "Copies in other binders stay where they are." : `Every copy of the selected ${group === "card" ? "cards" : "printings"} moves, from all binders.`}</span></span>
+        </label>
+      ) : (
+        <span className="small muted">Every copy of the selected {group === "card" ? "cards (all printings)" : "printings"} moves, from all binders.</span>
+      )}
+    </MoveSheet>
   );
 }
 
@@ -1571,7 +1807,7 @@ function DeckImportForm({ onCreated, onCancel }) {
   );
 }
 
-function DeckList({ dataVersion, onOpen, refreshKey }) {
+function DeckList({ dataVersion, onOpen, onShopping, refreshKey }) {
   const [decks, setDecks] = useState(null);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -1585,7 +1821,10 @@ function DeckList({ dataVersion, onOpen, refreshKey }) {
     <div className="stack-lg">
       <div className="page-title">
         <h1>Decks</h1>
-        {!showForm && <button type="button" className="btn primary" onClick={() => setShowForm(true)}><Icon.plus /> Import decklist</button>}
+        <div className="row">
+          {decks?.some((d) => d.status) && <button type="button" className="btn" onClick={onShopping}><Icon.cart /> Shopping list</button>}
+          {!showForm && <button type="button" className="btn primary" onClick={() => setShowForm(true)}><Icon.plus /> Import decklist</button>}
+        </div>
       </div>
       {showForm && (
         <DeckImportForm onCancel={() => setShowForm(false)}
@@ -1612,6 +1851,8 @@ function DeckList({ dataVersion, onOpen, refreshKey }) {
             <button key={d.id} type="button" className="deck-item" onClick={() => onOpen(d.id)}>
               <span className="t">{d.name}</span>
               <span className="row small">
+                <StatusBadge status={d.status} />
+                {d.conflict_count > 0 && <span className="badge bad" title="Cards this deck shares with another built deck, without enough copies">⚠ {plural(d.conflict_count, "conflict")}</span>}
                 {d.format && <span className="badge">{d.format}</span>}
                 <SourceBadge source={d.source} />
                 <span className="muted">{plural(d.card_count, "card")}</span>
@@ -1628,10 +1869,24 @@ function DeckList({ dataVersion, onOpen, refreshKey }) {
 
 function DeckCardRow({ card, onOpenCard, onActions }) {
   const [peek, setPeek] = useState(false);
+  const elsewhere = asList(card.used_elsewhere).filter((u) => u && (u.name || typeof u === "string"));
+  const free = card.available_for_this;
+  const hasFree = !card.basic && typeof free === "number";
+  const freeText = hasFree ? `own ${card.owned ?? 0} · ${Math.max(0, free)} free` : null;
   let badge;
   if (card.basic) badge = <span className="badge" title="Basic land">basic</span>;
   else if (!card.missing) badge = <span className="badge ok" aria-label={`Owned (${card.owned})`} title={`You own ${card.owned}`}>✓</span>;
-  else badge = <span className="badge bad" aria-label={`Missing ${card.missing}, own ${card.owned}`} title={`Missing ${card.missing} (you own ${card.owned})`}>✗ {card.missing}</span>;
+  else badge = <span className="badge bad" aria-label={`Missing ${card.missing}, ${freeText || `own ${card.owned}`}`} title={`Missing ${card.missing} (${freeText || `you own ${card.owned}`})`}>✗ {card.missing}</span>;
+  // Warning icon next to the ownership badge whenever another BUILT deck uses
+  // the card: playing both decks needs more copies. Hover shows the decks; on
+  // phones a tap on the row opens the peek with the same list.
+  const builtElsewhere = card.basic ? [] : elsewhere.filter((u) => typeof u === "string" || !u.status || u.status === "built");
+  const sharedTitle = builtElsewhere.length
+    ? `${card.conflict ? `Not enough copies (own ${card.owned ?? 0}). ` : ""}Also used in: ${builtElsewhere.map((u) => (typeof u === "string" ? u : `${u.name}${u.quantity ? ` (${u.quantity}×)` : ""}`)).join(", ")}`
+    : null;
+  const sharedBadge = sharedTitle && (
+    <span className={`badge ${card.conflict ? "bad" : "warn"}`} role="img" aria-label={sharedTitle} title={sharedTitle}>⚠</span>
+  );
   const unresolved = !card.scryfall_id;
   return (
     <>
@@ -1643,9 +1898,11 @@ function DeckCardRow({ card, onOpenCard, onActions }) {
           <b>{card.name}</b>
           <ManaCost cost={card.mana_cost} />
           {unresolved && <span className="badge warn">unresolved</span>}
+          {hasFree && free < (card.owned ?? 0) && <span className="free">{freeText}</span>}
         </span>
         <span className="end">
           <span className="price">{fmtPrice(card.price)}</span>
+          {sharedBadge}
           {badge}
         </span>
       </button>
@@ -1658,7 +1915,10 @@ function DeckCardRow({ card, onOpenCard, onActions }) {
           {card.image_small ? <img src={card.image_small} alt={card.name} loading="lazy" /> : <span />}
           <div className="stack small" style={{ gap: 6, alignContent: "start" }}>
             <span>{card.type_line}</span>
-            <span className="muted">{(card.set_code || "").toUpperCase()} #{card.collector_number} · own {card.owned}</span>
+            <span className="muted">{(card.set_code || "").toUpperCase()} #{card.collector_number} · {freeText || `own ${card.owned}`}</span>
+            {elsewhere.length > 0 && (
+              <span className="muted">Also in: {elsewhere.map((u) => (typeof u === "string" ? u : `${u.name}${u.status ? ` (${u.status})` : ""}${u.quantity ? ` ${u.quantity}×` : ""}`)).join(", ")}</span>
+            )}
             <button type="button" className="btn sm" style={{ justifySelf: "start" }} onClick={() => onOpenCard(card.scryfall_id)}>Card details</button>
           </div>
         </div>
@@ -1773,7 +2033,209 @@ function DeckValue({ value }) {
   );
 }
 
-function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk, onChanged }) {
+// ---------------------------------------------------------------------------
+// Deck allocation: idea / built status, conflicts, shopping lists, deck boxes
+
+const refName = (d) => (typeof d === "string" ? d : d?.name || "?");
+function StatusBadge({ status }) {
+  if (status !== "built" && status !== "idea") return null;
+  return status === "built"
+    ? <span className="badge ok" title="Built: this deck claims its cards">built</span>
+    : <span className="badge" title="Idea: doesn't claim cards">idea</span>;
+}
+
+/** Line EUR of a shopping-list item: cost_eur (need × unit price_eur), or null when unpriced. */
+function lineEurOf(qtyKey) {
+  const qty = (it) => Math.max(1, Number(it[qtyKey]) || 1);
+  return (it) => (it.cost_eur != null ? Number(it.cost_eur) : it.price_eur == null ? null : Number(it.price_eur) * qty(it));
+}
+
+function BuyList({ items, qtyKey, total, sub, label = "Total" }) {
+  const lineEur = lineEurOf(qtyKey);
+  return (
+    <div className="deck-section" style={{ padding: 0, gap: 0 }}>
+      <div className="buy-list">
+        {items.map((it, i) => {
+          const eur = lineEur(it);
+          return (
+            <div key={`${it.name}-${i}`} className="buy-row">
+              <span className="q">{it[qtyKey] ?? 1}×</span>
+              <span className="nm"><b>{it.name}</b>{sub && sub(it)}</span>
+              <span className="p">{eur == null ? <span className="muted">no €</span> : fmtEur(eur)}</span>
+            </div>
+          );
+        })}
+      </div>
+      {total != null && <div className="buy-total"><span>{label}</span><span>{fmtEur(total)}</span></div>}
+    </div>
+  );
+}
+
+/** "⚠ 2 cards are also in another built deck" + which decks. */
+function ConflictBanner({ deck, onOpenDeck }) {
+  const list = asList(deck.conflicts);
+  const n = deck.conflict_count ?? list.length;
+  if (!n) return null;
+  return (
+    <div className="notice error" role="status">
+      <span aria-hidden="true">⚠</span>
+      <div className="grow">
+        <b>{n === 1 ? "1 card is" : `${fmtInt(n)} cards are`} also in another built deck</b> and you don't own enough copies for all of them.
+        {list.length > 0 && (
+          <ul className="conflict-list">
+            {list.map((c, i) => {
+              const others = asList(c.decks).filter((d) => !(d && typeof d === "object" && (d.deck_id ?? d.id) === deck.id));
+              return (
+                <li key={`${c.name}-${i}`}>
+                  <b>{c.name}</b>: own {c.owned ?? "?"}, built decks need {c.demand ?? "?"}
+                  {others.length > 0 && <>{" · "}{others.map((d, j) => (
+                    <React.Fragment key={j}>{j > 0 && ", "}
+                      {typeof d === "object" && (d.deck_id ?? d.id) != null && onOpenDeck
+                        ? <button type="button" className="linkbtn" onClick={() => onOpenDeck(d.deck_id ?? d.id)}>{d.name}</button>
+                        : refName(d)}
+                      {typeof d === "object" && d.quantity ? ` ${d.quantity}×` : ""}
+                    </React.Fragment>))}</>}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** What to buy for this deck, given the copies that are free. */
+function DeckShopping({ shopping }) {
+  const items = asList(shopping?.items).filter((x) => x && x.name);
+  if (!items.length) return null;
+  return (
+    <section className="stack" style={{ gap: 8 }} aria-labelledby="deck-shop-title">
+      <h3 id="deck-shop-title" className="row" style={{ gap: 8 }}>Shopping list <span className="muted small">{plural(items.reduce((a, x) => a + (Number(x.need) || 1), 0), "card")}</span></h3>
+      <BuyList items={items} qtyKey="need" total={shopping.total_eur} />
+    </section>
+  );
+}
+
+/** POST /api/decks/:id/to-binder: gather the deck's owned copies into one binder. */
+function DeckBoxSheet({ deck, onClose, onDone }) {
+  const [name, setName] = useState(deck.box_binder || `Deck box: ${deck.name}`.slice(0, 100));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null);
+  const [guarded, masterDialog] = useMasterConfirm();
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim() || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await guarded((confirm) => api(`/api/decks/${deck.id}/to-binder`, { method: "POST", json: { binder: name.trim(), confirm_master: confirm } }));
+      if (res) { setResult(res); onDone?.(res); }
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+  const moved = asList(result?.moved, "items", "cards");
+  const missing = asList(result?.missing, "items", "cards");
+  const movedCopies = result?.moved_copies ?? moved.reduce((a, m) => a + (Number(m.quantity ?? m.moved) || 0), 0);
+  return (
+    <Sheet title="Put into deck box" onClose={onClose}>
+      {!result ? (
+        <form className="stack" onSubmit={submit}>
+          <p className="small" style={{ margin: 0 }}>
+            Moves the copies <b>{deck.name}</b> needs into one binder: first from {UNSORTED}, then from your other binders.
+            Copies already in this binder{deck.source === "manabox" ? " or in the deck's own ManaBox binder" : ""} count as boxed;
+            copies in another built deck's box stay where they are.
+          </p>
+          <div className="field">
+            <label htmlFor="deckbox-name">Binder</label>
+            <input id="deckbox-name" className="input" style={{ fontSize: 16 }} maxLength={100} required value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <ErrorNotice error={error} />
+          <button type="submit" className="btn primary" disabled={busy || !name.trim()}>{busy ? "Moving…" : <><Icon.box /> Move cards into “{name.trim() || "…"}”</>}</button>
+        </form>
+      ) : (
+        <div className="stack">
+          <div className="notice ok" role="status"><span aria-hidden="true">✓</span><div className="grow">
+            Moved <b>{plural(movedCopies || 0, "copy", "copies")}</b> to {result.to_binder || result.binder || name.trim()}.
+          </div></div>
+          {moved.length > 0 && (
+            <Collapsible label={`Moved: ${plural(moved.length, "card")}`}>
+              <ul className="delta-list">
+                {moved.map((m, i) => <li key={i}>{typeof m === "string" ? m : <><b>{m.quantity ?? m.moved ?? ""}{m.quantity ?? m.moved ? "× " : ""}</b>{m.name}{m.from_binder != null ? <span className="muted"> · from {m.from_binder || UNSORTED}</span>
+                  : asList(m.from).length > 0 && <span className="muted"> · from {asList(m.from).map((f) => `${f.binder || UNSORTED}${asList(m.from).length > 1 ? ` ${f.quantity}×` : ""}`).join(", ")}</span>}</>}</li>)}
+              </ul>
+            </Collapsible>
+          )}
+          {missing.length > 0 ? (
+            <div className="notice warn"><span aria-hidden="true">✗</span><div className="grow">
+              <b>Still missing {plural(missing.length, "card")}:</b>
+              <ul className="delta-list" style={{ marginTop: 4 }}>
+                {missing.map((m, i) => <li key={i}>{typeof m === "string" ? m : <>{m.quantity ?? m.missing ?? m.need ?? 1}× {m.name}</>}</li>)}
+              </ul>
+            </div></div>
+          ) : <span className="small muted">Every owned card the deck needs is in the deck box now.</span>}
+          <button type="button" className="btn primary" onClick={onClose}>Done</button>
+        </div>
+      )}
+      {masterDialog}
+    </Sheet>
+  );
+}
+
+/** Everything short across all BUILT decks, plus what each deck still misses. */
+function ShoppingListView({ dataVersion, onBack, onOpenDeck }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const load = useCallback(() => {
+    setError(null);
+    api("/api/shopping-list").then(setData).catch((e) => setError(`Could not load the shopping list: ${e.message}`));
+  }, []);
+  useEffect(load, [load, dataVersion]);
+  const items = asList(data?.built?.items).filter((x) => x && x.name);
+  const perDeck = asList(data?.per_deck).filter((d) => d && d.id != null);
+  return (
+    <div className="stack-lg">
+      <div><button type="button" className="btn ghost" onClick={onBack} style={{ marginLeft: -8 }}><Icon.back /> All decks</button></div>
+      <div className="page-title"><h1>Shopping list</h1></div>
+      <ErrorNotice error={error} onRetry={load} />
+      {!data && !error && <Spinner label="Loading shopping list…" />}
+      {data && (
+        <>
+          <section className="stack" aria-labelledby="shop-built-title">
+            <h2 id="shop-built-title">For your built decks</h2>
+            {items.length === 0
+              ? <div className="notice ok"><span aria-hidden="true">✓</span><div className="grow">You own enough copies for every built deck.</div></div>
+              : (
+                <>
+                  <span className="small muted">Cards your built decks need together, minus what you own.</span>
+                  <BuyList items={items} qtyKey="short" total={data.built?.total_eur}
+                    sub={(it) => asList(it.decks).length > 0 && <span className="sub">{asList(it.decks).map(refName).join(", ")}</span>} />
+                </>
+              )}
+          </section>
+          {perDeck.length > 0 && (
+            <section className="stack" aria-labelledby="shop-deck-title">
+              <h2 id="shop-deck-title">Per deck</h2>
+              <span className="small muted">Missing cards per deck, counting only free copies (not used by other built decks).</span>
+              <div className="list">
+                {perDeck.map((d) => (
+                  <button key={d.id} type="button" className="list-row" style={{ gridTemplateColumns: "minmax(0, 1fr) auto" }} onClick={() => onOpenDeck(d.id)}>
+                    <span className="main">
+                      <span className="nm"><b>{d.name}</b> <StatusBadge status={d.status} /></span>
+                      <span className="sub">{d.missing_count ? `${plural(d.missing_count, "card")} missing` : "complete"}</span>
+                    </span>
+                    <span className="end">{d.missing_count ? fmtEur(d.missing_eur) : <span className="badge ok">✓</span>}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpenDeck, onAsk, onChanged, onCollectionChanged = onChanged }) {
   const [deck, setDeck] = useState(null);
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
@@ -1785,6 +2247,8 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk,
   const [actionCard, setActionCard] = useState(null); // {board, name}
   const [cardBusy, setCardBusy] = useState(false);
   const [cardError, setCardError] = useState(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [deckBox, setDeckBox] = useState(false);
 
   const load = useCallback(() => {
     setError(null);
@@ -1810,6 +2274,21 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk,
       setActionError(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+  const setStatus = async (status) => {
+    if (!deck || deck.status === status || statusBusy) return;
+    setStatusBusy(true);
+    setActionError(null);
+    try {
+      await api(`/api/decks/${id}`, { method: "PATCH", json: { status } });
+      setDeck((d) => ({ ...d, status }));
+      load(); // conflicts and free copies change with the status
+      onCollectionChanged(); // avail:/used: and card usage in the other tabs too
+    } catch (err) {
+      setActionError(err.message);
+    } finally {
+      setStatusBusy(false);
     }
   };
   const remove = async () => {
@@ -1882,6 +2361,17 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk,
                   <SourceBadge source={deck.source} />
                   <span className="muted">updated {fmtAgo(deck.updated_at)}</span>
                 </div>
+                {(deck.status === "idea" || deck.status === "built") && (
+                  <div className="row">
+                    <div className="segmented status-toggle" role="group" aria-label="Deck status">
+                      <button type="button" aria-pressed={deck.status === "idea"} disabled={statusBusy} onClick={() => setStatus("idea")}>Idea</button>
+                      <button type="button" aria-pressed={deck.status === "built"} disabled={statusBusy} onClick={() => setStatus("built")}>Built</button>
+                    </div>
+                    <span className="small muted grow" style={{ flexBasis: 160 }}>
+                      {deck.status === "built" ? "Built: this deck claims its cards. Other decks see them as used." : "Idea: doesn't claim cards. Shows what you own and what's free."}
+                    </span>
+                  </div>
+                )}
                 {deck.description && <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{deck.description}</p>}
               </>
             ) : (
@@ -1913,6 +2403,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk,
               ))}
             </div>
             <DeckValue value={deck.value} />
+            <ConflictBanner deck={deck} onOpenDeck={onOpenDeck} />
             {needsCommander && (
               <div className="notice warn" role="status">
                 <span aria-hidden="true">♛</span>
@@ -1939,6 +2430,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk,
               : <div className="notice ok"><span aria-hidden="true">✓</span><div className="grow"><b>You own every card in this deck.</b></div></div>}
             <div className="row">
               <button type="button" className="btn primary" onClick={() => onAsk(deck)}><Icon.sparkle /> Ask the planner</button>
+              {deck.status === "built" && <button type="button" className="btn" onClick={() => setDeckBox(true)}><Icon.box /> Put into deck box</button>}
               <a className="btn" href={exportHref} download><Icon.download /> Export</a>
               {!editing && <button type="button" className="btn" onClick={startEdit}><Icon.edit /> Rename</button>}
               <button type="button" className="btn danger" onClick={remove}><Icon.trash /> Delete</button>
@@ -1946,6 +2438,8 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk,
             <ErrorNotice error={actionError} onDismiss={() => setActionError(null)} />
             {notice && <div className="notice warn" role="status"><div className="grow">{notice}</div><button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setNotice(null)}><Icon.close /></button></div>}
           </header>
+
+          <DeckShopping shopping={deck.shopping} />
 
           {deck.cards.length > 0 && deck.missing_count > 0 && (
             <label className="row" style={{ minHeight: 44, cursor: "pointer" }}>
@@ -1974,21 +2468,28 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onAsk,
               onRun={runCardAction} onOpenCard={(cid) => { setActionCard(null); onOpenCard(cid); }}
               onClose={() => setActionCard(null)} />
           )}
+          {deckBox && <DeckBoxSheet deck={deck} onClose={() => setDeckBox(false)} onDone={() => { load(); onCollectionChanged(); }} />}
         </>
       )}
     </div>
   );
 }
 
-function DecksTab({ dataVersion, deckId, deckNotice, onOpenDeck, onOpenCard, onAsk, onChanged }) {
+function DecksTab({ dataVersion, homeKey, deckId, deckNotice, onOpenDeck, onOpenCard, onAsk, onChanged, onCollectionChanged }) {
   const [listKey, bumpList] = useReducer((x) => x + 1, 0);
+  // "Back" from a deck returns to where it was opened: the list or the shopping list.
+  const [shopping, setShopping] = useState(false);
+  useEffect(() => { setShopping(false); }, [homeKey]);
   if (deckId) {
     return (
       <DeckDetail key={deckId} id={deckId} dataVersion={dataVersion} initialNotice={deckNotice} onBack={() => { onOpenDeck(null); bumpList(); }}
-        onOpenCard={onOpenCard} onAsk={onAsk} onChanged={onChanged} />
+        onOpenCard={onOpenCard} onOpenDeck={onOpenDeck} onAsk={onAsk} onChanged={onChanged} onCollectionChanged={onCollectionChanged} />
     );
   }
-  return <DeckList dataVersion={dataVersion} refreshKey={listKey} onOpen={onOpenDeck} />;
+  if (shopping) {
+    return <ShoppingListView dataVersion={dataVersion + listKey} onBack={() => { setShopping(false); window.scrollTo(0, 0); }} onOpenDeck={onOpenDeck} />;
+  }
+  return <DeckList dataVersion={dataVersion} refreshKey={listKey} onOpen={onOpenDeck} onShopping={() => { setShopping(true); window.scrollTo(0, 0); }} />;
 }
 
 // ===========================================================================
@@ -2000,6 +2501,7 @@ const SUGGESTIONS = [
   "Which of my cards are worth more than €10?",
   "Suggest 10 upgrades under €2 for my deck …",
   "Find me all blue counterspells I own",
+  "Build a deck only from free cards, without breaking my built decks",
 ];
 
 function toolIcon(name = "") {
@@ -2052,6 +2554,42 @@ function SetupHint() {
       </div>
     </div>
   );
+}
+
+/** Height of what the user actually sees (excludes an on-screen keyboard). */
+/**
+ * Pixels of the chat below what the user can read: the end of the conversation
+ * minus the top of the fixed composer (phones, also while the keyboard lifts it),
+ * else the plain document gap (desktop). <= 0 means the newest line is visible.
+ */
+function chatGap(endEl, composerEl) {
+  if (endEl && composerEl && getComputedStyle(composerEl).position === "fixed") {
+    return endEl.getBoundingClientRect().bottom - composerEl.getBoundingClientRect().top;
+  }
+  const el = document.documentElement;
+  return el.scrollHeight - (window.scrollY + window.innerHeight);
+}
+
+/**
+ * Pixels the on-screen keyboard covers at the bottom of the layout viewport
+ * (iOS Safari and Chrome on Android resize only the visual viewport), 0 when
+ * it is closed. Used to keep the composer right above the keyboard.
+ */
+function useKeyboardInset(active) {
+  const [kb, setKb] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!active || !vv) { setKb(0); return; }
+    const update = () => {
+      const covered = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+      setKb(covered > 80 ? covered : 0);
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => { vv.removeEventListener("resize", update); vv.removeEventListener("scroll", update); };
+  }, [active]);
+  return kb;
 }
 
 function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
@@ -2247,19 +2785,77 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
     }
   }
 
-  // Stick to the bottom while an answer streams, unless the user scrolled up.
+  // Stick to the bottom while an answer streams, unless the user scrolled up
+  // (any upward scroll, a finger on the screen, or the wheel turned up stops
+  // following); a "Latest" button jumps back down. Following re-arms once the
+  // newest line is visible again.
+  const [showLatest, setShowLatest] = useState(false);
+  const chatEndRef = useRef(null);
+  const lastY = useRef(0);
+  const touching = useRef(false);
+  const measureBottom = useCallback(() => {
+    const gap = chatGap(chatEndRef.current, composerRef.current);
+    const y = window.scrollY;
+    if (y < lastY.current - 1) atBottom.current = gap <= 0;
+    else if (gap <= 24 && !touching.current) atBottom.current = true;
+    lastY.current = y;
+    setShowLatest(gap > 120);
+  }, []);
   useEffect(() => {
     if (!active) return;
-    const onScroll = () => {
-      const el = document.documentElement;
-      atBottom.current = window.innerHeight + window.scrollY >= el.scrollHeight - 160;
+    measureBottom();
+    const vv = window.visualViewport;
+    const onTouchStart = () => { touching.current = true; };
+    const onTouchEnd = () => { touching.current = false; measureBottom(); };
+    const onWheel = (e) => { if (e.deltaY < 0) atBottom.current = false; };
+    window.addEventListener("scroll", measureBottom, { passive: true });
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    window.addEventListener("wheel", onWheel, { passive: true });
+    vv?.addEventListener("resize", measureBottom);
+    return () => {
+      window.removeEventListener("scroll", measureBottom);
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchEnd);
+      window.removeEventListener("wheel", onWheel);
+      vv?.removeEventListener("resize", measureBottom);
     };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [active]);
+  }, [active, measureBottom]);
+  const scrollToEnd = (behavior = "auto") => {
+    // The planner's bottom padding includes the keyboard inset, so the document end
+    // sits right above the (lifted) composer.
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior });
+  };
   useLayoutEffect(() => {
-    if (active && atBottom.current) window.scrollTo(0, document.documentElement.scrollHeight);
-  }, [messages, stream, serverBusy, active]);
+    if (!active) return;
+    if (atBottom.current && !touching.current) scrollToEnd();
+    measureBottom();
+  }, [messages, stream, serverBusy, active, measureBottom]);
+  const jumpToLatest = () => {
+    atBottom.current = true;
+    setShowLatest(false);
+    const smooth = !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    scrollToEnd(smooth ? "smooth" : "auto");
+  };
+
+  // Phones: the composer is fixed above the tab bar, or right above the
+  // on-screen keyboard (visual viewport) while it is open.
+  const kb = useKeyboardInset(active);
+  // Keyboard opened/closed while following: keep the newest line above the composer.
+  useLayoutEffect(() => {
+    if (active && atBottom.current && !touching.current) scrollToEnd();
+  }, [kb]); // eslint-disable-line react-hooks/exhaustive-deps
+  const composerRef = useRef(null);
+  const [composerH, setComposerH] = useState(64);
+  useLayoutEffect(() => {
+    const el = composerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setComposerH(Math.round(el.offsetHeight)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Auto-grow composer.
   useLayoutEffect(() => {
@@ -2301,6 +2897,7 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
   const chat = chats?.find((c) => c.id === chatId);
   const notConfigured = health && !health.claude_configured;
 
+  const newChat = () => { selectChat(null); window.scrollTo(0, 0); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0); };
   const sidebar = (
     <>
       {drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} aria-hidden="true" />}
@@ -2310,7 +2907,7 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
           <h2 style={{ fontSize: "1.05rem" }}>Chats</h2>
           <button type="button" className="btn ghost icon drawer-toggle" aria-label="Close chat list" onClick={() => setDrawer(false)}><Icon.close /></button>
         </div>
-        <button type="button" className="btn primary" onClick={() => { selectChat(null); setTimeout(() => inputRef.current?.focus(), 0); }}><Icon.plus /> New chat</button>
+        <button type="button" className="btn primary" onClick={() => newChat()}><Icon.plus /> New chat</button>
         <ErrorNotice error={chatsError} onRetry={loadChats} />
         {!chats && !chatsError && <Spinner />}
         {chats && chats.length === 0 && <p className="muted small">No chats yet.</p>}
@@ -2327,14 +2924,16 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
     </>
   );
 
+  const plannerStyle = { "--composer-h": `${composerH}px`, "--kb": `${kb}px` };
+
   return (
-    <div className="planner">
+    <div className={`planner${kb ? " kb-open" : ""}`} style={plannerStyle}>
       {sidebar}
-      <section className="chat-main" aria-label="Conversation">
-        <div className="chat-title">
-          <button type="button" className="btn icon drawer-toggle" aria-label="Show chats" aria-expanded={drawer} onClick={() => setDrawer(true)}><Icon.menu /></button>
-          <h2>{chatId ? chat?.title || "Chat" : "New chat"}</h2>
-          {chatId && <button type="button" className="btn sm" onClick={() => selectChat(null)}><Icon.plus /> New</button>}
+      <section className="chat-main" aria-label="Conversation" ref={chatEndRef}>
+        <div className="planner-bar">
+          <button type="button" className="btn ghost drawer-toggle" aria-label="Show chats" aria-expanded={drawer} onClick={() => setDrawer(true)}><Icon.menu /> Chats</button>
+          <h2 title={chatId ? chat?.title || "Chat" : "New chat"}>{chatId ? chat?.title || "Chat" : "New chat"}</h2>
+          <button type="button" className="btn ghost" onClick={newChat} disabled={!chatId && !messages.length} aria-label="New chat"><Icon.plus /> New chat</button>
         </div>
 
         {notConfigured && <SetupHint />}
@@ -2379,8 +2978,12 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
           ? (!notConfigured && <SetupHint />)
           : <ErrorNotice error={error.message} onDismiss={() => setError(null)} />)}
 
-        <div className="composer">
-          <form onSubmit={(e) => { e.preventDefault(); send(); }}>
+        {showLatest && (messages.length > 0 || stream) && (
+          <button type="button" className="btn primary to-latest" onClick={jumpToLatest}><Icon.down /> Latest</button>
+        )}
+
+        <div className="composer" ref={composerRef}>
+          <form onSubmit={(e) => { e.preventDefault(); atBottom.current = true; send(); }}>
             <label htmlFor="chat-input" className="sr-only">Message</label>
             <textarea id="chat-input" ref={inputRef} rows={1} value={input} maxLength={20000}
               placeholder={busy ? "Claude is answering…" : "Ask the planner…"}
@@ -2411,21 +3014,83 @@ function Collapsible({ label, children }) {
   );
 }
 
+const IMPORT_MODE_LABEL = { delta: "Only new copies (delta)", add: "Add everything", replace: "Replace (sync)" };
+
+/**
+ * Delta import lists: entries may be strings or objects
+ * ({name, quantity|added|delta, binder, set_code, collector_number}).
+ */
+function deltaEntries(list, kind) {
+  return asList(list, "items", "cards").map((x, i) => {
+    if (typeof x === "string") return { key: i, text: x };
+    if (!x || typeof x !== "object") return null;
+    const raw = kind === "added"
+      ? (x.added ?? x.quantity ?? x.delta ?? x.diff ?? x.count)
+      : (x.decrease ?? x.decreased ?? x.fewer ?? x.missing ?? x.delta ?? x.diff ?? x.quantity ?? x.count);
+    const n = raw == null ? null : Math.abs(Number(raw));
+    const where = [x.set_code ? `${String(x.set_code).toUpperCase()}${x.collector_number ? ` #${x.collector_number}` : ""}` : null,
+      x.finish && x.finish !== "normal" ? x.finish : null, x.binder ? `in ${x.binder}` : null].filter(Boolean).join(" · ");
+    return { key: i, name: x.name || x.card || "?", n, where };
+  }).filter(Boolean);
+}
+
+function DeltaLists({ s }) {
+  const added = deltaEntries(s.added ?? s.delta?.added, "added");
+  const fewer = deltaEntries(s.decreased ?? s.decreases ?? s.delta?.decreased, "decreased");
+  if (!added.length && !fewer.length) {
+    return s.mode === "delta" ? <p className="small muted" style={{ margin: 0 }}>Nothing new since the last ManaBox export.</p> : null;
+  }
+  return (
+    <>
+      {added.length > 0 && (
+        <Collapsible label={`Added: ${plural(added.length, "row")}`}>
+          <ul className="delta-list">
+            {added.map((a) => <li key={a.key}>{a.text ?? <><b>+{a.n ?? "?"}</b> {a.name}{a.where && <span className="muted"> · {a.where}</span>}</>}</li>)}
+          {s.added_truncated > 0 && <li className="muted">… and {fmtInt(s.added_truncated)} more</li>}
+          </ul>
+        </Collapsible>
+      )}
+      {fewer.length > 0 && (
+        <div className="notice warn" role="status">
+          <span aria-hidden="true">⚠️</span>
+          <div className="grow stack" style={{ gap: 6 }}>
+            <span><b>ManaBox has fewer copies of {plural(fewer.length, "card")}.</b> Nothing was removed here; delete them yourself if they are really gone.</span>
+            <ul className="delta-list">
+              {fewer.map((f) => <li key={f.key}>{f.text ?? <>ManaBox has fewer copies of <b>{f.name}</b> (−{f.n ?? "?"}){f.where && <span> · {f.where}</span>}</>}</li>)}
+            {s.decreased_truncated > 0 && <li>… and {fmtInt(s.decreased_truncated)} more</li>}
+            </ul>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function ImportSummary({ s }) {
   if (!s) return null;
   const delta = (s.total_cards_after ?? 0) - (s.total_cards_before ?? 0);
+  const stats = [
+    s.total_cards_before != null || s.total_cards_after != null
+      ? [`${fmtInt(s.total_cards_before)} → ${fmtInt(s.total_cards_after)}`, `Copies (${delta >= 0 ? "+" : ""}${fmtInt(delta)})`] : null,
+    (s.added_copies ?? s.copies_added) != null && s.mode === "delta" ? [`+${fmtInt(s.added_copies ?? s.copies_added)}`, "Copies added"] : null,
+    s.printings_added != null && s.mode !== "delta" ? [`+${fmtInt(s.printings_added)}`, "Printings added"] : null,
+    s.kept_app_copies ? [fmtInt(s.kept_app_copies), "Already sorted here"] : null,
+    s.printings_removed != null && s.mode !== "delta" ? [`−${fmtInt(s.printings_removed)}`, "Printings removed"] : null,
+    s.printings_changed != null && s.mode !== "delta" ? [fmtInt(s.printings_changed), "Qty changed"] : null,
+    (s.decreased_copies ?? s.copies_decreased) ? [`−${fmtInt(s.decreased_copies ?? s.copies_decreased)}`, "Fewer in ManaBox"] : null,
+  ].filter(Boolean);
   return (
     <div className="stack">
-      <div className="summary-grid">
-        <div className="stat"><div className="v">{fmtInt(s.total_cards_before)} → {fmtInt(s.total_cards_after)}</div><div className="k">Copies ({delta >= 0 ? "+" : ""}{fmtInt(delta)})</div></div>
-        <div className="stat"><div className="v">+{fmtInt(s.printings_added)}</div><div className="k">Printings added</div></div>
-        <div className="stat"><div className="v">−{fmtInt(s.printings_removed)}</div><div className="k">Printings removed</div></div>
-        <div className="stat"><div className="v">{fmtInt(s.printings_changed)}</div><div className="k">Qty changed</div></div>
-      </div>
+      {stats.length > 0 && (
+        <div className="summary-grid">
+          {stats.map(([v, k]) => <div key={k} className="stat"><div className="v">{v}</div><div className="k">{k}</div></div>)}
+        </div>
+      )}
+      <DeltaLists s={s} />
       <dl className="kv">
-        <dt>Mode</dt><dd>{s.mode === "add" ? "Add (merge)" : "Replace (sync)"}</dd>
-        <dt>Rows</dt><dd>{fmtInt(s.imported_rows)} imported of {fmtInt(s.rows)}</dd>
-        <dt>Printings</dt><dd>{fmtInt(s.printings)} owned</dd>
+        <dt>Mode</dt><dd>{IMPORT_MODE_LABEL[s.mode] || s.mode || "—"}</dd>
+        {s.rows != null && (<><dt>Rows</dt><dd>{fmtInt(s.imported_rows)} imported of {fmtInt(s.rows)}</dd></>)}
+        {s.printings != null && (<><dt>Printings</dt><dd>{fmtInt(s.printings)} owned</dd></>)}
         {s.decks_from_binders?.length > 0 && (<><dt>Decks</dt><dd>{s.decks_from_binders.join(", ")}</dd></>)}
         {s.skipped_wishlist_rows > 0 && (<><dt>Skipped</dt><dd>{plural(s.skipped_wishlist_rows, "wish-list row")}</dd></>)}
       </dl>
@@ -2440,9 +3105,75 @@ function ImportSummary({ s }) {
   );
 }
 
+/** Who owns the collection: ManaBox (imports replace) or mtg-planner (imports add). */
+function MasterPanel({ master, busy, error, onSwitch }) {
+  return (
+    <section className="card stack" aria-labelledby="master-title">
+      <div className="row between">
+        <h2 id="master-title">Collection master</h2>
+        {master && <span className={`badge ${master === "app" ? "accent" : "warn"}`}>{master === "app" ? "mtg-planner" : "ManaBox"}</span>}
+      </div>
+      {!master && !error && <Spinner />}
+      {master === "manabox" && (
+        <p className="small" style={{ margin: 0 }}>
+          <b>ManaBox is the master.</b> A ManaBox import replaces every card that came from ManaBox (cards you scanned stay).
+          The first time you move ManaBox cards into another binder here, mtg-planner takes over.
+        </p>
+      )}
+      {master === "app" && (
+        <p className="small" style={{ margin: 0 }}>
+          <b>mtg-planner is the master.</b> Binders you organise here win: a ManaBox import only <b>adds the copies that are new</b> since
+          the last export, nothing is deleted. Cards you moved, scanned or sorted here are never touched by an import.
+        </p>
+      )}
+      <ErrorNotice error={error} />
+      {master && (
+        <div className="row">
+          <button type="button" className="btn" disabled={busy} onClick={() => onSwitch(master === "app" ? "manabox" : "app")}>
+            {master === "app" ? "Switch back: ManaBox is the master" : "Make mtg-planner the master"}
+          </button>
+        </div>
+      )}
+      {master === "app" && (
+        <span className="small muted">Switching back only changes the default import mode to Replace. Cards already organised here stay in their binders and are not counted twice.</span>
+      )}
+    </section>
+  );
+}
+
+const IMPORT_MODE_HELP = {
+  delta: "Compares the file with your last ManaBox export and adds only the copies that are new (into their ManaBox binder). Fewer copies in ManaBox are listed, never deleted. Importing the same file twice changes nothing.",
+  add: "Adds every copy in the file on top of what's already here.",
+  replace: "Cards imported from ManaBox become exactly what's in the file. Scanned cards and cards organised here are kept.",
+};
+
 function ImportTab({ dataVersion, health, onImported }) {
   const [file, setFile] = useState(null);
   const [mode, setMode] = useState("replace");
+  const modeTouched = useRef(false);
+  const [master, setMaster] = useState(null);
+  const [masterState, setMasterState] = useState({ busy: false, error: null });
+  const loadMaster = useCallback(() => {
+    api("/api/settings").then((d) => {
+      const m = d?.collection_master === "app" ? "app" : "manabox";
+      setMaster(m);
+      // The default import mode follows the master until the user picks one.
+      if (!modeTouched.current) setMode(m === "app" ? "delta" : "replace");
+    }).catch((e) => setMasterState((st) => ({ ...st, error: `Could not load settings: ${e.message}` })));
+  }, []);
+  useEffect(loadMaster, [loadMaster, dataVersion]);
+  const switchMaster = async (to) => {
+    if (to === "manabox" && !window.confirm("Make ManaBox the master again? The import mode defaults to Replace again, which replaces every card that came from ManaBox. Cards you organised here stay where they are; a replace counts them against the file instead of adding them again.")) return;
+    setMasterState({ busy: true, error: null });
+    try {
+      const d = await api("/api/settings", { method: "PATCH", json: { collection_master: to } });
+      setMaster(d.collection_master);
+      modeTouched.current = false;
+      setMode(d.collection_master === "app" ? "delta" : "replace");
+      setMasterState({ busy: false, error: null });
+    } catch (e) { setMasterState({ busy: false, error: e.message }); }
+  };
+  const pickMode = (m) => { modeTouched.current = true; setMode(m); };
   const [busy, setBusy] = useState(false);
   const [started, setStarted] = useState(null);
   const [elapsed, setElapsed] = useState(0);
@@ -2476,6 +3207,10 @@ function ImportTab({ dataVersion, health, onImported }) {
   const submit = async (e) => {
     e.preventDefault();
     if (!file || busy) return;
+    const confirmReplace = mode === "replace" && master === "app";
+    if (confirmReplace && !window.confirm(
+      "Replace your ManaBox cards?\n\nmtg-planner is the master of your collection. A replace import DELETES every card that came from ManaBox " +
+      "and loads this file instead. Cards you scanned or moved into binders here stay.\n\nUse Add to keep everything.")) return;
     setBusy(true);
     setError(null);
     setResult(null);
@@ -2484,6 +3219,7 @@ function ImportTab({ dataVersion, health, onImported }) {
     try {
       const text = await file.text();
       const params = new URLSearchParams({ mode, filename: file.name });
+      if (confirmReplace) params.set("confirm_replace", "1");
       const summary = await api(`/api/import/manabox?${params}`, { method: "POST", body: text, headers: { "Content-Type": "text/csv" } });
       setResult(summary);
       setFile(null);
@@ -2533,14 +3269,27 @@ function ImportTab({ dataVersion, health, onImported }) {
 
         <fieldset style={{ border: 0, padding: 0, margin: 0 }} className="stack" disabled={busy}>
           <legend className="label" style={{ marginBottom: 8 }}>Mode</legend>
-          <label className="radio-card">
-            <input type="radio" name="mode" value="replace" checked={mode === "replace"} onChange={() => setMode("replace")} />
-            <span><b>Replace (sync)</b><br /><span className="small muted">Cards imported from ManaBox become exactly what's in the file. Scanned cards are kept.</span></span>
-          </label>
-          <label className="radio-card">
-            <input type="radio" name="mode" value="add" checked={mode === "add"} onChange={() => setMode("add")} />
-            <span><b>Add</b><br /><span className="small muted">Add the file's quantities on top of what's already here.</span></span>
-          </label>
+          {(master === "app" ? ["delta", "add", "replace"] : ["replace", "delta", "add"]).map((m) => (
+            <label key={m} className="radio-card">
+              <input type="radio" name="mode" value={m} checked={mode === m} onChange={() => pickMode(m)} />
+              <span>
+                <b>{IMPORT_MODE_LABEL[m]}</b>{(master === "app" ? m === "delta" : m === "replace") && <> <span className={`badge${master === "app" ? " accent" : ""}`}>default</span></>}<br />
+                <span className="small muted">{IMPORT_MODE_HELP[m]}</span>
+              </span>
+            </label>
+          ))}
+          {mode === "add" && (
+            <div className="notice warn" role="alert">
+              <span aria-hidden="true">⚠️</span>
+              <div className="grow"><b>Add duplicates cards you already imported.</b> Every copy in the file is added again, even if it came in with an earlier import. Use <b>Only new copies</b> to add just what changed.</div>
+            </div>
+          )}
+          {master === "app" && mode === "replace" && (
+            <div className="notice warn" role="alert">
+              <span aria-hidden="true">⚠️</span>
+              <div className="grow"><b>This deletes every card that came from ManaBox</b> and loads the file instead. mtg-planner is the master of your collection, so this is rarely what you want: cards you moved or scanned here stay, but ManaBox cards you haven't organised yet are replaced by the file. You'll be asked to confirm.</div>
+            </div>
+          )}
         </fieldset>
 
         <button type="submit" className="btn primary" disabled={!file || busy}>
@@ -2561,6 +3310,8 @@ function ImportTab({ dataVersion, health, onImported }) {
           </div>
         )}
       </form>
+
+      <MasterPanel master={master} busy={masterState.busy} error={masterState.error} onSwitch={switchMaster} />
 
       <section className="card stack" aria-labelledby="prices-title">
         <h2 id="prices-title">Prices</h2>
@@ -2592,8 +3343,10 @@ function ImportTab({ dataVersion, health, onImported }) {
                     <span className="muted small nowrap">{fmtDate(h.created_at)}</span>
                   </div>
                   <div className="row small">
-                    <span className={`badge ${h.mode === "add" ? "accent" : ""}`}>{h.mode || h.kind}</span>
-                    <span className="muted">{fmtInt(s.total_cards_before)} → {fmtInt(s.total_cards_after)} copies · +{fmtInt(s.printings_added)} / −{fmtInt(s.printings_removed)} / ~{fmtInt(s.printings_changed)} printings</span>
+                    <span className={`badge ${h.mode === "add" ? "warn" : h.mode === "delta" ? "accent" : ""}`}>{h.mode === "delta" ? "new copies" : h.mode || h.kind}</span>
+                    <span className="muted">{fmtInt(s.total_cards_before)} → {fmtInt(s.total_cards_after)} copies{h.mode === "delta" || s.mode === "delta"
+                      ? `${(s.added_copies ?? s.copies_added) != null ? ` · +${fmtInt(s.added_copies ?? s.copies_added)} new` : ""}`
+                      : ` · +${fmtInt(s.printings_added)} / −${fmtInt(s.printings_removed)} / ~${fmtInt(s.printings_changed)} printings`}</span>
                     {s.unresolved?.length > 0 && <span className="badge warn">{s.unresolved.length} unresolved</span>}
                   </div>
                   <Collapsible label="Details"><ImportSummary s={s} /></Collapsible>
@@ -3274,14 +4027,12 @@ function CommitSheet({ ids, onClose, onDone }) {
             ))}
             <label className="radio-card">
               <input type="radio" name="binder" checked={binder === "__new"} onChange={() => setBinder("__new")} />
-              <span className="grow stack" style={{ gap: 6 }}>
-                <b>New binder…</b>
-                {binder === "__new" && (
-                  <input className="input" aria-label="New binder name" placeholder="e.g. Trade binder" maxLength={120} autoFocus
-                    value={newBinder} onChange={(e) => setNewBinder(e.target.value)} />
-                )}
-              </span>
+              <span className="grow"><b>New binder…</b></span>
             </label>
+            {binder === "__new" && (
+              <input className="input" style={{ fontSize: 16 }} aria-label="New binder name" placeholder="New binder name, e.g. Trade binder" maxLength={100} autoFocus
+                value={newBinder} onChange={(e) => setNewBinder(e.target.value)} />
+            )}
           </fieldset>
         )}
         {type === "deck" && (
@@ -3819,83 +4570,306 @@ function ResultCard({ busy, last, onPick, onConfirm, onIncrement, onForce, onRes
 }
 
 // ===========================================================================
-// Binders (collection tab) and scanner index (import tab)
+// Binders: filter bar, create / manage, move copies (collection tab, card sheet)
 // ===========================================================================
 
-function BinderBar({ dataVersion, tokens, onToggle, onChanged }) {
-  const [binders, setBinders] = useState(null);
+const UNSORTED = "Unsorted";
+const sameName = (a, b) => a != null && b != null && String(a).toLowerCase() === String(b).toLowerCase();
+
+/** GET /api/binders → {binders, unsorted, master}; reloads with dataVersion. */
+function useBinderList(dataVersion = 0) {
+  const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const [editing, setEditing] = useState(null); // {name, value}
   const load = useCallback(() => {
-    api("/api/binders").then((d) => { setBinders(asList(d, "binders")); setError(null); })
-      .catch((e) => { setBinders(null); setError(e.status === 404 ? null : e.message); });
+    api("/api/binders")
+      .then((d) => {
+        setData({ binders: asList(d, "binders").filter((b) => b.name), unsorted: d?.unsorted || { copies: 0, cards: 0 }, master: d?.collection_master || "manabox" });
+        setError(null);
+      })
+      .catch((e) => setError(e.message));
   }, []);
   useEffect(load, [load, dataVersion]);
-  if (!binders || binders.length === 0) return error ? <ErrorNotice error={`Could not load binders: ${error}`} onRetry={load} /> : null;
-  const named = binders.filter((b) => b.name);
-  const term = (name) => `b:"${name}"`;
-  const rename = async (e) => {
+  return { data, error, reload: load };
+}
+
+/**
+ * Moves that touch ManaBox copies need the user's one-time OK (the server
+ * answers 409 {code:'confirm_master'}). guarded(run) calls run(false), asks on
+ * that 409, then calls run(true); it resolves null when the user cancels.
+ */
+function useMasterConfirm() {
+  const [ask, setAsk] = useState(null); // {copies, resolve}
+  const guarded = useCallback(async (run) => {
+    try {
+      return await run(false);
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 409 && e.data?.code === "confirm_master")) throw e;
+      const ok = await new Promise((resolve) => setAsk({ copies: e.data.manabox_copies, resolve }));
+      setAsk(null);
+      return ok ? run(true) : null;
+    }
+  }, []);
+  const dialog = ask ? <MasterConfirmSheet copies={ask.copies} onAnswer={ask.resolve} /> : null;
+  return [guarded, dialog];
+}
+
+function MasterConfirmSheet({ copies, onAnswer }) {
+  return (
+    <Sheet title="Organise ManaBox cards here?" onClose={() => onAnswer(false)}>
+      <div className="stack">
+        <p style={{ margin: 0 }}>This changes {copies ? plural(copies, "copy", "copies") : "cards"} imported from ManaBox. From now on <b>mtg-planner is the master of your collection</b>:</p>
+        <ul className="small" style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 4 }}>
+          <li>Cards you move here stay where you put them. A ManaBox import can't move them back.</li>
+          <li>ManaBox imports only <b>add new copies</b> (compared with the last export) instead of replacing the collection.</li>
+          <li>A full replace stays possible in <b>Import</b>, behind a warning. You can switch back there too.</li>
+        </ul>
+        <p className="small muted" style={{ margin: 0 }}>You are only asked once.</p>
+        <div className="row">
+          <button type="button" className="btn primary grow" onClick={() => onAnswer(true)}><Icon.check /> Yes, organise here</button>
+          <button type="button" className="btn ghost" onClick={() => onAnswer(false)}>Cancel</button>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+/** Collection tab: binder filter chips (+ Unsorted), New binder, Manage binders. */
+function BinderBar({ data, error, onRetry, filter, onFilter, onNew, onManage }) {
+  const list = data?.binders || [];
+  const unsorted = data?.unsorted?.copies ?? 0;
+  const chip = (key, label, count, pressed, onClick, extra = "") => (
+    <button key={key} type="button" className={`chip lg${extra}`} aria-pressed={pressed} onClick={onClick}>
+      {label}{count != null && <span className="cnt">{fmtInt(count)}</span>}
+    </button>
+  );
+  return (
+    <div className="binder-bar">
+      <div className="row between">
+        <span className="label">Binders</span>
+        <div className="row" style={{ gap: 6 }}>
+          <button type="button" className="btn" onClick={onNew}><Icon.plus /> New binder</button>
+          <button type="button" className="btn ghost" onClick={onManage} disabled={!data}><Icon.edit /> Manage</button>
+        </div>
+      </div>
+      {error && <ErrorNotice error={`Could not load binders: ${error}`} onRetry={onRetry} />}
+      <div className="chips scroll" role="group" aria-label="Show binder">
+        {chip("__all", "All", null, filter == null, () => onFilter(null))}
+        {list.map((b) => chip(b.name, <><Icon.collection /> {b.name}</>, b.copies ?? 0, sameName(filter, b.name), () => onFilter(sameName(filter, b.name) ? null : b.name)))}
+        {chip("__unsorted", UNSORTED, unsorted, filter === "", () => onFilter(filter === "" ? null : ""), " dashed")}
+      </div>
+      {data && list.length === 0 && (
+        <span className="small muted">No binders yet. Create one, then tap <b>Select</b> to move cards into it.</span>
+      )}
+    </div>
+  );
+}
+
+function NewBinderSheet({ onClose, onCreated }) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim() || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const b = await api("/api/binders", { method: "POST", json: { name: name.trim() } });
+      onCreated(b?.name || name.trim());
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+  return (
+    <Sheet title="New binder" onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
+        <div className="field">
+          <label htmlFor="new-binder-name">Name</label>
+          <input id="new-binder-name" className="input" style={{ fontSize: 16 }} autoFocus maxLength={100} required placeholder="e.g. Trade binder"
+            value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <ErrorNotice error={error} />
+        <button type="submit" className="btn primary" disabled={!name.trim() || busy}>{busy ? "Creating…" : <><Icon.plus /> Create binder</>}</button>
+      </form>
+    </Sheet>
+  );
+}
+
+/** Rename and delete binders. Delete asks what happens to the cards (Unsorted or delete). */
+function ManageBindersSheet({ data, onClose, onChanged }) {
+  const [guarded, masterDialog] = useMasterConfirm();
+  const [editing, setEditing] = useState(null); // {name, value}
+  const [deleting, setDeleting] = useState(null); // {binder, cards}
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const list = data?.binders || [];
+  const master = data?.master || "manabox";
+
+  const run = async (fn) => {
+    setBusy(true); setError(null);
+    try { const r = await fn(); if (r) { setEditing(null); setDeleting(null); onChanged(); } } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+  const rename = (e) => {
     e.preventDefault();
     const to = editing.value.trim();
     if (!to || to === editing.name) { setEditing(null); return; }
-    try {
-      await api(`/api/binders/${encodeURIComponent(editing.name)}`, { method: "PATCH", json: { name: to } });
-      setEditing(null);
-      onChanged?.();
-      load();
-    } catch (err) { setError(err.message); }
+    const exists = list.find((b) => sameName(b.name, to) && !sameName(b.name, editing.name));
+    if (exists && !window.confirm(`“${exists.name}” already exists. Merge “${editing.name}” into it?`)) return;
+    run(() => guarded((confirm) => api(`/api/binders/${encodeURIComponent(editing.name)}`, { method: "PATCH", json: { name: to, confirm_master: confirm } })));
   };
-  const removeScanned = async (b) => {
-    if (!window.confirm(`Remove the scanned cards from the binder "${b.name}"? Cards imported from ManaBox stay.`)) return;
-    try {
-      await api(`/api/binders/${encodeURIComponent(b.name)}?source=scan`, { method: "DELETE" });
-      onChanged?.();
-      load();
-    } catch (err) { setError(err.message); }
+  const remove = () => {
+    const { binder, cards } = deleting;
+    run(() => guarded((confirm) => api(`/api/binders/${encodeURIComponent(binder.name)}?cards=${cards}${confirm ? "&confirm_master=1" : ""}`, { method: "DELETE" })));
   };
+
   return (
-    <div className="binder-bar">
-      {named.length > 0 && (
-        <div className="chips" role="group" aria-label="Binders">
-          {named.map((b) => (
-            <button key={b.name} type="button" className="chip" aria-pressed={tokens.some((t) => t.toLowerCase() === term(b.name).toLowerCase())}
-              onClick={() => onToggle(term(b.name))}>
-              <Icon.collection /> {b.name} <span className="muted" style={{ fontWeight: 600 }}>{fmtInt(b.copies ?? b.cards)}</span>
-            </button>
-          ))}
-        </div>
-      )}
-      <details className="disclosure">
-        <summary>Manage binders</summary>
+    <Sheet title="Manage binders" onClose={onClose}>
+      <div className="stack">
         {error && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
-        <div style={{ marginTop: 6 }}>
-          {binders.map((b) => {
-            const sources = [].concat(b.sources || []).flatMap((x) => String(x).split(",")).filter(Boolean);
+        {list.length === 0 && <p className="muted" style={{ margin: 0 }}>No binders yet.</p>}
+        <div>
+          {list.map((b) => {
+            const mb = b.by_source?.manabox?.copies ?? 0;
+            if (deleting && sameName(deleting.binder.name, b.name)) {
+              const canDelete = !mb || master === "app";
+              return (
+                <div key={b.name} className="binder-row" style={{ display: "grid" }}>
+                  <b>Delete “{b.name}”?</b>
+                  {b.copies > 0 ? (
+                    <div className="stack" style={{ gap: 8 }} role="radiogroup" aria-label="What happens to the cards">
+                      <label className="radio-card">
+                        <input type="radio" name="del-cards" checked={deleting.cards === "unsort"} onChange={() => setDeleting({ ...deleting, cards: "unsort" })} />
+                        <span><b>Keep the cards</b><br /><span className="small muted">Its {plural(b.copies, "copy", "copies")} move to {UNSORTED}.</span></span>
+                      </label>
+                      <label className="radio-card" style={canDelete ? undefined : { opacity: .6 }}>
+                        <input type="radio" name="del-cards" disabled={!canDelete} checked={deleting.cards === "delete"} onChange={() => setDeleting({ ...deleting, cards: "delete" })} />
+                        <span><b>Delete the cards too</b><br /><span className="small muted">
+                          {canDelete ? `Removes ${plural(b.copies, "copy", "copies")} from your collection.` : `Not possible: ${plural(mb, "copy", "copies")} came from ManaBox and ManaBox is the master. Delete them in ManaBox or keep them here.`}
+                        </span></span>
+                      </label>
+                    </div>
+                  ) : <span className="small muted">The binder is empty.</span>}
+                  <div className="row">
+                    <button type="button" className={`btn ${deleting.cards === "delete" ? "danger" : "primary"}`} disabled={busy} onClick={remove}>
+                      <Icon.trash /> {deleting.cards === "delete" && b.copies ? `Delete binder and ${plural(b.copies, "copy", "copies")}` : "Delete binder"}
+                    </button>
+                    <button type="button" className="btn ghost" onClick={() => setDeleting(null)}>Cancel</button>
+                  </div>
+                </div>
+              );
+            }
             return (
-              <div key={b.name || "(none)"} className="binder-row">
-                {editing?.name === b.name ? (
+              <div key={b.name} className="binder-row">
+                {editing && sameName(editing.name, b.name) ? (
                   <form className="row grow" onSubmit={rename}>
-                    <input className="input grow" style={{ flexBasis: 160 }} aria-label="New binder name" autoFocus maxLength={120}
+                    <input className="input grow" style={{ flexBasis: 160, fontSize: 16 }} aria-label={`New name for ${b.name}`} autoFocus maxLength={100}
                       value={editing.value} onChange={(e) => setEditing({ ...editing, value: e.target.value })} />
-                    <button type="submit" className="btn sm primary">Save</button>
-                    <button type="button" className="btn sm ghost" onClick={() => setEditing(null)}>Cancel</button>
+                    <button type="submit" className="btn primary" disabled={busy || !editing.value.trim()}>Save</button>
+                    <button type="button" className="btn ghost" onClick={() => setEditing(null)}>Cancel</button>
                   </form>
                 ) : (
                   <>
-                    <span className="grow"><b>{b.name || "(no binder)"}</b> <span className="muted small">{plural(b.copies ?? 0, "copy", "copies")} · {plural(b.cards ?? 0, "card")}</span></span>
-                    {sources.map((s) => <SourceBadge key={s} source={s} />)}
-                    {b.name && !sources.includes("manabox") && <button type="button" className="btn sm ghost" onClick={() => setEditing({ name: b.name, value: b.name })}><Icon.edit /> Rename</button>}
-                    {b.name && sources.includes("scan") && <button type="button" className="btn sm danger" onClick={() => removeScanned(b)}><Icon.trash /> Scanned</button>}
+                    <span className="grow" style={{ minWidth: 0, overflowWrap: "anywhere" }}><b>{b.name}</b><br />
+                      <span className="muted small">{b.copies ? `${plural(b.copies, "copy", "copies")} · ${plural(b.unique_cards ?? b.cards ?? 0, "card")}` : "empty"}</span></span>
+                    {(b.sources || []).map((s) => <SourceBadge key={s} source={s} />)}
+                    <button type="button" className="btn ghost icon" aria-label={`Rename ${b.name}`} title="Rename" disabled={busy}
+                      onClick={() => { setDeleting(null); setEditing({ name: b.name, value: b.name }); }}><Icon.edit /></button>
+                    <button type="button" className="btn ghost icon danger" aria-label={`Delete ${b.name}`} title="Delete" disabled={busy}
+                      onClick={() => { setEditing(null); setDeleting({ binder: b, cards: "unsort" }); }}><Icon.trash /></button>
                   </>
                 )}
               </div>
             );
           })}
         </div>
-      </details>
-    </div>
+        <p className="small muted" style={{ margin: 0 }}>
+          {master === "app"
+            ? "mtg-planner is the master of your collection: binders you organise here win over ManaBox."
+            : "Renaming or emptying a binder with ManaBox cards makes mtg-planner the master of your collection (you'll be asked first)."}
+        </p>
+      </div>
+      {masterDialog}
+    </Sheet>
   );
 }
+
+/**
+ * Pick a target binder (+ quantity when maxQty is set) and run onMove({quantity,
+ * to_binder, create}); onMove resolves false when the user cancelled.
+ */
+function MoveSheet({ title, intro, maxQty = null, exclude = null, children, submitLabel, onMove, onClose }) {
+  const { data, error: listError, reload } = useBinderList();
+  const last = store.get("mtg.move.target", null);
+  const [qty, setQty] = useState(maxQty ?? 1);
+  const [target, setTarget] = useState(null); // binder name | "" (Unsorted) | "__new"
+  const [newName, setNewName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const options = data ? [...data.binders.map((b) => ({ name: b.name, copies: b.copies })), { name: "", copies: data.unsorted?.copies ?? 0 }]
+    .filter((o) => exclude == null || !sameName(o.name, exclude)) : null;
+  useEffect(() => {
+    if (!options || target != null) return;
+    const pick = last != null && options.find((o) => sameName(o.name, last) || (last === "" && o.name === ""));
+    setTarget(pick ? pick.name : (options.find((o) => o.name) ?? options[0])?.name ?? "__new");
+  }, [options, target, last]);
+
+  const to = target === "__new" ? newName.trim() : target;
+  const ready = target != null && (target !== "__new" || to);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!ready || busy) return;
+    setBusy(true); setError(null);
+    try {
+      const ok = await onMove({ quantity: qty, to_binder: to, create: target === "__new" });
+      if (ok !== false) store.set("mtg.move.target", to);
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+  const targetLabel = target === "__new" ? (to ? `new binder “${to}”` : "a new binder") : target === "" ? UNSORTED : target ? `“${target}”` : "…";
+  return (
+    <Sheet title={title} onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
+        {intro}
+        {maxQty != null && maxQty > 1 && (
+          <div className="row between">
+            <span className="label">Copies to move</span>
+            <div className="stepper" role="group" aria-label="Copies to move">
+              <button type="button" aria-label="One less" disabled={qty <= 1} onClick={() => setQty(qty - 1)} style={{ width: 44, height: 44 }}><Icon.minus /></button>
+              <output aria-live="polite">{qty}</output>
+              <button type="button" aria-label="One more" disabled={qty >= maxQty} onClick={() => setQty(qty + 1)} style={{ width: 44, height: 44 }}><Icon.plus /></button>
+            </div>
+          </div>
+        )}
+        {children}
+        <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+          <legend className="label" style={{ marginBottom: 8 }}>Move to</legend>
+          {listError && <ErrorNotice error={listError} onRetry={reload} />}
+          {!options && !listError && <Spinner />}
+          <div className="radio-list">
+            {options?.map((o) => (
+              <label key={o.name || "__unsorted"} className="radio-card">
+                <input type="radio" name="move-target" checked={target === o.name} onChange={() => setTarget(o.name)} />
+                <span className="grow" style={{ minWidth: 0, overflowWrap: "anywhere" }}><b>{o.name || UNSORTED}</b> <span className="small muted">{o.copies ? plural(o.copies, "copy", "copies") : "empty"}</span></span>
+              </label>
+            ))}
+            <label className="radio-card">
+              <input type="radio" name="move-target" checked={target === "__new"} onChange={() => setTarget("__new")} />
+              <span className="grow"><b>New binder…</b></span>
+            </label>
+          </div>
+          {target === "__new" && (
+            <input className="input" style={{ fontSize: 16 }} aria-label="New binder name" placeholder="New binder name, e.g. Trade binder" maxLength={100} autoFocus
+              value={newName} onChange={(e) => setNewName(e.target.value)} />
+          )}
+        </fieldset>
+        <ErrorNotice error={error} />
+        <button type="submit" className="btn primary" disabled={!ready || busy}>
+          {busy ? "Moving…" : <>{submitLabel || `Move ${maxQty != null ? plural(qty, "copy", "copies") : ""}`} to {targetLabel}</>}
+        </button>
+      </form>
+    </Sheet>
+  );
+}
+
+// ===========================================================================
+// Scanner index (import tab)
+// ===========================================================================
 
 function JobLine({ label, job }) {
   if (!job || typeof job !== "object") return null;
@@ -4099,6 +5073,8 @@ function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, [switchTab]);
 
+  // Tapping the active Decks tab returns to the deck list (also from the shopping list).
+  const [decksHome, goDecksHome] = useReducer((x) => x + 1, 0);
   const openDeck = useCallback((id, notice = null) => {
     setDeck({ id, notice });
     setCardId(null);
@@ -4143,7 +5119,7 @@ function App() {
             <button key={t.id} id={`tab-${t.id}`} ref={(el) => { tabRefs.current[t.id] = el; }} type="button" role="tab" className="tab"
               aria-selected={tab === t.id} aria-controls={`panel-${t.id}`} tabIndex={tab === t.id ? 0 : -1}
               onClick={() => {
-                if (t.id === "decks" && tab === "decks" && deck.id) openDeck(null);
+                if (t.id === "decks" && tab === "decks") { if (deck.id) openDeck(null); goDecksHome(); }
                 switchTab(t.id);
               }}>
               <t.icon />
@@ -4156,13 +5132,13 @@ function App() {
         {panel("scan", <ScanTab active={tab === "scan"} health={health} onCommitted={onImported} />)}
         {panel("collection", <CollectionTab dataVersion={dataVersion} onOpenCard={setCardId} onGoImport={() => switchTab("import")}
           onGoScan={() => switchTab("scan")} onChanged={onImported} />)}
-        {panel("decks", <DecksTab dataVersion={deckVersion} deckId={deck.id} deckNotice={deck.notice} onOpenDeck={openDeck}
-          onOpenCard={setCardId} onAsk={askAboutDeck} onChanged={bumpDecks} />)}
+        {panel("decks", <DecksTab dataVersion={deckVersion} homeKey={decksHome} deckId={deck.id} deckNotice={deck.notice} onOpenDeck={openDeck}
+          onOpenCard={setCardId} onAsk={askAboutDeck} onChanged={bumpDecks} onCollectionChanged={onImported} />)}
         {panel("planner", <PlannerTab active={tab === "planner"} health={health} request={plannerRequest}
           onRequestHandled={() => setPlannerRequest(null)} onChanged={bumpDecks} />)}
         {panel("import", <ImportTab dataVersion={dataVersion} health={health} onImported={onImported} />)}
       </main>
-      {cardId && <CardSheet id={cardId} onClose={() => setCardId(null)} onOpenCard={setCardId} onOpenDeck={(id) => openDeck(id)} />}
+      {cardId && <CardSheet id={cardId} onClose={() => setCardId(null)} onOpenCard={setCardId} onOpenDeck={(id) => openDeck(id)} onChanged={onImported} />}
     </>
   );
 }

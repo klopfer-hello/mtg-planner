@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // "collection" MCP server: gives the Claude CLI read access to the owned
-// collection and decks, plus one write tool (save_deck) for creating decks the
-// user then sees in the app. Spawned by the CLI per chat turn via --mcp-config.
+// collection and decks (incl. what built decks claim: owned vs free copies,
+// conflicts, shopping list), plus one write tool (save_deck) for creating decks
+// the user then sees in the app. Spawned by the CLI per chat turn via --mcp-config.
 //
 // Protocol: MCP over stdio, hand-rolled (no SDK) — newline-delimited JSON-RPC
 // 2.0 on stdin/stdout. stdout carries protocol messages ONLY; logs go to stderr.
@@ -11,8 +12,10 @@
 import { createInterface } from "node:readline";
 import { cardPrice, formatPrice, openDb, stats } from "./lib/db.js";
 import { QUERY_HELP, searchCollection } from "./lib/query.js";
-import { BOARDS, deckDetail, deckToText, findDeck, listDecks, saveDeck } from "./lib/decks.js";
-import { listBinders } from "./lib/scans.js";
+import {
+  BOARDS, DECK_STATUSES, allocation, cardKey, cardUsage, deckDetail, deckToText, findDeck, isBasicLand, listDecks, saveDeck, shoppingList,
+} from "./lib/decks.js";
+import { listBinders } from "./lib/binders.js";
 
 const VERSION = process.env.APP_VERSION || "dev";
 const DEFAULT_PROTOCOL = "2025-06-18";
@@ -77,6 +80,8 @@ const SEARCH_EXAMPLES = [
   'o:"draw a card" mv=2 c<=ub       two-drops that draw, castable in Dimir',
   's:mh3 is:foil                    foils from Modern Horizons 3',
   'qty>=4 t:land                    lands owned in 4+ copies',
+  'avail>=1 t:creature              creatures with free copies (not claimed by a built deck)',
+  'used>=1                          cards a built deck uses (avail<0 = built decks need more than owned)',
   'b:"trade binder"                 everything in a binder (see list_binders)',
   'src:scan                         copies added with the in-app scanner (src:manabox = synced from ManaBox)',
   'lightning                        names containing "lightning"',
@@ -102,10 +107,10 @@ const TOOLS = [
       "Notes: c: is the card's colors (c:wu = at least white and blue, c=wu exactly, c<=wu within); id: is color " +
       "identity and means 'within' (what fits a commander of that identity); f:<format> = legal in that format " +
       "(commander, modern, standard, pioneer, legacy, pauper, ...); is:commander = can be a commander; eur/usd are per-copy " +
-      "prices; qty counts owned copies; b: matches the binder name; src: is manabox (synced from ManaBox) or scan (added with the app's scanner).\n" +
+      "prices; qty counts owned copies; avail = owned copies minus those claimed by BUILT decks (free to use); used = copies built decks claim; b: matches the binder name; src: is manabox (synced from ManaBox), scan (added with the app's scanner) or app (organised into a binder in the app).\n" +
       `Examples:\n${SEARCH_EXAMPLES.map((e) => `  ${e}`).join("\n")}\n` +
       "Output: header 'N matches (showing a-b)' then one line per card: " +
-      "'<qty>x <name> | <mana cost> | <type line> | <SET #number, or N printings> | <price> | <finishes> | binders: ... | source: ...'. " +
+      "'<qty>x <name> | <mana cost> | <type line> | <SET #number, or N printings> | <price> | <finishes> | free N (when built decks use it) | binders: ... | source: ...'. " +
       "Page through large results with offset. Set include_text to also get oracle text (costs more tokens).",
     inputSchema: {
       type: "object",
@@ -134,7 +139,8 @@ const TOOLS = [
     name: "check_owned",
     description:
       "Check which of the given card names the user owns. For each name returns the owned copies across all printings " +
-      "(with set, collector number, finish) or NOT OWNED. Case-insensitive; the front-face name of double-faced/split " +
+      "(with set, collector number, finish), how many are FREE (owned minus copies claimed by built decks) and which built " +
+      "decks use it, or NOT OWNED. Case-insensitive; the front-face name of double-faced/split " +
       "cards also matches. Use it to check a candidate list or decklist against the collection in one call (max 300 names).",
     inputSchema: {
       type: "object",
@@ -169,7 +175,8 @@ const TOOLS = [
     name: "list_binders",
     description:
       "List the user's binders (storage groups of owned cards): name, number of printings, total copies, and where " +
-      "the copies came from (manabox = synced from the ManaBox app, scan = added with the app's camera scanner). " +
+      "the copies came from (manabox = synced from the ManaBox app, scan = added with the app's camera scanner, app = moved " +
+      "into the binder in the app). Empty binders are listed too; Unsorted = copies without a binder. " +
       "Search a binder's contents with search_collection and b:\"<name>\".",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { title: "List binders", readOnlyHint: true, openWorldHint: false },
@@ -178,8 +185,9 @@ const TOOLS = [
   {
     name: "list_decks",
     description:
-      "List the user's decks: id, name, format, source (manabox = synced from a ManaBox deck binder, manual = entered " +
-      "in the app, scan = filled with the app's camera scanner, claude = saved by you), card count, value in EUR (commander+main+side) and last update.",
+      "List the user's decks: id, name, format, status (built = a physical deck that claims its cards, idea = a plan), " +
+      "source (manabox = synced from a ManaBox deck binder, manual = entered in the app, scan = filled with the app's camera " +
+      "scanner, claude = saved by you), card count, value in EUR (commander+main+side), missing cards, conflicts and last update.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { title: "List decks", readOnlyHint: true, openWorldHint: false },
     run: listDecksTool,
@@ -187,8 +195,9 @@ const TOOLS = [
   {
     name: "get_deck",
     description:
-      "Show one deck with every card, its board, and ownership against the collection (owned / MISSING n / basic), " +
-      "per-card prices, the deck value in EUR (owned / to buy) and the estimated cost of the missing cards.",
+      "Show one deck with its status (idea/built), every card, its board, and ownership against the collection (owned / " +
+      "MISSING n / basic; missing = not FREE, i.e. copies claimed by other built decks don't count), cards shared with other " +
+      "built decks (CONFLICT when there aren't enough copies), per-card prices, the deck value in EUR and its shopping list.",
     inputSchema: {
       type: "object",
       properties: {
@@ -199,6 +208,15 @@ const TOOLS = [
     },
     annotations: { title: "Show deck", readOnlyHint: true, openWorldHint: false },
     run: getDeck,
+  },
+  {
+    name: "shopping_list",
+    description:
+      "What the user has to buy: every card the BUILT decks together need more of than the user owns (with the decks " +
+      "competing for it and EUR prices), plus per deck (built and idea) how many cards are missing given the free copies and their cost.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { title: "Shopping list", readOnlyHint: true, openWorldHint: false },
+    run: shoppingListTool,
   },
   {
     name: "save_deck",
@@ -218,6 +236,10 @@ const TOOLS = [
         format: { type: "string", description: "Format, e.g. commander, modern, standard, pauper, brawl." },
         description: { type: "string", description: "Short description / strategy notes shown in the app." },
         deck_id: { type: "integer", description: "Overwrite this existing deck (from list_decks) instead of creating a new one." },
+        status: {
+          type: "string", enum: DECK_STATUSES,
+          description: "idea (default for new decks: a plan, claims no cards) or built (the user has physically built it; its cards are then claimed). Omit to keep an existing deck's status.",
+        },
         cards: {
           type: "array", minItems: 1, maxItems: 500,
           items: {
@@ -295,11 +317,12 @@ function collectionOverview() {
     }
   }
 
-  const binders = listBinders(d);
-  if (binders.length) {
+  const { binders, unsorted } = listBinders(d);
+  if (binders.length || unsorted.copies) {
     lines.push("", `Binders (${binders.length}; printings / copies / source):`);
-    for (const b of binders.slice(0, 40)) lines.push(`  ${b.name || "(no binder)"}: ${b.cards} / ${b.copies} / ${b.sources.join("+")}`);
+    for (const b of binders.slice(0, 40)) lines.push(`  ${b.name}: ${b.cards} / ${b.copies} / ${b.sources.join("+") || "empty"}`);
     if (binders.length > 40) lines.push(`  ... ${binders.length - 40} more (list_binders)`);
+    if (unsorted.copies) lines.push(`  (Unsorted): ${unsorted.cards} / ${unsorted.copies} / ${unsorted.sources.join("+")}`);
   }
 
   const decks = listDecks(d);
@@ -329,7 +352,7 @@ function searchTool(args) {
     const finishes = String(r.finishes || "normal").split(",");
     const price = cardPrice(r, r.finish || "normal"); // most valuable owned printing
     const where = group === "card" && r.printing_count > 1 ? `${r.printing_count} printings` : setNum(r);
-    const extra = `${r.binders ? ` | binders: ${r.binders}` : ""}${r.sources ? ` | source: ${r.sources}` : ""}`;
+    const extra = `${r.used ? ` | free ${r.avail}` : ""}${r.binders ? ` | binders: ${r.binders}` : ""}${r.sources ? ` | source: ${r.sources}` : ""}`;
     lines.push(`${r.qty}x ${r.name} | ${r.mana_cost || ""} | ${r.type_line || ""} | ${where} | ${formatPrice(price)} | ${finishes.join(",")}${extra}`);
     if (args.include_text && r.oracle_text) lines.push(`    ${oneLine(r.oracle_text)}`);
   }
@@ -340,12 +363,19 @@ function checkOwned(args) {
   if (!Array.isArray(args.names) || args.names.length === 0) throw new ToolError("names must be a non-empty array of card names.");
   if (args.names.length > 300) throw new ToolError("At most 300 names per call.");
   const names = [...new Set(args.names.map((n) => String(n).trim()).filter(Boolean))];
-  const stmt = getDb().prepare(OWNED_BY_NAME);
+  const d = getDb();
+  const stmt = d.prepare(OWNED_BY_NAME);
+  const alloc = allocation(d);
+  const builtUse = (key) => (alloc.built.get(key)?.decks ?? []).map((k) => `#${k.deck_id} ${k.name} ${k.quantity}x`).join(", ");
   const lines = [];
   let ownedCount = 0;
   for (const name of names) {
     const rows = stmt.all(name, name);
-    if (!rows.length) { lines.push(`${name}: NOT OWNED`); continue; }
+    if (!rows.length) {
+      const use = builtUse(cardKey(d.prepare("SELECT oracle_id FROM cards WHERE name = ? COLLATE NOCASE OR name LIKE ? || ' // %' LIMIT 1").get(name, name)?.oracle_id ?? null, name));
+      lines.push(`${name}: NOT OWNED${use ? ` (needed by built decks: ${use})` : ""}`);
+      continue;
+    }
     ownedCount++;
     // Merge rows that differ only by condition/language/binder.
     const per = new Map();
@@ -359,9 +389,13 @@ function checkOwned(args) {
       return `${q}x ${sn}${finish !== "normal" ? ` ${finish}` : ""}`;
     });
     const label = rows[0].name.toLowerCase() === name.toLowerCase() ? rows[0].name : `${name} (${rows[0].name})`;
-    lines.push(`${label}: ${total} owned — ${detail.join(", ")}`);
+    const key = cardKey(rows[0].oracle_id, rows[0].name);
+    const demand = alloc.built.get(key)?.demand ?? 0;
+    const free = isBasicLand(rows[0].name) ? total : total - demand;
+    const use = demand ? `; used in built decks: ${builtUse(key)}` : "";
+    lines.push(`${label}: ${total} owned, ${free} free${free < 0 ? " (SHORT)" : ""} — ${detail.join(", ")}${use}`);
   }
-  return [`${ownedCount} of ${names.length} owned.`, ...lines].join("\n");
+  return [`${ownedCount} of ${names.length} owned. "free" = owned minus copies claimed by built decks.`, ...lines].join("\n");
 }
 
 const COMMON_FORMATS = ["standard", "pioneer", "modern", "legacy", "vintage", "pauper", "commander", "brawl"];
@@ -414,27 +448,48 @@ function getCard(args) {
   const total = owned.reduce((a, r) => a + r.quantity, 0);
   lines.push("", total ? `Owned: ${total} copies` : "Owned: none");
   for (const r of owned) {
-    lines.push(`  ${r.quantity}x ${setNum(r)} ${r.finish} ${r.language} ${r.condition}${r.binder ? ` [binder: ${r.binder}]` : ""}${r.source === "scan" ? " (scanned)" : ""}`);
+    lines.push(`  ${r.quantity}x ${setNum(r)} ${r.finish} ${r.language} ${r.condition}${r.binder ? ` [binder: ${r.binder}]` : ""}${r.source === "scan" ? " (scanned)" : r.source === "app" ? " (organised in app)" : ""}`);
   }
-  const decks = d.prepare(
-    `SELECT d.id, d.name, dc.board, SUM(dc.quantity) AS quantity
-       FROM deck_cards dc JOIN decks d ON d.id = dc.deck_id LEFT JOIN cards c ON c.scryfall_id = dc.scryfall_id
-      WHERE c.oracle_id = ? OR (dc.scryfall_id IS NULL AND dc.name = ? COLLATE NOCASE)
-      GROUP BY d.id, dc.board ORDER BY d.name`,
-  ).all(card.oracle_id, card.name);
-  if (decks.length) lines.push(`In decks: ${decks.map((k) => `#${k.id} ${k.name} (${k.quantity}x ${k.board})`).join(", ")}`);
+  const usage = cardUsage(d, { oracle_id: card.oracle_id, name: card.name });
+  if (usage.built_demand) lines.push(`Built decks claim ${usage.built_demand}; free: ${usage.available}${usage.available < 0 ? " (SHORT)" : ""}`);
+  if (usage.decks.length) {
+    lines.push(`In decks: ${usage.decks.map((k) => `#${k.id} ${k.name} [${k.status}] (${k.quantity}x ${k.board})`).join(", ")}`);
+  }
   if (card.scryfall_uri) lines.push(`Scryfall: ${card.scryfall_uri}`);
   return lines.join("\n");
 }
 
 function listBindersTool() {
-  const binders = listBinders(getDb());
-  if (!binders.length) return "The user has no cards in the collection yet.";
-  return binders.map((b) => `${b.name || "(no binder)"}: ${b.cards} printings, ${b.copies} copies, source ${b.sources.join("+")}`).join("\n");
+  const { binders, unsorted, collection_master: master } = listBinders(getDb());
+  if (!binders.length && !unsorted.copies) return "The user has no binders and no cards in the collection yet.";
+  const line = (name, b) => `${name}: ${b.cards} printings, ${b.copies} copies${b.sources.length ? `, source ${b.sources.join("+")}` : " (empty)"}`;
+  const lines = binders.map((b) => line(b.name, b));
+  if (unsorted.copies) lines.push(line("(Unsorted, no binder)", unsorted));
+  lines.push(`Collection master: ${master === "app" ? "mtg-planner (ManaBox imports add cards)" : "ManaBox (imports replace ManaBox cards)"}`);
+  return lines.join("\n");
 }
 
 const deckLine = (k) =>
-  `#${k.id} ${k.name}${k.format ? ` [${k.format}]` : ""} — ${k.card_count} cards, value €${(k.value_eur ?? 0).toFixed(2)}, source ${k.source}, updated ${k.updated_at}`;
+  `#${k.id} ${k.name}${k.format ? ` [${k.format}]` : ""} — ${k.status ?? "idea"}, ${k.card_count} cards, value €${(k.value_eur ?? 0).toFixed(2)}` +
+  `${k.missing_count ? `, missing ${k.missing_count}` : ""}${k.conflict_count ? `, ${k.conflict_count} CONFLICTS with other built decks` : ""}` +
+  `, source ${k.source}, updated ${k.updated_at}`;
+
+function shoppingListTool() {
+  const { built, per_deck: perDeck } = shoppingList(getDb());
+  const eur = (v) => (v == null ? "no EUR price" : `€${v.toFixed(2)}`);
+  const lines = [built.items.length
+    ? `Built decks are short of ${built.items.length} cards (total ${eur(built.total_eur)}):`
+    : "The built decks have every card they need."];
+  for (const it of built.items.slice(0, 100)) {
+    lines.push(`  ${it.short}x ${it.name} | ${eur(it.price_eur)} each | ${it.decks.map((k) => `#${k.deck_id} ${k.name} ${k.quantity}x`).join(", ")}`);
+  }
+  if (built.items.length > 100) lines.push(`  ... ${built.items.length - 100} more`);
+  if (perDeck.length) {
+    lines.push("", "Per deck (missing = not free in the collection):");
+    for (const k of perDeck) lines.push(`  #${k.id} ${k.name} [${k.status}]: ${k.missing_count} missing, ${eur(k.missing_eur)}`);
+  }
+  return lines.join("\n");
+}
 
 function listDecksTool() {
   const decks = listDecks(getDb());
@@ -469,6 +524,7 @@ async function saveDeckTool(args) {
   });
   const d = getDb();
   let id;
+  if (args.status != null && !DECK_STATUSES.includes(args.status)) throw new ToolError(`status must be ${DECK_STATUSES.join(" or ")}.`);
   if (args.deck_id != null) {
     id = Number(args.deck_id);
     if (!Number.isInteger(id) || !d.prepare("SELECT 1 FROM decks WHERE id = ?").get(id)) {
@@ -477,6 +533,7 @@ async function saveDeckTool(args) {
   }
   const saved = await saveDeck(d, {
     id, name, format: args.format || null, description: args.description || null, source: "claude", items,
+    status: args.status ?? (id ? null : "idea"),
   });
   const lines = [`${id ? "Updated" : "Created"} deck #${saved.id} "${name}". The user can open it in the app's Decks view.`];
   if (saved.unresolved.length) {
@@ -529,7 +586,8 @@ async function handle(msg) {
         serverInfo: { name: "mtg-collection", version: VERSION },
         instructions:
           "Read access to the user's Magic: The Gathering collection (synced from ManaBox) and decks, plus save_deck " +
-          "to hand decks over to the app. Check ownership with check_owned / search_collection before recommending cards.",
+          "to hand decks over to the app. Check ownership with check_owned / search_collection before recommending cards; " +
+          "built decks claim their cards, so 'free' copies (avail) are what is left for new decks.",
       });
     case "ping":
       return reply(id, {});

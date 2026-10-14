@@ -16,8 +16,12 @@ uses two system tools from Debian inside the image (tesseract OCR and `djpeg`).
 
 - **ManaBox sync from your phone.** Export your collection in ManaBox
   (CSV) and upload it in the web app. The default mode, *replace*, does a full
-  sync: ManaBox is the source of truth. *Add* mode adds the uploaded counts on
-  top of what is already there. Every printing is resolved against Scryfall,
+  sync: ManaBox is the source of truth. Once you organise ManaBox cards into
+  binders in the app, mtg-planner becomes the master and imports default to
+  *delta*: only the copies that are new since the last ManaBox export are added,
+  fewer copies are reported but never deleted, and the same file imported twice
+  changes nothing (see [Binders](#binders-and-the-collection-master)). *Add*
+  mode adds every copy in the file again. Every printing is resolved against Scryfall,
   which also refreshes its price. ManaBox **deck binders** become decks
   automatically (a *replace* import also removes decks whose binder is gone),
   and **list binders** (wish lists) are skipped. A *replace* upload in which
@@ -35,6 +39,9 @@ uses two system tools from Debian inside the image (tesseract OCR and `djpeg`).
   card or by printing and sort by name, mana value, price, quantity, set or
   rarity. Card details show every printing you own and every deck that uses
   the card.
+- **Binders on the phone:** create, rename, merge and delete binders, filter
+  the collection by binder (or *Unsorted*), move single copies from a card's
+  details, or select many cards and move them in bulk.
 - **Decks:** paste a list in MTGA, Moxfield or ManaBox format, or let Claude
   build one. Each card shows how many copies you own (counted across all
   printings) and how many are **missing**. The deck shows its **value in EUR**
@@ -43,6 +50,17 @@ uses two system tools from Debian inside the image (tesseract OCR and `djpeg`).
   **commander** (up to two for partner/background pairs; legendary creatures in
   the deck are suggested) and move cards between boards. Decks can be exported
   as a text list you can import elsewhere.
+- **Idea vs. built decks:** a deck is an *idea* (a plan) or *built* (a physical
+  deck; decks synced from ManaBox deck binders start as built). Built decks
+  **claim** their copies (commander, main and side boards; basic lands never
+  count), so every deck and card shows *owned* and *free* copies. Two built
+  decks that need more copies than you own are flagged as a **conflict**. A
+  **shopping list** shows what each deck still needs and, across all built
+  decks, what to buy with a € total. **Put into deck box** moves the copies a
+  built deck needs into a `Deck box: <name>` binder (Unsorted first, never out
+  of another built deck's box; the box is remembered, also when the deck or
+  the binder is renamed, and a ManaBox deck's own binder already counts as
+  boxed).
 - **Claude planner:** a chat that runs the
   [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) headless
   with exactly two MCP servers:
@@ -55,7 +73,8 @@ uses two system tools from Debian inside the image (tesseract OCR and `djpeg`).
 
   Ask things like *"Build me a budget Atraxa superfriends deck using mostly
   cards I own, max €40 to buy"*. Claude checks what you own first and saves the
-  deck so it appears in the Decks tab. Answers are kept short for a phone
+  deck so it appears in the Decks tab as an *idea*. Ask it to build *"only from
+  free cards"* and it leaves the copies your built decks use alone. Answers are kept short for a phone
   screen: the answer first, a few bullets, and a deck summary instead of the
   full list (ask for details when you want them). Conversations keep going
   across restarts (`--resume`).
@@ -187,8 +206,16 @@ own subscription.
 1. In ManaBox, open **Collection** and tap the **⋯** menu, then **Export**,
    then **CSV**. You can also export a single binder.
 2. Save or share the file to your phone.
-3. In mtg-planner, open **Import**, pick the file and choose **Replace (sync)**,
-   the default, or **Add**.
+3. In mtg-planner, open **Import**, pick the file and choose a mode. The
+   default follows the [collection master](#binders-and-the-collection-master):
+   *Replace (sync)* while ManaBox is the master, *Only new copies (delta)* once
+   mtg-planner is. *Add everything* adds every copy in the file again.
+
+The app remembers the last ManaBox export (every import rewrites that
+snapshot). A *delta* import compares the file with it per printing, finish,
+language, condition and binder: increases are added into their ManaBox binder,
+decreases are listed as "ManaBox has fewer copies of X (−n)" and nothing is
+deleted.
 
 The import needs the `Name` column plus either `Scryfall ID` or `Set code`.
 It also understands `Collector number`, `Foil`, `Quantity`, `Condition`,
@@ -246,9 +273,14 @@ values with spaces go in quotes.
 | `is:commander` | legendary creature or "can be your commander" |
 | `eur>5`, `usd<1` | price of the owned finish (foil/etched prices for foil/etched copies) |
 | `qty>=4` | total owned copies (summed over the grouped rows) |
-| `b:"trade binder"` | binder name contains (ManaBox or scanner binders) |
+| `avail>=1` (`free`, `available`) | copies not claimed by built decks (all printings; `avail<0` = short) |
+| `used>=1`, `is:used`, `used:no` | copies claimed by built decks |
+| `b:"trade binder"` | binder name contains (any binder) |
 | `lang:de` | card language |
+| `src:manabox`, `src:scan`, `src:app` | where the copy came from (ManaBox import, scanner, organised in the app) |
 | `-t:land` | negation of any term |
+
+All terms are ANDed; there is no `or` and no parentheses.
 
 Unknown keys return an error that lists the supported syntax.
 
@@ -349,14 +381,66 @@ or all of them and choose **Add to…**:
   choose (main, side, commander or maybe). Decks synced from ManaBox are not
   offered, because the next ManaBox import rebuilds them from the CSV.
 
-You can also add cards by title search without the camera. The Collection tab
-can filter by binder, rename binders (binders with ManaBox cards are renamed in
-ManaBox) and delete a binder's *scanned* rows.
+You can also add cards by title search without the camera. Binders are
+managed in the Collection tab (see below).
 
 **The scanner and ManaBox imports are separate.** Every collection row knows
-where it came from (`manabox` or `scan`). A ManaBox *replace* import only
-replaces rows that came from ManaBox, so scanned cards are never wiped by a
-sync.
+where it came from (`manabox`, `scan` or `app`). A ManaBox *replace* import
+only replaces rows that came from ManaBox, so scanned cards are never wiped by
+a sync.
+
+## Binders and the collection master
+
+A binder is a named group of owned copies; copies without one are *Unsorted*.
+In the **Collection** tab:
+
+- the binder bar filters the list by binder (or *Unsorted*); **New binder**
+  creates an empty binder, **Manage** renames (renaming onto an existing name
+  merges the two) and deletes binders. Deleting asks what happens to the
+  cards: move them to *Unsorted* (default) or delete them too.
+- a card's details list every owned copy with a **Move…** action: pick how
+  many copies and the target binder (or a new one).
+- **Select** turns the grid or list into a selection; **Move to…** moves every
+  copy of the selected cards, or, while a binder filter is active, only the
+  copies in that binder.
+
+**Who is the master of the collection?** By default ManaBox is: a *replace*
+import rebuilds every row that came from ManaBox. The first time you move,
+rename or unsort ManaBox cards in the app, mtg-planner asks once and then
+becomes the master:
+
+- the moved copies turn into app-owned rows (source `app`) that no import
+  touches, so your binder assignments win;
+- ManaBox imports default to **Only new copies (delta)**; *Replace* stays
+  available behind an explicit warning (it still deletes only rows that came from ManaBox,
+  and copies you already moved in the app are counted against the file instead of
+  being loaded a second time, also after switching the master back to ManaBox);
+- deleting a binder may delete its ManaBox cards too (while ManaBox is the
+  master this is refused, so ManaBox data is never deleted silently).
+
+The **Import** tab shows the current master and can switch it back.
+
+API (JSON; state-changing calls need `Content-Type: application/json` and a
+same-origin request):
+
+| Route | |
+| --- | --- |
+| `GET /api/binders` | `{binders: [{name, cards, unique_cards, copies, sources, by_source, created_at, empty}], unsorted, collection_master}` |
+| `POST /api/binders {name}` | create an empty binder: 201, 409 if it exists, 400 if empty or longer than 100 |
+| `PATCH /api/binders/:name {name, confirm_master?}` | rename, merging into an existing binder |
+| `DELETE /api/binders/:name?cards=unsort\|delete&confirm_master=1` | delete; `unsort` (default) moves the cards to Unsorted |
+| `POST /api/collection/move` | `{items, to_binder, create?, confirm_master?}`; an item is `{scryfall_id, finish, language, condition, binder, source?, quantity}` (copies of one row key), `{oracle_id, from_binder?}` (every copy of a card) or `{printing_id, from_binder?}` (every copy of a printing); `to_binder: ""` is Unsorted |
+| `GET /api/collection?binder=` | the collection list filtered by exact binder (`binder=` = Unsorted) |
+| `GET\|PATCH /api/settings` | `{collection_master: "manabox" \| "app"}` (also in `GET /api/stats`) |
+| `POST /api/import/manabox?mode=replace\|delta\|add` | raw CSV body; the summary lists `added` and `decreased` rows in delta mode |
+| `PATCH /api/decks/:id {status}` | `idea` or `built` |
+| `GET /api/shopping-list` | `{built: {items, total_eur}, per_deck}` |
+| `POST /api/decks/:id/to-binder {binder?, confirm_master?}` | move the deck's owned copies into `Deck box: <name>` (or `binder`); returns `moved` and `missing` |
+
+A move, rename or unsort that touches ManaBox rows while ManaBox is the master
+answers `409 {code: "confirm_master", manabox_copies}`; repeat it with
+`confirm_master` to proceed. A *replace* import while mtg-planner is the master
+answers `409 {code: "confirm_replace"}` unless `confirm_replace=1` is set.
 
 ### First start: building the index
 
@@ -448,12 +532,14 @@ flowchart LR
 
 - `server.js`: HTTP API, ManaBox import, decks, scanner, and chat over
   Server-Sent Events. It uses the Node standard library only.
-- `lib/db.js`: SQLite schema (`cards`, `collection`, `decks`, `deck_cards`,
-  `imports`, `chats`, `messages`, `scans`) on `node:sqlite`, with versioned
+- `lib/db.js`: SQLite schema (`cards`, `collection`, `binders`, `decks`,
+  `deck_cards`, `imports`, `chats`, `messages`, `scans`, `meta`) on `node:sqlite`, with versioned
   migrations (`PRAGMA user_version`), plus price helpers.
 - `lib/scryfall.js`: rate-limited Scryfall client and card normalisation.
 - `lib/query.js`: compiles the search syntax to SQL.
 - `lib/manabox.js`: CSV parser and ManaBox import (replace/add, binders).
+- `lib/binders.js`: binders (list, create, rename/merge, delete), moving
+  copies between binders, and the collection master setting.
 - `lib/decks.js`: decklist parsing, name resolution (owned printings first),
   and ownership and missing-cost math.
 - `lib/scheduler.js`: the nightly index and price refresh.
@@ -470,11 +556,12 @@ flowchart LR
 - `lib/scanner.js`: the identification pipeline and the decision thresholds
   (`SCAN_THRESHOLDS`).
 - `lib/scans.js`: the scan list (staging, duplicate rule, undo, +1), commits
-  to binders and decks, binders, and calibration records.
+  to binders and decks, and calibration records.
 - `mcp-collection.js`: hand-rolled MCP stdio server (JSON-RPC 2.0) with the
   tools `collection_overview`, `search_collection`, `check_owned`, `get_card`,
-  `list_decks`, `get_deck`, `save_deck` and `list_binders` (read-only; binder
-  names and each row's source, ManaBox or scan, are visible to Claude).
+  `list_decks`, `get_deck`, `shopping_list`, `save_deck` and `list_binders`
+  (read-only apart from `save_deck`; binder names, each row's source, ManaBox,
+  scan or app, and owned vs. free copies are visible to Claude).
 - `public/`: the single-page web app. `public/scanlib.js` does the in-browser
   capture work: card detection, steadiness and sharpness checks, perspective
   correction, and strip cropping. It needs no dependencies.

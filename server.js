@@ -12,8 +12,11 @@ import path from "node:path";
 
 import { cardPrice, getAppMeta, openDb, setAppMeta, stats } from "./lib/db.js";
 import { QUERY_HELP, searchCollection } from "./lib/query.js";
-import { importManaBoxCsv, refreshOwnedCards } from "./lib/manabox.js";
-import { DeckError, deckDetail, exportDeck, listDecks, normalizeFormat, parseDecklist, saveDeck, setCommander, updateDeckCard } from "./lib/decks.js";
+import { IMPORT_MODES, importManaBoxCsv, refreshOwnedCards } from "./lib/manabox.js";
+import {
+  DECK_STATUSES, DeckError, cardUsage, deckDetail, exportDeck, listDecks, normalizeFormat, parseDecklist, saveDeck, setCommander,
+  shoppingList, updateDeckCard,
+} from "./lib/decks.js";
 import * as claudeLib from "./lib/claude.js";
 import { MAX_CONCURRENT, activeClaudeRuns, claudeConfigured, killAll, prepareMcpConfig, runTurn, runVision, visionCap } from "./lib/claude.js";
 import {
@@ -25,9 +28,13 @@ import { Matcher, buildFingerprints, checkJpegSize } from "./lib/fingerprint.js"
 import { ocrTools } from "./lib/ocr.js";
 import { decideFinish, identify, printingSummary } from "./lib/scanner.js";
 import {
-  CONDITIONS, ScanError, commitScans, normFinish, deleteBinder, deleteScan, exportCalibration, getScan, incrementScan, listBinders,
-  listScans, recordTruth, renameBinder, scanImagePath, scanStripPath, stageScan, undoLast, updateScan,
+  CONDITIONS, ScanError, commitScans, normFinish, deleteScan, exportCalibration, getScan, incrementScan,
+  listScans, recordTruth, scanImagePath, scanStripPath, stageScan, undoLast, updateScan,
 } from "./lib/scans.js";
+import {
+  BinderError, collectionMaster, createBinder, deckToBinder, defaultImportMode, deleteBinder, listBinders, moveCopies, renameBinder,
+  setCollectionMaster,
+} from "./lib/binders.js";
 
 const PORT = Number(process.env.PORT) || 8080;
 const STATIC_DIR = path.resolve(process.env.STATIC_DIR || "/app/public");
@@ -64,9 +71,10 @@ try {
 // HTTP helpers
 
 class HttpError extends Error {
-  constructor(status, message) {
+  constructor(status, message, extra = null) {
     super(message);
     this.status = status;
+    this.extra = extra; // more JSON fields for the error body (e.g. {code})
   }
 }
 
@@ -156,7 +164,8 @@ function collectionRows(query) {
   const dir = query.get("dir") === "asc" || query.get("dir") === "desc" ? query.get("dir") : undefined;
   let result;
   try {
-    result = searchCollection(db, { q: query.get("q") || "", group, sort: query.get("sort") || "name", dir, limit, offset });
+    const binder = query.has("binder") ? query.get("binder").slice(0, 200) : null;
+    result = searchCollection(db, { q: query.get("q") || "", group, sort: query.get("sort") || "name", dir, limit, offset, binder });
   } catch (err) {
     throw new HttpError(400, err.message);
   }
@@ -176,21 +185,21 @@ function cardDetail(id) {
   card.keywords = parseJsonField(card.keywords, []);
   card.price = cardPrice(card);
   const owned = db.prepare(
-    `SELECT c.scryfall_id, c.set_code, c.set_name, c.collector_number, col.finish, col.language,
-            col.condition, col.binder, col.quantity, c.image_small
+    `SELECT col.id, c.scryfall_id, c.set_code, c.set_name, c.collector_number, col.finish, col.language,
+            col.condition, col.binder, col.source, col.quantity, c.image_small
        FROM collection col JOIN cards c ON c.scryfall_id = col.scryfall_id
       WHERE c.oracle_id = ?
-      ORDER BY c.set_code, c.collector_number, col.finish`,
+      ORDER BY c.set_code, c.collector_number, col.finish, col.binder COLLATE NOCASE, col.source`,
   ).all(card.oracle_id);
   const decks = db.prepare(
-    `SELECT d.id, d.name, dc.board, SUM(dc.quantity) AS quantity
+    `SELECT d.id, d.name, d.status, dc.board, SUM(dc.quantity) AS quantity
        FROM deck_cards dc JOIN decks d ON d.id = dc.deck_id
        LEFT JOIN cards c ON c.scryfall_id = dc.scryfall_id
       WHERE c.oracle_id = ? OR (dc.scryfall_id IS NULL AND dc.name = ? COLLATE NOCASE)
       GROUP BY d.id, dc.board
       ORDER BY d.updated_at DESC`,
   ).all(card.oracle_id, card.name);
-  return { card, owned, decks };
+  return { card, owned, decks, usage: cardUsage(db, { oracle_id: card.oracle_id, name: card.name }) };
 }
 
 // ---------------------------------------------------------------------------
@@ -240,14 +249,24 @@ async function createDeck(req) {
       format: normalizeFormat(optString(body.format, "format", 50)),
       description: optString(body.description, "description", 5000) || null,
       source: "manual",
+      status: deckStatus(body.status),
       items,
     });
   } catch (err) {
+    if (err instanceof DeckError) throw new HttpError(err.status, err.message);
     throw importError(err);
   }
   return { id: saved.id, unresolved: saved.unresolved, parse_errors: errors };
 }
 
+/** Optional deck status from a request body: undefined/null = not given. */
+function deckStatus(v) {
+  if (v == null) return null;
+  if (!DECK_STATUSES.includes(v)) throw new HttpError(400, `status must be ${DECK_STATUSES.join(" or ")}`);
+  return v;
+}
+
+/** PATCH /api/decks/:id {name?, format?, description?, status?} -> the deck row. */
 async function patchDeck(req, id) {
   const deck = db.prepare("SELECT * FROM decks WHERE id = ?").get(id);
   if (!deck) throw new HttpError(404, "Deck not found");
@@ -256,9 +275,18 @@ async function patchDeck(req, id) {
   if (!name) throw new HttpError(400, "name must not be empty");
   const format = body.format === undefined ? deck.format : normalizeFormat(optString(body.format, "format", 50));
   const description = body.description === undefined ? deck.description : optString(body.description, "description", 5000) || null;
-  db.prepare("UPDATE decks SET name = ?, format = ?, description = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(name, format, description, id);
+  const status = deckStatus(body.status) ?? deck.status;
+  db.prepare("UPDATE decks SET name = ?, format = ?, description = ?, status = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(name, format, description, status, id);
   return db.prepare("SELECT * FROM decks WHERE id = ?").get(id);
+}
+
+/** POST /api/decks/:id/to-binder {binder?, confirm_master?} -> moved/missing summary + deck detail. */
+async function postDeckToBinder(req, id) {
+  const body = await readJson(req);
+  const binder = optString(body.binder, "binder", 200);
+  const result = await exclusive(async () => scanCall(() => deckToBinder(db, id, { binder, confirm_master: body.confirm_master === true })));
+  return { ...result, deck: getDeckOr404(id) };
 }
 
 const deckCall = (fn) => { try { return fn(); } catch (err) { throw err instanceof DeckError ? new HttpError(err.status, err.message) : err; } };
@@ -402,6 +430,7 @@ async function postMessage(req, res, chatId) {
 /** ScanError (lib/scans.js) -> HttpError; everything else passes through. */
 function scanErr(err) {
   if (err instanceof ScanError) return new HttpError(err.status, err.message);
+  if (err instanceof BinderError) return new HttpError(err.status, err.message, err.extra);
   return err;
 }
 const scanCall = (fn) => { try { return fn(); } catch (err) { throw scanErr(err); } };
@@ -689,17 +718,23 @@ async function handleScanApi(req, res, url) {
   }
 
   if (pathname === "/api/binders" && method === "GET") return sendJson(res, 200, listBinders(db));
+  if (pathname === "/api/binders" && method === "POST") {
+    const body = await readJson(req);
+    return sendJson(res, 201, await exclusive(async () => scanCall(() => createBinder(db, body.name))));
+  }
   if ((m = /^\/api\/binders\/(.+)$/.exec(pathname))) {
     let name;
     try { name = decodeURIComponent(m[1]); } catch { throw new HttpError(400, "Bad binder name"); }
     if (method === "PATCH") {
       const body = await readJson(req);
-      return sendJson(res, 200, await exclusive(async () => scanCall(() => renameBinder(db, name, body.name))));
+      return sendJson(res, 200, await exclusive(async () => scanCall(() => renameBinder(db, name, body.name, { confirm_master: body.confirm_master === true }))));
     }
     if (method === "DELETE") {
-      const source = query.get("source") || "scan";
-      if (source !== "scan") throw new HttpError(400, "Only scanned rows (source=scan) can be deleted here; ManaBox rows follow the ManaBox import");
-      return sendJson(res, 200, await exclusive(async () => deleteBinder(db, name, { source })));
+      // ?source=scan (older clients): delete only the scanned rows. Otherwise ?cards=unsort|delete.
+      const opts = query.has("source")
+        ? { source: query.get("source") }
+        : { cards: query.get("cards") || "unsort", confirm_master: query.get("confirm_master") === "1" };
+      return sendJson(res, 200, await exclusive(async () => scanCall(() => deleteBinder(db, name, opts))));
     }
     throw new HttpError(405, "Method not allowed");
   }
@@ -803,8 +838,16 @@ async function handleApi(req, res, url) {
   if (pathname.startsWith("/api/cards/") && method === "GET") throw new HttpError(404, "Card not found");
 
   if (pathname === "/api/import/manabox" && method === "POST") {
-    const mode = query.get("mode") || "replace";
-    if (mode !== "replace" && mode !== "add") throw new HttpError(400, 'mode must be "replace" or "add"');
+    const mode = query.get("mode") || defaultImportMode(db);
+    if (!IMPORT_MODES.includes(mode)) throw new HttpError(400, 'mode must be "replace", "delta" or "add"');
+    // Once the app is the collection master, a replace would undo nothing the
+    // app manages (source app/scan) but still wipes every ManaBox row: ask first.
+    if (mode === "replace" && collectionMaster(db) === "app" && query.get("confirm_replace") !== "1") {
+      req.resume();
+      throw new HttpError(409, "mtg-planner is the master of your collection: a replace import deletes every card imported from ManaBox " +
+        "and loads the file instead (cards you scanned or moved in the app stay, and moved copies are not loaded a second time). Confirm with confirm_replace=1, or import with mode=delta.",
+        { code: "confirm_replace" });
+    }
     const filename = (query.get("filename") || "").slice(0, 255) || null;
     // text/csv is not a CORS-safelisted type; text/plain is accepted only with
     // the SPA's X-Requested-With header (which also forces a preflight).
@@ -817,6 +860,19 @@ async function handleApi(req, res, url) {
     if (!text.trim()) throw new HttpError(400, "The CSV file is empty.");
     const summary = await exclusive(() => importManaBoxCsv(db, text, { mode, filename }).catch((err) => { throw importError(err); }));
     return sendJson(res, 200, summary);
+  }
+  if (pathname === "/api/settings") {
+    if (method === "GET") return sendJson(res, 200, { collection_master: collectionMaster(db) });
+    if (method === "PATCH") {
+      const body = await readJson(req);
+      if (body.collection_master !== undefined) scanCall(() => setCollectionMaster(db, body.collection_master));
+      return sendJson(res, 200, { collection_master: collectionMaster(db) });
+    }
+    throw new HttpError(405, "Method not allowed");
+  }
+  if (pathname === "/api/collection/move" && method === "POST") {
+    const body = await readJson(req);
+    return sendJson(res, 200, await exclusive(async () => scanCall(() => moveCopies(db, body))));
   }
   if (pathname === "/api/refresh-prices" && method === "POST") {
     const result = await exclusive(() => refreshOwnedCards(db).catch((err) => { throw importError(err); }));
@@ -832,10 +888,12 @@ async function handleApi(req, res, url) {
     if (method === "GET") return sendJson(res, 200, listDecks(db));
     if (method === "POST") return sendJson(res, 201, await createDeck(req));
   }
-  if ((m = /^\/api\/decks\/(\d+)\/(cards|commander)$/.exec(pathname))) {
+  if (pathname === "/api/shopping-list" && method === "GET") return sendJson(res, 200, shoppingList(db));
+  if ((m = /^\/api\/decks\/(\d+)\/(cards|commander|to-binder)$/.exec(pathname))) {
     const id = Number(m[1]);
     if (m[2] === "cards" && method === "PATCH") return sendJson(res, 200, await patchDeckCard(req, id));
     if (m[2] === "commander" && method === "POST") return sendJson(res, 200, await postCommander(req, id));
+    if (m[2] === "to-binder" && method === "POST") return sendJson(res, 200, await postDeckToBinder(req, id));
     throw new HttpError(405, "Method not allowed");
   }
   if ((m = /^\/api\/decks\/(\d+)(\/export)?$/.exec(pathname))) {
@@ -1005,7 +1063,7 @@ const server = http.createServer(async (req, res) => {
     }
     // Drain any unread body so the connection can be reused.
     req.resume();
-    sendJson(res, status, { error: status === 500 ? `Internal error: ${err.message}` : err.message });
+    sendJson(res, status, { ...(err instanceof HttpError && err.extra ? err.extra : {}), error: status === 500 ? `Internal error: ${err.message}` : err.message });
   }
 });
 

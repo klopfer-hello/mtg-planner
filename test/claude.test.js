@@ -109,6 +109,12 @@ describe("planner prompt", () => {
     }
   });
 
+  test("knows owned vs free copies and deck status", () => {
+    for (const s of ["shopping_list", "Owned is not free", "built decks claim", "without breaking my decks", "avail>=1", "status idea"]) {
+      assert.ok(PLANNER_PROMPT.includes(s), `prompt mentions ${s}`);
+    }
+  });
+
   test("asks for short phone-friendly answers", () => {
     assert.match(PLANNER_PROMPT, /1-2 short sentences/);
     assert.match(PLANNER_PROMPT, /3-5 short bullets/);
@@ -116,5 +122,28 @@ describe("planner prompt", () => {
     assert.match(PLANNER_PROMPT, /Never list the whole deck/);
     assert.match(PLANNER_PROMPT, /no text before or between tool calls/);
     assert.ok(PLANNER_PROMPT.length < 2500, `prompt stays short (${PLANNER_PROMPT.length} chars)`);
+  });
+});
+
+describe("stored answer", () => {
+  test("short notes written before a tool call are dropped, the final answer stays", async () => {
+    const lines = [
+      { type: "system", subtype: "init", session_id: "s1" },
+      { type: "assistant", message: { content: [{ type: "text", text: "Let me check your collection." }, { type: "tool_use", name: "mcp__collection__search_collection", input: { q: "t:elf" } }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "Query may be too complex; simplify." }, { type: "tool_use", name: "mcp__collection__check_owned", input: { names: ["Sol Ring"] } }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "You own **1 Sol Ring**." }] } },
+      { type: "result", subtype: "success", is_error: false, result: "You own **1 Sol Ring**.", session_id: "s1", total_cost_usd: 0.01 },
+    ];
+    const data = path.join(tmp, "stream.jsonl");
+    writeFileSync(data, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    const bin = path.join(tmp, "fake-claude");
+    // A node script (the CLI's environment has no PATH to rely on).
+    writeFileSync(bin, `#!${process.execPath}\nprocess.stdin.resume();\nprocess.stdin.on("end", () => process.stdout.write(require("fs").readFileSync(${JSON.stringify(data)})));\n`);
+    chmodSync(bin, 0o755);
+    setEnv({ CLAUDE_BIN: bin });
+    const r = await runTurn({ prompt: "hi" });
+    assert.equal(r.error, null);
+    assert.equal(r.text, "You own **1 Sol Ring**.");
+    assert.equal(r.tools.length, 2);
   });
 });

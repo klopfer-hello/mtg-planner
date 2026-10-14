@@ -74,7 +74,7 @@ describe("mcp-collection.js", () => {
   test("lists exactly the documented, non-destructive tools", async () => {
     const { result } = await mcp.request("tools/list", {});
     const names = result.tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["check_owned", "collection_overview", "get_card", "get_deck", "list_binders", "list_decks", "save_deck", "search_collection"]);
+    assert.deepEqual(names, ["check_owned", "collection_overview", "get_card", "get_deck", "list_binders", "list_decks", "save_deck", "search_collection", "shopping_list"]);
     for (const t of result.tools) {
       assert.equal(typeof t.description, "string");
       assert.equal(t.inputSchema?.type, "object", `${t.name} needs an object inputSchema`);
@@ -157,5 +157,33 @@ describe("mcp-collection.js", () => {
     assert.match(got.text, /4x Counterspell .*owned 3|4x Counterspell .*MISSING 1/);
     const byId = await mcp.call("get_deck", { deck: id });
     assert.match(byId.text, /Izzet Test/);
+  });
+
+  test("built decks: free copies in check_owned/search, shopping_list, status in save/list/get", async () => {
+    const saved = await mcp.call("save_deck", {
+      name: "Built Burn", status: "built", cards: [{ name: "Lightning Bolt", quantity: 4 }, { name: "Sol Ring", quantity: 3 }],
+    });
+    assert.equal(saved.isError, false, saved.text);
+    assert.match(saved.text, /status: BUILT/);
+    assert.equal(ctx.db.prepare("SELECT status FROM decks WHERE name = 'Izzet Test'").get().status, "idea", "default idea");
+    const bad = await mcp.call("save_deck", { name: "X", status: "done", cards: [{ name: "Sol Ring" }] });
+    assert.equal(bad.isError, true);
+
+    const owned = await mcp.call("check_owned", { names: ["Lightning Bolt", "Sol Ring", "Serra Angel"] });
+    assert.match(owned.text, /Lightning Bolt: 4 owned, 0 free .*used in built decks: #\d+ Built Burn 4x/);
+    assert.match(owned.text, /Sol Ring: 2 owned, -1 free \(SHORT\)/);
+    const search = await mcp.call("search_collection", { query: "avail>=1" });
+    assert.doesNotMatch(search.text, /Lightning Bolt|Sol Ring/);
+    assert.match(search.text, /Counterspell/);
+    const used = await mcp.call("search_collection", { query: "used>=1" });
+    assert.match(used.text, /Lightning Bolt .*\| free 0/);
+    const shop = await mcp.call("shopping_list");
+    assert.match(shop.text, /short of 1 cards/);
+    assert.match(shop.text, /1x Sol Ring \| €1\.50 each \| #\d+ Built Burn 3x/);
+    assert.match(shop.text, /Izzet Test \[idea\]/);
+    const list = await mcp.call("list_decks");
+    assert.match(list.text, /Built Burn — built/);
+    const card = await mcp.call("get_card", { name: "Sol Ring" });
+    assert.match(card.text, /Built decks claim 3; free: -1 \(SHORT\)/);
   });
 });

@@ -85,7 +85,8 @@ describe("migration", () => {
       const db = openDb(file);
       const cols = db.prepare("PRAGMA table_info(collection)").all().map((c) => c.name);
       assert.ok(cols.includes("source"));
-      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 3);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 7);
+      assert.deepEqual(db.prepare("SELECT name, origin FROM binders").all().map((r) => ({ ...r })), [{ name: "Trade", origin: "manabox" }], "v4 binders backfill");
       assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE name = 'meta'").get(), "v3 meta table");
       assert.ok(db.prepare("PRAGMA table_info(scans)").all().some((c) => c.name === "undo"));
       const rows = db.prepare("SELECT scryfall_id, finish, language, binder, quantity, purchase_price, source FROM collection ORDER BY id").all();
@@ -377,15 +378,17 @@ describe("binders and ManaBox replace", () => {
     await commit([s.id], { type: "binder", name: "Trade" });
     const s2 = stage(result(BOLT), { force: true }).scan;
     await commit([s2.id], { type: "binder", name: "Box", create: true });
-    let binders = listBinders(ctx.db);
+    const flat = () => { const l = listBinders(ctx.db); return [...l.binders, { ...l.unsorted, name: "" }]; };
+    let binders = flat();
     assert.deepEqual(binders.map((b) => [b.name, b.copies, b.sources.join("+")]), [["Box", 1, "scan"], ["Trade", 3, "manabox+scan"], ["", 1, "manabox"]]);
     renameBinder(ctx.db, "Box", "Trade");
-    binders = listBinders(ctx.db);
+    binders = flat();
     assert.deepEqual(binders.map((b) => [b.name, b.copies]), [["Trade", 4], ["", 1]]);
     assert.throws(() => renameBinder(ctx.db, "Nope", "X"), (e) => e.status === 404);
-    assert.throws(() => renameBinder(ctx.db, "Trade", "Tausch"), (e) => e.status === 409, "binders with ManaBox rows are renamed in ManaBox");
+    assert.throws(() => renameBinder(ctx.db, "Trade", "Tausch"), (e) => e.status === 409 && e.extra?.code === "confirm_master",
+      "moving ManaBox rows needs the one-time master confirmation");
     assert.equal(deleteBinder(ctx.db, "Trade", { source: "scan" }).deleted, 2);
-    assert.deepEqual(listBinders(ctx.db).map((b) => [b.name, b.copies, b.sources.join("+")]), [["Trade", 2, "manabox"], ["", 1, "manabox"]]);
+    assert.deepEqual(flat().map((b) => [b.name, b.copies, b.sources.join("+")]), [["Trade", 2, "manabox"], ["", 1, "manabox"]]);
   });
 
   test("a ManaBox replace import leaves scanned rows alone", async () => {

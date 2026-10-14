@@ -124,8 +124,8 @@ describe("decks", () => {
     assert.equal(d.missing_cost_eur, 22);
 
     const text = deckToText(d);
-    assert.match(text, /^Deck #\d+ "Test" \[commander\] \(source: manual\)/);
-    assert.match(text, /Missing from collection: 5 cards \(~€22\.00\)/);
+    assert.match(text, /^Deck #\d+ "Test" \[commander\] \(source: manual, status: idea/);
+    assert.match(text, /Missing from collection: 5 cards \(~€22\.00;/);
     assert.match(text, /1x Lightning Bolt \| \{R\} \| Instant \| MISSING 1 \(owned 1\) \| €2\.00/);
     assert.match(text, /30x Forest .*\| basic \|/);
   });
