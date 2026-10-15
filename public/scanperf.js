@@ -62,13 +62,39 @@ export class FramePacer {
   }
 }
 
+/**
+ * Main-thread frame reads above this cost (median ms of the work-frame read) make a 4K stream drop to
+ * 1080p. 120 ms: the Pixel 9 read 235 ms (+ 220 ms for the full-res strip sharpness, gone since
+ * 0.6.2-beta.3; 0.6.2-beta.1 beacon); headless Chromium reads a 4K frame in 20-65 ms (1x-6x CPU
+ * throttling), so a phone that is merely busy keeps its 4K probe strip.
+ */
+export const RES_DROP = Object.freeze({ frames: 8, mainMs: 120, minShort: 1200 });
+
+/**
+ * Whether the scanner should ask the camera for 1080p: only while the page itself reads or scales the
+ * 4K video (path 'main' or 'bitmap'; on 'track' the worker reads it, and on 'clone' the analysis reads
+ * the small clone, while Chrome would only rescale the original track instead of re-opening the
+ * camera, as a source with two tracks keeps its format), the stream's short side is above minShort,
+ * and the median of the last `frames` main-thread read costs (ms) is above mainMs. On a 4K stream the
+ * 1080p read is ~4x fewer pixels; the probe strip shrinks to about half its width, so this is the
+ * slow-phone fallback, not the default.
+ */
+export function shouldDropResolution({ path, vw, vh, costs }, cfg = {}) {
+  const c = { ...RES_DROP, ...cfg };
+  if ((path !== "main" && path !== "bitmap") || !(Math.min(vw, vh) > c.minShort) || !Array.isArray(costs) || costs.length < c.frames) return false;
+  const p = percentile(costs.slice(-c.frames), 0.5);
+  return p !== null && p > c.mainMs;
+}
+
 const CAP = 600; // samples per series per window (a 5 s window at 60 Hz rAF is 300)
 
 /**
  * Collects scanner timings for one beacon window. The camera loop calls
- * frame({total, main, grab, detect, sharp}) per analysis, interval(ms)
- * between analysis starts, raf(ms) per animation frame, longTask(ms), probe
- * {rtt, capture} per probe; snapshot(now, extra) returns the beacon body and
+ * frame({total, main, grab, detect, sharp, wgrab, wsharp}) per analysis (grab: the page's
+ * frame read; sharp: the strip sharpness; wgrab/wsharp: the worker's frame read / strip round
+ * trip on the experimental worker paths), interval(ms) between analysis starts, raf(ms) per
+ * animation frame, longTask(ms), probe {rtt, capture, crop, read (the page's card+strip read),
+ * job (worker warps + JPEGs)} per probe; snapshot(now, extra) returns the beacon body and
  * starts the next window.
  */
 export class PerfMonitor {
@@ -80,7 +106,7 @@ export class PerfMonitor {
   /** @private */
   reset(now) {
     this.windowStart = now;
-    this.s = { analyze: [], main: [], grab: [], detect: [], sharp: [], interval: [], raf: [], rtt: [], capture: [] };
+    this.s = { analyze: [], main: [], grab: [], detect: [], sharp: [], wgrab: [], wsharp: [], interval: [], raf: [], rtt: [], capture: [], crop: [], read: [], job: [] };
     this.longTasks = 0;
     this.longTaskMs = 0;
     this.probes = 0;
@@ -95,9 +121,9 @@ export class PerfMonitor {
     a.push(v);
   }
 
-  frame({ total, main, grab, detect, sharp } = {}) {
+  frame({ total, main, grab, detect, sharp, wgrab, wsharp } = {}) {
     this.push("analyze", total); this.push("main", main); this.push("grab", grab);
-    this.push("detect", detect); this.push("sharp", sharp);
+    this.push("detect", detect); this.push("sharp", sharp); this.push("wgrab", wgrab); this.push("wsharp", wsharp);
   }
 
   interval(ms) { this.push("interval", ms); }
@@ -110,11 +136,14 @@ export class PerfMonitor {
     this.longTaskMs += ms;
   }
 
-  probe({ rtt, capture, error = false } = {}) {
+  probe({ rtt, capture, crop, read, job, error = false } = {}) {
     this.probes++;
     if (error) this.errors++;
     this.push("rtt", rtt);
     this.push("capture", capture);
+    this.push("crop", crop);
+    this.push("read", read);
+    this.push("job", job);
   }
 
   /** Frames analysed in this window. */
@@ -136,9 +165,11 @@ export class PerfMonitor {
       v: 1,
       window_ms: Math.round(now - this.windowStart),
       analyze: summarize(s.analyze), main: summarize(s.main), grab: summarize(s.grab), detect: summarize(s.detect), sharp: summarize(s.sharp),
+      wgrab: summarize(s.wgrab), wsharp: summarize(s.wsharp),
       interval: iv(s.interval), raf: iv(s.raf),
       long_tasks: this.longTasks, long_task_ms: Math.round(this.longTaskMs),
-      probes: this.probes, probe_rtt: summarize(s.rtt), probe_capture: summarize(s.capture), errors: this.errors,
+      probes: this.probes, probe_rtt: summarize(s.rtt), probe_capture: summarize(s.capture), probe_crop: summarize(s.crop),
+      probe_read: summarize(s.read), probe_job: summarize(s.job), errors: this.errors,
       ...extra,
     };
     this.reset(now);

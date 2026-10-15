@@ -181,12 +181,33 @@ not part of backups.
 with `?scandebug=1`), the scanner also sends a small summary every 5 seconds to
 `POST /api/debug/perf`: frame-analysis and probe timings, frame gaps, long
 tasks, dropped frames, the granted camera size, whether the scan workers run,
-and the phone's browser string, CPU core count, device memory and pixel ratio.
-No images. Nothing is sent during normal scanning. The server keeps the newest
-500 entries (≤ 4 KB each) in `debug-perf.jsonl` next to the database (env
-`DEBUG_PERF_FILE`); `GET /api/debug/perf?limit=` lists them. Not part of
-backups. Test switches for a slow phone: `?scanworker=0` (no worker threads)
-and `?scangrab=cpu|gpu|auto` (how the camera frame is read; default `auto`).
+where the camera frame is read (`frame_path`) and whether the camera dropped
+to 1080p (`res`), and the phone's browser string, CPU core count, device
+memory and pixel ratio. No images. Nothing is sent during normal scanning. The
+server keeps the newest 500 entries (≤ 4 KB each) in `debug-perf.jsonl` next
+to the database (env `DEBUG_PERF_FILE`); `GET /api/debug/perf?limit=` lists
+them. Not part of backups.
+
+**Where the camera frame is read.** The card finder looks at a small copy of
+the camera picture (480 px on the short side), several times a second. On
+Chrome (Android and desktop) that copy comes from a second, invisible copy of
+the camera feed that the browser delivers at that small size, so the page
+never has to read the full 4K picture for it. The preview, the probe crops and
+the shutter photo still use the full 4K picture. The sharpness check uses the
+small copy too. Each probe reads the 4K picture once for the card and its
+bottom strip together. Safari and Firefox read the small copy from the 4K
+picture on the page. If that read is very slow (more than 120 ms per frame),
+the camera switches once from 4K to 1080p; the bottom strip sent to the server
+is then about half as wide.
+
+Test switches for a slow phone: `?scanworker=0` (no worker threads),
+`?scanframes=auto|clone|main|track|bitmap` (where the small copy comes from;
+default `auto` = `clone` on Chrome, else `main`; `track` and `bitmap` read the
+camera in the worker thread and are experiments only: on a Pixel 9 `track`
+made the camera stall), `?scangrab=cpu|gpu|auto` (how the page reads it;
+default `auto`) and `?scanres=1080|4k` (start at 1080p / never drop to it).
+The perf beacon's `grab_mode` says which source ran (`path`, `why` when the
+copy failed, `clone` with its size).
 
 ## Calibration mode
 

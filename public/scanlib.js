@@ -21,12 +21,22 @@
 // (scanworker.js via createScanWorker): detect() per frame, the probe crop's
 // perspective warps, its JPEG encoding (OffscreenCanvas) and the glare map.
 // Without a worker the same code runs inline, with async JPEG encoding.
+//
+// Reading the frame (Pixel 9 beacon, 0.6.2-beta.1: 235 ms for the 480 px work
+// frame + 220 ms for the strip sharpness per frame, each a full conversion of
+// the 4K camera frame on the main thread). The strip sharpness now comes from
+// the work frame (no second read), and on Chrome the work frame is drawn from
+// a clone of the camera track constrained to the work size (a second, hidden
+// <video>); the preview, probe and shutter crops keep the 4K track. The
+// beta.2 MediaStreamTrackProcessor path (frames read in the worker) made the
+// Pixel's camera stall (autofocus, preview): only behind ?scanframes=track.
+// Safari/Firefox read the 4K <video> on the page as before.
 
 import { detect, refine } from './det/detect.mjs';
 import { QuadTracker, BoxPrior, PRIOR_STORAGE_KEY, frameThumb, align } from './det/track.mjs';
 
 // frame pacing + perf beacon helpers (pure), re-exported for the page
-export { FramePacer, PerfMonitor, PACER_DEFAULTS } from './scanperf.js';
+export { FramePacer, PerfMonitor, PACER_DEFAULTS, RES_DROP, shouldDropResolution } from './scanperf.js';
 
 /** Capture tuning. Values come from the synthetic-capture research. */
 export const CAPTURE_DEFAULTS = Object.freeze({
@@ -261,6 +271,29 @@ function grabRegion(src, rect, k, mk = makeCanvas) {
   return { w: id.width, h: id.height, d: id.data };
 }
 
+/**
+ * Several regionPlan() rects of `src` (integer source rects) with ONE read of the source: a camera
+ * frame is converted in full by every drawImage (Pixel 9: ~235 ms per read of a 4K frame), so the
+ * card and strip of a probe are cut from one 1:1 copy of their union. A plan at scale 1 is copied
+ * out exactly; a scaled one is drawn from the copy (same bilinear scaling as from the source). When
+ * no plan is at scale 1 the union would be scaled, so each plan is read on its own as before.
+ * @returns {{w:number,h:number,d:Uint8ClampedArray}[]} one RGBA image per plan (plan.dw x plan.dh)
+ */
+export function grabRegions(src, plans, mk = makeCanvas) {
+  if (plans.length < 2 || !plans.some((p) => p.k === 1)) return plans.map((p) => grabRegion(src, p, p.k, mk));
+  const x0 = Math.min(...plans.map((p) => p.x)), y0 = Math.min(...plans.map((p) => p.y));
+  const x1 = Math.max(...plans.map((p) => p.x + p.w)), y1 = Math.max(...plans.map((p) => p.y + p.h));
+  const u = mk(x1 - x0, y1 - y0), uctx = ctx2d(u);
+  uctx.drawImage(src, x0, y0, x1 - x0, y1 - y0, 0, 0, u.width, u.height);
+  return plans.map((p) => {
+    if (p.k === 1) {
+      const id = uctx.getImageData(p.x - x0, p.y - y0, p.w, p.h);
+      return { w: id.width, h: id.height, d: id.data };
+    }
+    return grabRegion(u, { x: p.x - x0, y: p.y - y0, w: p.w, h: p.h }, p.k, mk);
+  });
+}
+
 function withTimeout(p, ms) {
   return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 }
@@ -341,10 +374,12 @@ export async function grabStill(video, track, corners, { preferPhoto = true, tim
 }
 
 /**
- * Read the pixels around the region `region` (card fractions) of a still, scaled so the region is
- * ~outW * oversample wide: {img (RGBA), q (the region's corners in img px)} for warpQuad.
+ * The source rect around the region `region` (card fractions; null = the whole quad) of a still,
+ * scaled so the region is ~outW * oversample wide: {x, y, w, h (still px, integers), k, dw, dh (the
+ * read size), q (the region's corners in the read image's px, for warpQuad)}. grabRegions reads it
+ * on the page, a frame source (worker crop) where the frames are.
  */
-function regionGrab(still, corners, region, outW, oversample = 1.3, mk = makeCanvas) {
+export function regionPlan(still, corners, region, outW, oversample = 1.3) {
   const q = region ? regionQuad(corners, region) : corners;
   const b = quadBounds(q), size = quadSize(q);
   // Clip the source rect to the still; warpQuad clamps sampling outside it.
@@ -352,8 +387,7 @@ function regionGrab(still, corners, region, outW, oversample = 1.3, mk = makeCan
   const w = Math.min(still.w, Math.ceil(b.x + b.w)) - x, h = Math.min(still.h, Math.ceil(b.y + b.h)) - y;
   if (w < 4 || h < 4) throw new Error("Card is outside the frame");
   const k = Math.min(1, (outW * oversample) / size.w);
-  const img = grabRegion(still.source, { x, y, w, h }, k, mk);
-  return { img, q: scaleQuad(q, k, k, -x * k, -y * k) };
+  return { x, y, w, h, k, dw: Math.max(1, Math.round(w * k)), dh: Math.max(1, Math.round(h * k)), q: scaleQuad(q, k, k, -x * k, -y * k) };
 }
 
 /** RGBA image -> base64 JPEG (no data: prefix). Synchronous: blocks the main thread while encoding. */
@@ -474,10 +508,14 @@ export function createScanWorker({ url = null, WorkerCtor = globalThis.Worker, t
  * (true: also measure the card's glare, a promise that settles after the
  * JPEGs, so it never delays the upload; glareMap of the 1000 px card works on
  * the same 500x700 planes as the old separate 500x700 rectify).
- * Only the pixel reads (drawImage + getImageData) stay on the main thread; the
- * JPEGs are encoded asynchronously (worker OffscreenCanvas, else toBlob).
+ * Only the pixel read (drawImage + getImageData, one read of the card+strip
+ * union: grabRegions) stays on the main thread, and not even that with cfg.crop
+ * (the analyzer's crop(): a video still's card and strip regions are read where
+ * the camera frames are, e.g. the scan worker); the JPEGs are encoded
+ * asynchronously (worker OffscreenCanvas, else toBlob).
  * Returns {card, strip, cardPreview (data URL), kind, stripSize, drift, reject,
- * glare (Promise<glareSummary|null>|null), worker, ms {grab, total}}.
+ * glare (Promise<glareSummary|null>|null), worker, crop (read via cfg.crop),
+ * ms {grab (main-thread reads), crop, job (worker warps + JPEGs, null inline), total}}.
  */
 export async function captureCard(video, track, corners, cfg = {}) {
   const c = { ...CAPTURE_DEFAULTS, ...cfg };
@@ -486,23 +524,41 @@ export async function captureCard(video, track, corners, cfg = {}) {
   const still = await grabStill(video, track, corners, cfg);
   const [cw, ch] = c.cardSize;
   const r = c.stripRegion;
-  let sw, sh, grabMs = 0, cardB64, stripB64, glare = null, worker = false;
+  let sw, sh, grabMs = 0, jobMs = null, cardB64, stripB64, glare = null, worker = false;
   // The pixel reads (main thread). The still stays open until the JPEGs exist: a failed or timed-out
   // worker job (its pixels were transferred) reads them again and finishes inline, so a shutter
   // tap is never lost.
+  // card + strip with one read of the still (grabRegions: one conversion of the camera frame)
   const grab = () => {
     const t = clockNow();
-    const g = { card: regionGrab(still, still.corners, null, cw, 1.3, mk), strip: regionGrab(still, still.corners, r, sw, 1, mk) };
+    const pc = regionPlan(still, still.corners, null, cw, 1.3), ps = regionPlan(still, still.corners, r, sw, 1);
+    const [ci, si] = grabRegions(still.source, [pc, ps], mk);
+    const g = { card: { img: ci, q: pc.q }, strip: { img: si, q: ps.q } };
     grabMs += clockNow() - t;
     return g;
+  };
+  // the video frame's regions read by the frame source (cfg.crop, the analyzer's worker): no
+  // full-res read on this thread; null when it has no frame (then grab() reads them here)
+  let cropped = false, cropMs = 0;
+  const cropGrab = async () => {
+    if (typeof c.crop !== "function" || still.kind !== "video") return null;
+    const t = clockNow();
+    try {
+      const pc = regionPlan(still, still.corners, null, cw, 1.3), ps = regionPlan(still, still.corners, r, sw, 1);
+      const imgs = await c.crop([pc, ps].map(({ x, y, w, h, dw, dh }) => ({ x, y, w, h, dw, dh })));
+      if (!imgs || imgs.length !== 2) return null;
+      cropped = true;
+      return { card: { img: imgs[0], q: pc.q }, strip: { img: imgs[1], q: ps.q } };
+    } catch { return null; } finally { cropMs += clockNow() - t; }
   };
   try {
     const ss = quadSize(regionQuad(still.corners, r));
     sw = Math.max(200, Math.min(c.stripMaxWidth, Math.round(ss.w)));
     sh = Math.max(40, Math.round(sw * ((r.y1 - r.y0) * 88) / ((r.x1 - r.x0) * 63)));
-    let g = grab();
+    let g = (await cropGrab()) || grab();
     const px = c.pixels && c.pixels.available() ? c.pixels : null;
     if (px) {
+      const tj = clockNow();
       try {
         const job = px.call("probe", {
           card: { img: g.card.img, q: g.card.q, outW: cw, outH: ch, quality: c.cardQuality },
@@ -518,6 +574,7 @@ export async function captureCard(video, track, corners, cfg = {}) {
       } catch {
         g = grab();
       }
+      jobMs = clockNow() - tj;
     }
     if (!worker) {
       const card = warpQuad(g.card.img, g.card.q, cw, ch);
@@ -539,7 +596,8 @@ export async function captureCard(video, track, corners, cfg = {}) {
     reject: still.reject ?? null,
     glare,
     worker,
-    ms: { grab: r1(grabMs), total: r1(clockNow() - t0) },
+    crop: cropped,
+    ms: { grab: r1(grabMs), crop: r1(cropMs), job: jobMs === null ? null : r1(jobMs), total: r1(clockNow() - t0) },
   };
 }
 
@@ -588,8 +646,9 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
  * Frame analysis. Per analyze(now): the video is drawn at 480 px
  * short side, detect(img, prior.opts(w, h)) → BoxPrior.noteFrame → QuadTracker;
  * the prior observes each new stable outline while it is inactive (as in the
- * research replay). Sharpness is measured on the tracked quad's bottom 14 % at
- * full resolution. Glare (detection only, ~45 ms on a desktop CPU) runs on a
+ * research replay). Sharpness is measured on the tracked quad's bottom 14 % of
+ * the work frame (stripSharpness; it was the full-res strip before 0.6.2-beta.3,
+ * a second camera-frame read). Glare (detection only, ~45 ms on a desktop CPU) runs on a
  * rectified 500x700 card only once the track has been stable for glareDelayMs
  * (800: a capture normally fires ~3 frames after stable, so the hint is for a
  * card that sits still without being taken) and then every glareEveryMs (1500).
@@ -606,7 +665,15 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
  * createScanWorker client) once it is ready; opts.pixels (another client)
  * takes the stable-track glare map off the main thread (the hint then lands
  * one answer later). opts.grabMode 'cpu' (default) | 'gpu' | 'auto' picks the
- * work-frame canvas (see grab()).
+ * work-frame canvas (see grab()). opts.frames 'main' (default) | 'clone' |
+ * 'auto' | 'track' | 'bitmap' (+ opts.track, the camera's MediaStreamTrack, and
+ * opts.cloneVideo, a hidden <video> for the clone) picks where the work frame
+ * comes from: 'clone' draws it from a clone of the track constrained to the work
+ * size, 'auto' = clone on Chromium (opts.chromium, else navigator.userAgentData),
+ * else main; 'track'/'bitmap' are the beta.2 worker paths (experiments only, see
+ * the frame path note in the body); crop(rects) then reads probe/glare regions
+ * the same way (captureCard cfg.crop), close() stops it. opts.workerGrabMode
+ * 'cpu' | 'gpu' fixes the worker's canvas.
  *
  * The learned box persists per device in localStorage mtg.scan.prior:
  * loadPrior() on create, savePrior() after each accepted capture (it adds that
@@ -616,7 +683,7 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
  * @param {HTMLVideoElement|{videoWidth:number, videoHeight:number}} video
  * @param {object} [opts] {workShort, storage, makeCanvas (tests), prior/tracker (instances),
  *   priorOpts, trackerOpts, glare (true), glareDelayMs (800), glareEveryMs (1500), blankSharp (DET_BLANK_SHARP), now,
- *   detectWorker, pixels, grabMode}
+ *   detectWorker, pixels, grabMode, frames, track, cloneVideo, chromium}
  *
  * An outline whose strip is blank (sharp < blankSharp) is reported as no card
  * (found/accepted/stable false, corners/cardThumb null, blank true; sharp and
@@ -624,14 +691,63 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
  * calling the empty box "Too blurry".
  */
 /**
- * Strip sharpness (Laplacian variance, full-res bottom 14 %, <= 640 px wide)
- * below which a tracked outline holds no card: the outline of an empty scan
- * box (box mode / learned prior) has a flat white bottom strip. Recorded
- * session 2026-10-14 (1002 frames, 167 probes): the empty box read 7-19, every
- * frame around a staged/same probe 163+ (p1 612, p50 1543), so the old
- * "Too blurry" hint at the start was the empty box, not a blurry card.
+ * Strip sharpness (Laplacian variance of the bottom 14 %, stripSharpness) below
+ * which a tracked outline holds no card: the outline of an empty scan box (box
+ * mode / learned prior) has a flat white bottom strip. Recorded session
+ * 2026-10-14 (1002 frames, 167 probes), full-res strip: the empty box read
+ * 7-19, every frame around a staged/same probe 163+ (p1 612, p50 1543), so the
+ * old "Too blurry" hint at the start was the empty box, not a blurry card.
+ * Since 0.6.2-beta.3 it is measured on the 480 px work frame, as the
+ * regression replay always did (its recordings are work frames): there the
+ * empty box reads 0-10 and the work/full-res ratio is ~1.4-2.6 (p50; down-
+ * scaling packs the edges), so 40 (and the controllers' sharpFloor 60) keep
+ * the same split with more margin on both sides.
  */
 export const DET_BLANK_SHARP = 40;
+
+/**
+ * Laplacian variance of the bottom 14 % of quad `q` (TL,TR,BR,BL in `img` px), read from the RGBA
+ * image `img` like a canvas drawImage of that rect (bilinear, <= 640 px wide, pixel centres); 0 when
+ * the strip lies outside the image. On the 480 px work frame this is the per-frame sharpness gate.
+ */
+export function stripSharpness(img, q) {
+  const sr = quadBounds(regionQuad(q, { x0: 0, y0: 0.86, x1: 1, y1: 1 }));
+  const sx = Math.max(0, sr.x), sy = Math.max(0, sr.y), sw = Math.min(img.w - sx, sr.w), sh = Math.min(img.h - sy, sr.h);
+  if (!(sw > 8 && sh > 4)) return 0;
+  const k = Math.min(1, 640 / sw);
+  const dw = Math.max(8, Math.round(sw * k)), dh = Math.max(4, Math.round(sh * k));
+  const { w, h, d } = img, g = new Float32Array(dw * dh), kx = sw / dw, ky = sh / dh, px = new Uint8ClampedArray(3);
+  for (let y = 0; y < dh; y++) {
+    const fy0 = Math.min(h - 1, Math.max(0, sy + (y + 0.5) * ky - 0.5));
+    const y0 = Math.min(h - 2, Math.floor(fy0)), fy = fy0 - y0;
+    for (let x = 0; x < dw; x++) {
+      const fx0 = Math.min(w - 1, Math.max(0, sx + (x + 0.5) * kx - 0.5));
+      const x0 = Math.min(w - 2, Math.floor(fx0)), fx = fx0 - x0;
+      const i00 = (y0 * w + x0) * 4, i10 = i00 + 4, i01 = i00 + w * 4, i11 = i01 + 4;
+      const a = (1 - fx) * (1 - fy), b = fx * (1 - fy), c = (1 - fx) * fy, e = fx * fy;
+      for (let k3 = 0; k3 < 3; k3++) px[k3] = d[i00 + k3] * a + d[i10 + k3] * b + d[i01 + k3] * c + d[i11 + k3] * e;
+      g[y * dw + x] = 0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2];
+    }
+  }
+  return laplacianVariance({ w: dw, h: dh, d: g });
+}
+
+/** True on Chromium browsers (navigator.userAgentData brands); false elsewhere and in node. */
+export function isChromium() {
+  try {
+    const brands = globalThis.navigator?.userAgentData?.brands;
+    return Array.isArray(brands) && brands.some((b) => /Chromium|Google Chrome/i.test(String(b?.brand)));
+  } catch { return false; }
+}
+
+/**
+ * Whether a cw x ch analysis clone shows the same view as the vw x vh video: same orientation and
+ * aspect within 1 % (crop-and-scale crops when the asked size has another aspect).
+ */
+export function cloneMatches(cw, ch, vw, vh) {
+  if (!(cw > 0 && ch > 0 && vw > 0 && vh > 0) || (cw > ch) !== (vw > vh)) return false;
+  return Math.abs((cw / ch) / (vw / vh) - 1) <= 0.01;
+}
 
 export function createDetAnalyzer(video, opts = {}) {
   const workShort = opts.workShort || CAPTURE_DEFAULTS.workShort;
@@ -644,7 +760,22 @@ export function createDetAnalyzer(video, opts = {}) {
   const glareOn = opts.glare !== false, glareEveryMs = opts.glareEveryMs ?? 1500, glareDelayMs = opts.glareDelayMs ?? 800;
   const detectWorker = opts.detectWorker || null, pixels = opts.pixels || null;
   const noGlare = () => ({ advice: null, code: "ok", regions: null });
-  let work = null, last = null, wasStable = false, runId = 0, addedRun = -1;
+  let work = null, workImg = null, last = null, wasStable = false, runId = 0, addedRun = -1;
+  // Frame path (who reads the camera frame): 'main' (drawImage of the <video> + getImageData here),
+  // 'clone' (the same, from a clone of the camera track constrained to the work size, shown in the
+  // hidden opts.cloneVideo; the 4K track stays for the preview and the probe/shutter crops), 'track'
+  // (a MediaStreamTrackProcessor feeds the detect worker) or 'bitmap' (createImageBitmap here, the
+  // worker reads it). opts.frames 'auto' = clone on Chromium, else main (Safari, Firefox). 'track'
+  // and 'bitmap' are experiments (0.6.2-beta.2: the processor held camera frames and stalled the
+  // Pixel 9's camera). A failing path falls back for good: clone -> main, track -> bitmap -> main.
+  const framePref = opts.frames || "main", camTrack = opts.track || null, cloneVideo = opts.cloneVideo || null;
+  const chromium = opts.chromium ?? isChromium();
+  let path = null, pathWhy = null, attached = null, attachedAt = 0, wgrabMode = null;
+  // the analysis clone: {state 'pending'|'ready'|'off', track, frames (clone video frames seen), lastAt,
+  // miss (frames whose clone didn't match the video)}; cloneInfo = what the beacon reports
+  let cl = null;
+  const cloneInfo = {};
+  const frameOpts = { mode: opts.workerGrabMode === "cpu" || opts.workerGrabMode === "gpu" ? opts.workerGrabMode : undefined };
   let glare = noGlare(), glareAt = -Infinity, stableSince = null, glarePending = false;
   // Work-frame read: 'cpu' (willReadFrequently canvas, the tested default), 'gpu' (accelerated canvas:
   // the browser scales the camera frame on the GPU and reads back only 480 px; Android keeps camera
@@ -674,28 +805,22 @@ export function createDetAnalyzer(video, opts = {}) {
     return cpu.length <= gpu.length ? "cpu" : "gpu";
   }
 
-  function sharpness(vw, vh, cornersV) {
-    const sr = quadBounds(regionQuad(cornersV, { x0: 0, y0: 0.86, x1: 1, y1: 1 }));
-    const sx = Math.max(0, sr.x), sy = Math.max(0, sr.y), sw = Math.min(vw - sx, sr.w), sh = Math.min(vh - sy, sr.h);
-    if (!(sw > 8 && sh > 4)) return 0;
-    const k = Math.min(1, 640 / sw), dw = Math.max(8, Math.round(sw * k)), dh = Math.max(4, Math.round(sh * k));
-    const mode = grabMode || "cpu", strip = canvasFor("strip", mode, dw, dh), sctx = ctxOf(strip, mode);
-    sctx.drawImage(video, sx, sy, sw, sh, 0, 0, dw, dh);
-    const sd = sctx.getImageData(0, 0, dw, dh);
-    return laplacianVariance(toGray({ w: dw, h: dh, d: sd.data }));
-  }
-
-  // full-res video region around `quad`, read so the card is ~targetW*1.3 wide: {img, q (img px)}
-  function rectGrab(quad, targetW) {
+  // full-res video region around `quad` so the card is ~targetW*1.3 wide: {x, y, w, h, k, dw, dh, q (read px)}
+  function rectPlan(quad, targetW) {
     const vw = video.videoWidth, vh = video.videoHeight;
     const xs = quad.map((p) => p[0]), ys = quad.map((p) => p[1]);
     const x = Math.max(0, Math.floor(Math.min(...xs))), y = Math.max(0, Math.floor(Math.min(...ys)));
     const w = Math.min(vw, Math.ceil(Math.max(...xs))) - x, h = Math.min(vh, Math.ceil(Math.max(...ys))) - y;
     if (!(w >= 4 && h >= 4)) return null;
     const k = Math.min(1, (targetW * 1.3) / quadSize(quad).w);
-    const img = grabRegion(video, { x, y, w, h }, k, mk);
-    const kx = img.w / w, ky = img.h / h;
-    return { img, q: quad.map(([a, b]) => [(a - x) * kx, (b - y) * ky]) };
+    const dw = Math.max(1, Math.round(w * k)), dh = Math.max(1, Math.round(h * k)), kx = dw / w, ky = dh / h;
+    return { x, y, w, h, k, dw, dh, q: quad.map(([a, b]) => [(a - x) * kx, (b - y) * ky]) };
+  }
+
+  // the same region read here (main thread)
+  function rectGrab(quad, targetW) {
+    const p = rectPlan(quad, targetW);
+    return p ? { img: grabRegion(video, p, p.k, mk), q: p.q } : null;
   }
 
   // rectified outW x outH card of `quad` from the current video frame
@@ -704,54 +829,251 @@ export function createDetAnalyzer(video, opts = {}) {
     return g ? warpQuad(g.img, g.q, outW, outH) : null;
   }
 
-  // the stable-track glare hint, measured in the pixel worker (only the pixel read stays here)
-  function requestGlare(quad) {
-    let g = null;
-    try { g = rectGrab(quad, 500); } catch { g = null; }
-    if (!g) return;
+  // the stable-track glare hint, measured in the pixel worker (the pixel read here, or by the frame
+  // path; `work` = {img, q} of the work frame on the clone path: no camera-frame read for an advisory hint)
+  async function requestGlare(quad, work = null) {
     glarePending = true;
     const run = runId;
-    pixels.call("glare", { img: g.img, q: g.q, outW: 500, outH: 700, limits: { typeLine: Infinity } }, [g.img.d.buffer])
-      .then((sm) => { if (sm && run === runId && last?.seen) glare = { advice: sm.advice, code: sm.code, regions: sm.regions }; })
-      .catch(() => { /* glare is advisory only */ })
-      .finally(() => { glarePending = false; });
+    try {
+      let g = work;
+      if (!g && (path === "track" || path === "bitmap")) {
+        const p = rectPlan(quad, 500);
+        const imgs = p ? await crop([p]) : null;
+        if (imgs) g = { img: imgs[0], q: p.q };
+      }
+      if (!g) g = rectGrab(quad, 500);
+      if (!g) return;
+      const sm = await pixels.call("glare", { img: g.img, q: g.q, outW: 500, outH: 700, limits: { typeLine: Infinity } }, [g.img.d.buffer]);
+      if (sm && run === runId && last?.seen) glare = { advice: sm.advice, code: sm.code, regions: sm.regions };
+    } catch { /* glare is advisory only */ } finally { glarePending = false; }
   }
 
-  // the camera frame at 480 px short side (main thread: drawImage + getImageData)
+  // the camera frame at 480 px short side (main thread: drawImage + getImageData), from the analysis
+  // clone when it is running and shows the video's view, else from the <video>
   function grab() {
     const t0 = clock();
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return null;
     const { W, H, s } = workSize(vw, vh, workShort);
+    const src = cloneSource(vw, vh, t0);
     const mode = pickMode();
     const c = canvasFor("work", mode, W, H), wctx = ctxOf(c, mode);
-    wctx.drawImage(video, 0, 0, W, H);
+    wctx.drawImage(src, 0, 0, W, H);
     const id = wctx.getImageData(0, 0, W, H);
     work = c;
+    workImg = null;
     const grabMs = clock() - t0;
-    if (!grabMode) grabTrials[mode].push(grabMs);
-    return { vw, vh, W, H, s, img: { w: W, h: H, d: id.data }, t0, grabMs, mode };
+    if (!grabMode && src === video) grabTrials[mode].push(grabMs);
+    return { vw, vh, W, H, s, img: { w: W, h: H, d: id.data }, t0, grabMs, mode, src: src === video ? "main" : "clone" };
+  }
+
+  // -- analysis clone (path 'clone') --
+  const settingsOf = (t) => { try { return t?.getSettings?.() || {}; } catch { return {}; } };
+  const canClone = () => Boolean(camTrack && typeof camTrack.clone === "function" && camTrack.readyState !== "ended"
+    && cloneVideo && "srcObject" in cloneVideo && typeof globalThis.MediaStream === "function");
+  const cloneErr = (why) => Object.assign(new Error(`clone: ${why}`), { why });
+
+  // the clone video when it is ready, delivers frames and shows the video's view; else the video
+  function cloneSource(vw, vh, now) {
+    if (!cl || cl.state !== "ready") return video;
+    if (!cloneMatches(cloneVideo.videoWidth, cloneVideo.videoHeight, vw, vh)) {
+      // e.g. a rotation the clone has not followed yet: this frame from the video; for good after ~30
+      if (++cl.miss >= 30) offClone("aspect");
+      return video;
+    }
+    // requestVideoFrameCallback counts the clone's frames where it fires: a clone that stopped
+    // delivering (a hidden <video> the browser no longer updates) must never feed stale frames
+    if (cl.frames > 0 && now - cl.lastAt > 1000) {
+      if (now - cl.lastAt > 3000) offClone("stalled");
+      return video;
+    }
+    cl.miss = 0;
+    return cloneVideo;
+  }
+
+  /**
+   * Start the analysis clone: camTrack.clone() at the work size (in the track's own width/height
+   * convention: Android may report the sensor's landscape size for a portrait video), crop-and-scale,
+   * into the hidden cloneVideo. Off (back to the video, reason in grabInfo().why) when the original
+   * track's size changed, the clone is not smaller, shows another view or delivers nothing in 3 s.
+   */
+  async function attachClone() {
+    const t0 = clock();
+    const st = { state: "pending", track: null, frames: 0, lastAt: 0, miss: 0 };
+    cl = st;
+    try {
+      const s0 = settingsOf(camTrack);
+      const vw = video.videoWidth, vh = video.videoHeight;
+      const tw = s0.width || vw, th = s0.height || vh;
+      const ws = workSize(tw, th, workShort);
+      Object.assign(cloneInfo, { ask_w: ws.W, ask_h: ws.H, ow0: s0.width ?? null, oh0: s0.height ?? null });
+      st.track = camTrack.clone();
+      await st.track.applyConstraints({ width: { ideal: ws.W }, height: { ideal: ws.H }, resizeMode: "crop-and-scale" });
+      if (cl !== st) throw cloneErr("closed");
+      const s1 = settingsOf(camTrack);
+      if (s0.width && (s1.width !== s0.width || s1.height !== s0.height)) throw cloneErr("orig-changed");
+      cloneVideo.muted = true;
+      cloneVideo.playsInline = true;
+      try { cloneVideo.setAttribute?.("playsinline", ""); cloneVideo.setAttribute?.("muted", ""); } catch { /* ignore */ }
+      cloneVideo.srcObject = new globalThis.MediaStream([st.track]);
+      const played = cloneVideo.play?.();
+      if (played?.catch) played.catch(() => {});
+      for (let i = 0; i < 60 && !cloneVideo.videoWidth && cl === st; i++) await new Promise((r) => setTimeout(r, 50));
+      if (cl !== st) throw cloneErr("closed");
+      const cw = cloneVideo.videoWidth, ch = cloneVideo.videoHeight, cs = settingsOf(st.track), s2 = settingsOf(camTrack);
+      Object.assign(cloneInfo, {
+        w: cw || null, h: ch || null, set_w: cs.width ?? null, set_h: cs.height ?? null, resize: cs.resizeMode ?? null,
+        ow1: s2.width ?? null, oh1: s2.height ?? null, setup_ms: r1(clock() - t0),
+      });
+      if (!cw || !ch) throw cloneErr("no-frames");
+      if (s0.width && (s2.width !== s0.width || s2.height !== s0.height)) throw cloneErr("orig-changed");
+      const vw2 = video.videoWidth || vw, vh2 = video.videoHeight || vh;
+      if (Math.min(cw, ch) > 0.75 * Math.min(vw2, vh2)) throw cloneErr("not-scaled");
+      if (!cloneMatches(cw, ch, vw2, vh2)) throw cloneErr("aspect");
+      if (typeof cloneVideo.requestVideoFrameCallback === "function") {
+        const onFrame = () => {
+          if (cl !== st || st.state === "off") return;
+          st.frames++;
+          st.lastAt = clock();
+          try { cloneVideo.requestVideoFrameCallback(onFrame); } catch { /* counting stops: no stale check */ }
+        };
+        try { cloneVideo.requestVideoFrameCallback(onFrame); } catch { /* ignore */ }
+      }
+      st.state = "ready";
+    } catch (e) {
+      if (cl === st) offClone(e?.why || "error");
+      else stopClone(st);
+    }
+  }
+
+  function stopClone(st) {
+    try { st?.track?.stop(); } catch { /* ignore */ }
+    if (st) { st.track = null; st.state = "off"; }
+  }
+
+  // the clone path failed: back to the video for good, the reason in grabInfo().why
+  function offClone(why) {
+    const st = cl;
+    stopClone(st);
+    try { if (cloneVideo) { cloneVideo.pause?.(); cloneVideo.srcObject = null; } } catch { /* ignore */ }
+    if (why === "orig-changed") {
+      // restore the camera's size if the clone's constraints moved it (a browser without per-track scaling)
+      const w0 = cloneInfo.ow0, h0 = cloneInfo.oh0;
+      if (w0 && h0 && camTrack?.applyConstraints) camTrack.applyConstraints({ width: { ideal: w0 }, height: { ideal: h0 } }).catch(() => {});
+    }
+    if (why !== "closed") {
+      pathWhy = `clone:${why}`;
+      if (path === "clone") path = "main";
+    }
   }
 
   const detectSafe = (img, po) => { try { return detect(img, po); } catch { return { found: false, weak: false, corners: null }; } };
 
   /** One frame, all on the calling thread. */
   function analyze(now = clock()) {
+    startClone();
     const g = grab();
     if (!g) return null;
     const po = prior.opts(g.W, g.H), td = clock();
     const r = detectSafe(g.img, po);
-    return finish(g, po, r, now, clock() - td, 0);
+    const detectMs = clock() - td;
+    const tk = trackStep(g, r, now);
+    return complete(g, po, r, now, tk, detectMs, 0);
+  }
+
+  // the clone path is chosen on the first frame (it needs no worker) and set up in the background;
+  // until it is ready the frames come from the video
+  function startClone() {
+    if (path !== null || !(framePref === "clone" || (framePref === "auto" && chromium))) return;
+    if (!canClone()) { path = "main"; pathWhy = "clone:unsupported"; return; }
+    path = "clone";
+    attachClone();
+  }
+
+  const canTrack = () => typeof globalThis.MediaStreamTrackProcessor === "function" && Boolean(camTrack) && camTrack.readyState !== "ended"
+    && Boolean(detectWorker?.encoder);
+  const canBitmap = () => typeof globalThis.createImageBitmap === "function" && Boolean(detectWorker?.encoder);
+
+  function choosePath() {
+    const want = framePref;
+    if (want === "track") return canTrack() ? "track" : canBitmap() ? "bitmap" : "main";
+    if (want === "bitmap") return canBitmap() ? "bitmap" : "main";
+    return "main";
+  }
+
+  // a frame path that failed: track -> bitmap -> main, for good
+  function demote(why) {
+    pathWhy = `${path}:${why}`;
+    if (path === "track") {
+      attached = null;
+      detectWorker?.call("detach").catch(() => {});
+      path = canBitmap() ? "bitmap" : "main";
+    } else path = "main";
+  }
+
+  // Attach the camera track to the detect worker once (Chrome: MediaStreamTrackProcessor on the page,
+  // its readable transferred). The page never sees those frames.
+  async function attach() {
+    attached = "pending";
+    const proc = new globalThis.MediaStreamTrackProcessor({ track: camTrack });
+    await detectWorker.call("attach", { readable: proc.readable }, [proc.readable]);
+    attached = "yes";
+    attachedAt = clock();
+  }
+
+  // createImageBitmap's synchronous part is the page's cost (Chrome scales a video frame there on the GPU)
+  async function bitmapOf(rect, dw, dh) {
+    const t = clock();
+    const p = rect
+      ? createImageBitmap(video, rect.x, rect.y, rect.w, rect.h, { resizeWidth: dw, resizeHeight: dh, resizeQuality: "low" })
+      : createImageBitmap(video, { resizeWidth: dw, resizeHeight: dh, resizeQuality: "low" });
+    const syncMs = clock() - t;
+    const bmp = await p;
+    return { bmp, syncMs, waitMs: clock() - t - syncMs };
+  }
+
+  /**
+   * Regions of the current camera frame read by the frame path (probe crops, glare): rects [{x, y, w,
+   * h (video px), dw, dh (read size)}] -> RGBA images, or null on the main path / without a frame.
+   */
+  async function crop(rects) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh || !detectWorker?.available()) return null;
+    if (path === "track" && attached === "yes") {
+      const out = await detectWorker.call("crop", { rects, vw, vh });
+      return out?.imgs || null;
+    }
+    if (path === "bitmap") {
+      const bitmaps = [];
+      try {
+        for (const r of rects) bitmaps.push((await bitmapOf(r, r.dw, r.dh)).bmp);
+      } catch (e) { for (const b of bitmaps) b.close?.(); throw e; }
+      const out = await detectWorker.call("cropBitmaps", { bitmaps }, bitmaps);
+      return out?.imgs || null;
+    }
+    return null;
   }
 
   /**
    * One frame with detect() in the detect worker (opts.detectWorker, a createScanWorker client) when
-   * it is ready, else analyze(). The frame's pixels travel to the worker and back (transferred, no
-   * copy); the tracker, prior, sharpness and thumbnails stay here. Resolves null when the worker
-   * failed with this frame (it is then off, the next frame runs inline).
+   * it is ready, else analyze(). On the main path the frame's pixels travel to the worker and back
+   * (transferred, no copy); on the track / bitmap paths the worker reads the frame itself and sends
+   * the 480 px pixels back. The tracker, prior and thumbnails stay here. Resolves null when the worker
+   * failed with this frame or had no new frame yet (the next frame runs as usual).
    */
   async function analyzeAsync(now = clock()) {
     if (!detectWorker || !detectWorker.available()) return analyze(now);
+    startClone();
+    if (path === null) path = choosePath();
+    if (path === "track") {
+      if (attached === null) {
+        try { await attach(); } catch { demote("attach"); }
+        return null;
+      }
+      if (attached === "pending") return null;
+      return analyzeFrame(now, "track");
+    }
+    if (path === "bitmap") return analyzeFrame(now, "bitmap");
     const g = grab();
     if (!g) return null;
     const po = prior.opts(g.W, g.H), td = clock();
@@ -759,27 +1081,72 @@ export function createDetAnalyzer(video, opts = {}) {
     try { out = await detectWorker.call("detect", { img: g.img, opts: po }, [g.img.d.buffer]); } catch { return null; }
     const wait = clock() - td;
     g.img = { w: g.W, h: g.H, d: out.d };
-    return finish(g, po, out.r, now, Number.isFinite(out.ms) ? out.ms : wait, wait);
+    const tk = trackStep(g, out.r, now);
+    return complete(g, po, out.r, now, tk, Number.isFinite(out.ms) ? out.ms : wait, wait);
   }
 
-  // tracker + prior + sharpness + glare + thumbnails for a detected frame
-  function finish(g, po, r, now, detectMs, waitMs) {
-    const { vw, vh, W, H, s, img } = g;
+  // track / bitmap path: the worker reads the frame
+  async function analyzeFrame(now, kind) {
+    const t0 = clock();
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return null;
+    const { W, H, s } = workSize(vw, vh, workShort);
+    const po = prior.opts(W, H);
+    let out, wait = 0, grabMs = 0;
+    try {
+      if (kind === "track") {
+        const tw = clock();
+        out = await detectWorker.call("frame", { W, H, vw, vh, opts: po, ...frameOpts });
+        wait += clock() - tw;
+        if (out.none) {
+          if (!out.frames && clock() - attachedAt > 3000) demote("no-frames");
+          return null;
+        }
+      } else {
+        const b = await bitmapOf(null, W, H);
+        grabMs = b.syncMs;
+        wait += b.waitMs;
+        const tw = clock();
+        out = await detectWorker.call("frameBitmap", { bitmap: b.bmp, opts: po, ...frameOpts }, [b.bmp]);
+        wait += clock() - tw;
+      }
+    } catch (e) {
+      if (/orientation/.test(String(e?.message))) demote("orientation");
+      else if (kind === "bitmap" && !/scan worker/.test(String(e?.message))) demote("bitmap");
+      return null;
+    }
+    wgrabMode = out.mode || wgrabMode;
+    const g = { vw, vh, W, H, s, img: { w: W, h: H, d: out.d }, t0, grabMs, mode: kind, wgrab: out.grabMs };
+    work = null;
+    workImg = g.img;
+    const tk = trackStep(g, out.r, now);
+    return complete(g, po, out.r, now, tk, out.ms, wait);
+  }
+
+  // tracker + prior for a detected frame: {tr, tracked, trackedV}
+  function trackStep(g, r, now) {
     prior.noteFrame(r);
     const tr = tracker.update(r);
     if (tr.stable && !wasStable) {
       runId++;
       stableSince = now;
-      if (!prior.active && tr.corners) prior.observe(tr.corners, W, H);
+      if (!prior.active && tr.corners) prior.observe(tr.corners, g.W, g.H);
     }
     wasStable = Boolean(tr.stable);
     const tracked = Boolean(tr.corners && tr.seen && tr.found);
-    const trackedV = tracked ? toVideo(tr.corners, s) : null;
-    let sharp = null;
+    return { tr, tracked, trackedV: tracked ? toVideo(tr.corners, g.s) : null };
+  }
+
+  // blank/seen + glare + thumbnails + the FrameAnalysis
+  function complete(g, po, r, now, tk, detectMs, waitMs) {
+    const { vw, vh, W, H, s, img } = g;
+    const { tr, tracked, trackedV } = tk;
+    // strip sharpness on the work frame (stripSharpness; no camera-frame read). 0 when the strip lies
+    // outside the frame: that is no measurement, not a blank card
     const ts = clock();
-    if (trackedV) { try { sharp = sharpness(vw, vh, trackedV); } catch { sharp = null; } }
+    let sharp = null;
+    if (tracked) { try { sharp = stripSharpness(img, tr.corners); } catch { sharp = null; } }
     const sharpMs = clock() - ts;
-    // sharpness() is 0 when the strip lies outside the frame: that is no measurement, not a blank card
     const blank = tracked && Number.isFinite(sharp) && sharp > 0 && sharp < blankSharp;
     const seen = tracked && !blank;
     const corners = seen ? trackedV : null;
@@ -787,11 +1154,15 @@ export function createDetAnalyzer(video, opts = {}) {
     if (!seen) glare = noGlare();
     else if (glareOn && stable && now - stableSince >= glareDelayMs && now - glareAt >= glareEveryMs) {
       glareAt = now;
-      // the stable-track hint keeps the beta.2 limits (typeLine only for failed probes, see glareOf)
-      if (pixels && pixels.available()) { if (!glarePending) requestGlare(corners); }
-      else {
+      // the stable-track hint keeps the beta.2 limits (typeLine only for failed probes, see glareOf);
+      // on the clone path it is measured on the work frame (a 4K read every 1.5 s would cost more
+      // than the clone saves)
+      const fromWork = g.src === "clone";
+      if (pixels && pixels.available()) {
+        if (!glarePending) requestGlare(corners, fromWork ? { img: { w: img.w, h: img.h, d: new Uint8ClampedArray(img.d) }, q: tr.corners } : null);
+      } else {
         try {
-          const card = rectify(corners, 500, 500, 700);
+          const card = fromWork ? warpQuad(img, tr.corners, 500, 700) : rectify(corners, 500, 500, 700);
           if (card) {
             const gm = glareMap(card), code = captureAdvice(gm, null, { typeLine: Infinity });
             glare = { advice: code === "ok" ? null : ADVICE_HINTS[code], code, regions: gm.regions };
@@ -811,8 +1182,14 @@ export function createDetAnalyzer(video, opts = {}) {
       thumb: frameThumb(img), cardThumb: seen ? quadThumb(img, tr.corners) : null,
       sharp, blank, glare, priorQuad: pq ? toVideo(pq, s) : null, priorLearned: Boolean(prior.active),
       now, ms: total,
-      // main-thread ms (total minus the wait for the detect worker), per step, and how the frame was read
-      timing: { main: r1(total - waitMs), grab: r1(g.grabMs), detect: r1(detectMs), sharp: r1(sharpMs), mode: g.mode, worker: waitMs > 0 },
+      // main-thread ms (total minus the waits for the workers), per step (grab: this thread's frame
+      // read; sharp: the work-frame strip sharpness; wgrab: the worker's frame read), and how the frame
+      // was read (path 'clone' only for a frame drawn from the clone)
+      timing: {
+        main: r1(total - waitMs), grab: r1(g.grabMs), detect: r1(detectMs), sharp: r1(sharpMs), mode: g.mode, worker: waitMs > 0,
+        path: g.mode === "track" || g.mode === "bitmap" ? g.mode : g.src === "clone" ? "clone" : "main",
+        wgrab: Number.isFinite(g.wgrab) ? r1(g.wgrab) : null,
+      },
     };
   }
 
@@ -876,10 +1253,23 @@ export function createDetAnalyzer(video, opts = {}) {
     return { preferPhoto: !prior.active };
   }
 
+  // the work frame as a canvas: the main path's work canvas, else a canvas of the worker's pixels
+  // (a fresh one per call, so it stays the frame of the call)
+  function workCanvas() {
+    if (work) return work;
+    if (!workImg || typeof ImageData !== "function") return null;
+    try {
+      const c = mk(workImg.w, workImg.h);
+      ctx2d(c).putImageData(new ImageData(asClamped(workImg.d), workImg.w, workImg.h), 0, 0);
+      return c;
+    } catch { return null; }
+  }
+
   /** The last analysed work frame (480 px short side) as base64 JPEG (record session), or null. */
   function frameJpeg(quality = 0.7) {
-    if (!work || typeof work.toDataURL !== "function") return null;
-    const url = work.toDataURL("image/jpeg", quality);
+    const c = workCanvas();
+    if (!c || typeof c.toDataURL !== "function") return null;
+    const url = c.toDataURL("image/jpeg", quality);
     return url.slice(url.indexOf(",") + 1);
   }
 
@@ -890,28 +1280,55 @@ export function createDetAnalyzer(video, opts = {}) {
    * frame must stay the frame of its record); null when it is still too long.
    */
   function frameJpegAsync(quality = 0.7, { fallback = null, maxLen = Infinity } = {}) {
-    if (!work) return Promise.resolve(null);
+    const c = workCanvas();
+    if (!c) return Promise.resolve(null);
     let snap = null;
     if (fallback != null) {
-      try {
-        snap = mk(work.width, work.height);
-        snap.getContext("2d").drawImage(work, 0, 0, work.width, work.height);
-      } catch { snap = null; }
+      if (c !== work) snap = c;
+      else {
+        try {
+          snap = mk(c.width, c.height);
+          snap.getContext("2d").drawImage(c, 0, 0, c.width, c.height);
+        } catch { snap = null; }
+      }
     }
-    return canvasJpeg(work, quality)
+    return canvasJpeg(c, quality)
       .then((j) => (j && j.length > maxLen && snap ? canvasJpeg(snap, fallback) : j))
       .then((j) => (j && j.length > maxLen ? null : j))
       .catch(() => null);
   }
 
-  /** How the work frame is read: {mode ('cpu'|'gpu'|null while timing both), cpu/gpu median ms of the trials}. */
+  /**
+   * How the work frame is read: {path ('main'|'clone'|'track'|'bitmap'; null before the first frame
+   * picked one), why (the path that failed, e.g. 'clone:not-scaled', 'track:orientation'), mode
+   * ('cpu'|'gpu'|null while timing both: the page's canvas), pref, cpu/gpu (median ms of the video
+   * reads per canvas), wmode (the worker's canvas), clone (null unless tried: {state, w, h (the clone
+   * video), ask_w/ask_h (asked, track convention), set_w/set_h/resize (its settings), ow0/oh0 and
+   * ow1/oh1 (the original track's size before / after the clone started), setup_ms, frames})}.
+   */
   function grabInfo() {
     const m = (a) => (a.length > GRAB_WARM ? r1(median(a.slice(GRAB_WARM))) : null);
-    return { mode: grabMode, pref: grabPref, cpu: m(grabTrials.cpu), gpu: m(grabTrials.gpu) };
+    const clone = cl ? { state: cl.state, ...cloneInfo, frames: cl.frames } : null;
+    return { path, why: pathWhy, mode: grabMode, pref: grabPref, cpu: m(grabTrials.cpu), gpu: m(grabTrials.gpu), wmode: wgrabMode, clone };
+  }
+
+  /** Stop the frame path (the camera stops or the analyzer is dropped): the worker's track, the clone. */
+  function close() {
+    if (attached) detectWorker?.call("detach").catch(() => {});
+    attached = null;
+    if (cl) {
+      const st = cl;
+      cl = { ...st, track: null, state: "off" };
+      stopClone(st);
+      try { if (cloneVideo) { cloneVideo.pause?.(); cloneVideo.srcObject = null; } } catch { /* ignore */ }
+    }
   }
 
   loadPrior();
-  return { analyze, analyzeAsync, prior, tracker, reset, glareOf, savePrior, loadPrior, forgetPrior, captureOpts, frameJpeg, frameJpegAsync, grabInfo };
+  return {
+    analyze, analyzeAsync, prior, tracker, reset, glareOf, savePrior, loadPrior, forgetPrior, captureOpts, frameJpeg, frameJpegAsync,
+    grabInfo, crop, close, get path() { return path; },
+  };
 }
 
 // ---------------------------------------------------------------------------

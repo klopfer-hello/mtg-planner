@@ -4,10 +4,11 @@
 // captureCard through a worker and inline, analyzeAsync vs analyze, and the
 // small pure helpers. Procedural frames only.
 
-import { test, describe, before } from "node:test";
+import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
-  bytesToBase64, captureCard, createDetAnalyzer, createScanWorker, glareMap, glareSummary, warpQuad,
+  bytesToBase64, captureCard, cloneMatches, createDetAnalyzer, createScanWorker, glareMap, glareSummary, grabRegions, regionPlan,
+  stripSharpness, warpQuad, workSize,
 } from "../public/scanlib.js";
 import { detect } from "../public/det/detect.mjs";
 import { addNoise, background, drawCard, makeCard, placeCard } from "./helpers/detscenes.js";
@@ -384,5 +385,391 @@ describe("createDetAnalyzer: analyzeAsync", () => {
     assert.equal(j[7], ref[7], "same pixels as the q0.7 attempt");
     assert.equal(await an.frameJpegAsync(0.7, { fallback: 0.5, maxLen: 8 }), null, "still too long: null");
     assert.equal(dec(await an.frameJpegAsync(0.7, { fallback: 0.5, maxLen: 1e6 }))[6], 70, "fits: no retry");
+  });
+});
+
+// The frame paths: the analyzer with the real worker module (loaded above) behind a client that
+// calls its onmessage directly; camera frames are fake VideoFrames ({displayWidth, displayHeight,
+// frame: RGBA}) from a ReadableStream, read by the worker through the test canvas.
+describe("frame path 'track' (camera frames read in the detect worker)", () => {
+  const W = 720, H = 1280, q = placeCard(W * 0.45, H * 0.52, W * 0.55, 6, 0.01);
+  const frames = [1, 2, 3].map((n) => {
+    const img = background("cloth", W, H, 21);
+    drawCard(img, makeCard(21), q);
+    return addNoise(img, n, 4);
+  });
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const vf = (img, extra = {}) => ({ displayWidth: img.w, displayHeight: img.h, frame: img, closed: false, close() { this.closed = true; }, ...extra });
+  let ctl;
+
+  function workerClient() {
+    const pending = new Map();
+    let seq = 1000;
+    globalThis.self.postMessage = (m) => {
+      const p = pending.get(m.id);
+      if (!p) return;
+      pending.delete(m.id);
+      if (m.ok) p.res(m.result); else p.rej(new Error(m.error));
+    };
+    globalThis.self.__mkCanvas = makeCanvas;
+    const client = {
+      calls: [],
+      available: () => true,
+      encoder: true,
+      call(op, payload = {}) {
+        client.calls.push(op);
+        const id = ++seq;
+        return new Promise((res, rej) => { pending.set(id, { res, rej }); globalThis.self.onmessage({ data: { ...payload, id, op } }); });
+      },
+    };
+    return client;
+  }
+
+  const camTrack = () => ({ readyState: "live", stream: new ReadableStream({ start(c) { ctl = c; } }) });
+  before(() => {
+    globalThis.MediaStreamTrackProcessor = class { constructor({ track }) { this.readable = track.stream; } };
+  });
+  after(() => {
+    delete globalThis.MediaStreamTrackProcessor;
+    delete globalThis.self.__mkCanvas;
+  });
+
+  test("same analysis as the main path; no frame read on the page; old frames closed; crop and frameJpeg from the worker's frame", async () => {
+    const dw = workerClient();
+    const vA = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    const vB = { videoWidth: W, videoHeight: H }; // no pixels: a read on the page would throw
+    const a = createDetAnalyzer(vA, { makeCanvas, storage: null, glare: false });
+    const b = createDetAnalyzer(vB, { makeCanvas, storage: null, glare: false, detectWorker: dw, frames: "track", track: camTrack() });
+    assert.equal(await b.analyzeAsync(0), null, "the first call attaches the track");
+    assert.equal(b.grabInfo().path, "track");
+    assert.equal(await b.analyzeAsync(50), null, "no frame yet");
+    const sent = [];
+    for (let i = 0; i < 8; i++) {
+      const f = vf(frames[i % 3]);
+      sent.push(f);
+      ctl.enqueue(f);
+      await tick();
+      vA.frame = frames[i % 3];
+      const t = 1000 + i * 125;
+      const oa = a.analyze(t), ob = await b.analyzeAsync(t);
+      for (const k of ["found", "weak", "accepted", "stable", "mode", "blank", "sharp"]) assert.deepEqual(ob[k], oa[k], `${k} @${i}`);
+      assert.deepEqual(ob.corners, oa.corners, `corners @${i}`);
+      assert.deepEqual(Array.from(ob.cardThumb || []), Array.from(oa.cardThumb || []));
+      assert.equal(ob.timing.path, "track");
+      assert.equal(ob.timing.grab, 0, "nothing read on the page");
+      assert.ok(Number.isFinite(ob.timing.wgrab));
+    }
+    assert.ok(a.analyze(9999).stable, "the card was tracked to stable");
+    assert.ok(sent.slice(0, -1).every((f) => f.closed), "every frame but the analysed one is closed");
+    assert.equal(sent.at(-1).closed, false);
+    assert.equal(await b.analyzeAsync(5000), null, "no new frame: nothing analysed twice");
+    // probe crop: the newest frame's region at the asked size, same pixels as a read on the page
+    const rect = { x: 100.5, y: 200, w: 400, h: 560, dw: 300, dh: 420 };
+    const [img] = await b.crop([rect]);
+    const ref = makeCanvas(300, 420);
+    ref.getContext().drawImage({ frame: sent.at(-1).frame }, rect.x, rect.y, rect.w, rect.h, 0, 0, 300, 420);
+    assert.deepEqual([img.w, img.h], [300, 420]);
+    assert.deepEqual(img.d, ref.getContext().getImageData(0, 0, 300, 420).data);
+    const j = Buffer.from(await b.frameJpegAsync(0.7), "base64");
+    assert.deepEqual([j[2] | (j[3] << 8), j[4] | (j[5] << 8)], [480, 853], "the worker's 480 px work frame");
+    b.close();
+    await tick();
+    assert.equal(sent.at(-1).closed, true, "close() detaches: the held frame is closed");
+  });
+
+  test("a rotated frame turns the track path off for good (no createImageBitmap here: main)", async () => {
+    const dw = workerClient();
+    const v = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    const b = createDetAnalyzer(v, { makeCanvas, storage: null, glare: false, detectWorker: dw, frames: "track", track: camTrack() });
+    await b.analyzeAsync(0);
+    ctl.enqueue(vf({ w: H, h: W, d: new Uint8ClampedArray(W * H * 4) }, { displayWidth: H, displayHeight: W, rotation: 90 }));
+    await tick();
+    assert.equal(await b.analyzeAsync(100), null);
+    assert.deepEqual([b.grabInfo().path, b.grabInfo().why], ["main", "track:orientation"]);
+    assert.ok(dw.calls.includes("detach"));
+    const o = await b.analyzeAsync(200);
+    assert.equal(o.timing.path, "main");
+    assert.equal(o.timing.worker, true, "detect still runs in the worker");
+  });
+
+  test("auto never takes the track path (beta.2 stalled the Pixel's camera); off Chromium it stays on the page's read", async () => {
+    const dw = workerClient();
+    const v = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    const b = createDetAnalyzer(v, { makeCanvas, storage: null, glare: false, detectWorker: dw, frames: "auto", track: camTrack(), chromium: false });
+    const o = await b.analyzeAsync(0);
+    assert.equal(o.timing.path, "main");
+    assert.equal(b.path, "main");
+    assert.deepEqual(dw.calls, ["detect"]);
+  });
+
+  test("auto without MediaStreamTrackProcessor (Safari, Firefox) stays on the page's read", async () => {
+    const saved = globalThis.MediaStreamTrackProcessor;
+    delete globalThis.MediaStreamTrackProcessor;
+    try {
+      const dw = workerClient();
+      const v = { videoWidth: W, videoHeight: H, frame: frames[0] };
+      const b = createDetAnalyzer(v, { makeCanvas, storage: null, glare: false, detectWorker: dw, frames: "auto", track: camTrack() });
+      const o = await b.analyzeAsync(0);
+      assert.equal(o.timing.path, "main");
+      assert.equal(b.path, "main");
+      assert.deepEqual(dw.calls, ["detect"]);
+    } finally { globalThis.MediaStreamTrackProcessor = saved; }
+  });
+});
+
+// The analysis clone (0.6.2-beta.3): a clone of the camera track constrained to the work size, shown
+// in a hidden <video>, is what the analyzer draws; the 4K video is never read per frame.
+describe("frame path 'clone' (work frame from a small clone of the camera track)", () => {
+  const W = 1080, H = 1920, q = placeCard(W * 0.45, H * 0.52, W * 0.55, 6, 0.01);
+  const frames = [1, 2, 3].map((n) => {
+    const img = background("cloth", W, H, 21);
+    drawCard(img, makeCard(21), q);
+    return addNoise(img, n, 4);
+  });
+  const ws = workSize(W, H);
+  // the clone's frame = the video frame at the work size (what crop-and-scale delivers)
+  const small = (img, w = ws.W, h = ws.H) => {
+    const c = makeCanvas(w, h);
+    c.getContext().drawImage({ frame: img }, 0, 0, w, h);
+    return { w, h, d: c.getContext().getImageData(0, 0, w, h).data };
+  };
+  const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+  let savedMS;
+  before(() => { savedMS = globalThis.MediaStream; globalThis.MediaStream = class { constructor(tracks) { this.tracks = tracks; } }; });
+  after(() => { globalThis.MediaStream = savedMS; });
+
+  /** A camera track whose clone() obeys applyConstraints ({width, height} ideal); `bad` changes the original too. */
+  function camTrack({ bad = false, noClone = false, settings = { width: W, height: H } } = {}) {
+    const t = {
+      readyState: "live", settings: { ...settings }, applied: [], clones: [],
+      getSettings() { return { ...this.settings }; },
+      async applyConstraints(c) { this.applied.push(c); },
+    };
+    if (!noClone) {
+      t.clone = () => {
+        const c = {
+          stopped: false, settings: { ...t.settings, resizeMode: "none" },
+          getSettings() { return { ...this.settings }; },
+          async applyConstraints(k) {
+            this.settings = { ...this.settings, width: k.width.ideal, height: k.height.ideal, resizeMode: k.resizeMode };
+            if (bad) t.settings = { ...t.settings, width: k.width.ideal, height: k.height.ideal };
+          },
+          stop() { this.stopped = true; },
+        };
+        t.clones.push(c);
+        return c;
+      };
+    }
+    return t;
+  }
+  /** The hidden clone <video>: srcObject set -> it shows `size(track)` frames; rVFC driven by the test. */
+  function cloneVideo({ size = (tr) => [tr.settings.width, tr.settings.height] } = {}) {
+    return {
+      videoWidth: 0, videoHeight: 0, frame: null, cbs: [], played: 0, attrs: {},
+      _src: null,
+      get srcObject() { return this._src; },
+      set srcObject(s) {
+        this._src = s;
+        if (s) [this.videoWidth, this.videoHeight] = size(s.tracks[0]);
+        else this.videoWidth = this.videoHeight = 0;
+      },
+      play() { this.played++; return Promise.resolve(); },
+      pause() {},
+      setAttribute(k, val) { this.attrs[k] = val; },
+      requestVideoFrameCallback(cb) { this.cbs.push(cb); return this.cbs.length; },
+      fire() { const cbs = this.cbs.splice(0); for (const cb of cbs) cb(); },
+    };
+  }
+
+  test("draws the clone, never the 4K video; same analysis as the video's work frame; the beacon info", async () => {
+    const tr = camTrack(), cv = cloneVideo();
+    const vA = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    const vB = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    let t = 1000;
+    const a = createDetAnalyzer(vA, { makeCanvas, storage: null, glare: false });
+    const b = createDetAnalyzer(vB, { makeCanvas, storage: null, glare: false, frames: "auto", chromium: true, track: tr, cloneVideo: cv, now: () => t });
+    const first = b.analyze(t); // starts the clone; this frame still comes from the video
+    assert.equal(first.timing.path, "main");
+    delete vB.frame; // from now on a read of the 4K video would throw
+    await tick();
+    assert.equal(tr.clones.length, 1);
+    assert.deepEqual(tr.clones[0].settings, { width: ws.W, height: ws.H, resizeMode: "crop-and-scale" });
+    assert.deepEqual(tr.settings, { width: W, height: H }, "the original keeps its size");
+    assert.equal(cv.attrs.playsinline, "");
+    assert.equal(b.grabInfo().clone.state, "ready");
+    a.analyze(t);
+    for (let i = 0; i < 8; i++) {
+      t = 1100 + i * 125;
+      cv.frame = small(frames[i % 3]);
+      cv.fire();
+      vA.frame = frames[i % 3];
+      const oa = a.analyze(t), ob = b.analyze(t);
+      for (const k of ["found", "weak", "accepted", "stable", "mode", "blank", "sharp"]) assert.deepEqual(ob[k], oa[k], `${k} @${i}`);
+      assert.deepEqual(ob.corners, oa.corners, `corners in video px @${i}`);
+      assert.equal(ob.timing.path, "clone");
+    }
+    const info = b.grabInfo();
+    assert.equal(info.path, "clone");
+    assert.equal(info.why, null);
+    assert.deepEqual([info.clone.w, info.clone.h, info.clone.ask_w, info.clone.ask_h], [ws.W, ws.H, ws.W, ws.H]);
+    assert.deepEqual([info.clone.ow0, info.clone.oh0, info.clone.ow1, info.clone.oh1], [W, H, W, H]);
+    assert.equal(info.clone.resize, "crop-and-scale");
+    assert.ok(info.clone.frames >= 8 && Number.isFinite(info.clone.setup_ms));
+    b.close();
+    assert.equal(tr.clones[0].stopped, true);
+    assert.equal(cv.srcObject, null);
+  });
+
+  test("the size is asked in the track's own convention (landscape settings for a portrait video)", async () => {
+    const tr = camTrack({ settings: { width: H, height: W } }), cv = cloneVideo({ size: (c) => [c.settings.height, c.settings.width] });
+    const v = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    const b = createDetAnalyzer(v, { makeCanvas, storage: null, glare: false, frames: "clone", track: tr, cloneVideo: cv });
+    b.analyze(0);
+    await tick();
+    assert.deepEqual([tr.clones[0].settings.width, tr.clones[0].settings.height], [ws.H, ws.W]);
+    assert.equal(b.grabInfo().clone.state, "ready");
+    assert.equal(b.path, "clone");
+  });
+
+  test("falls back to the video for good: original resized (and restored), not scaled, other view, unsupported", async () => {
+    const cases = [
+      [{ bad: true }, {}, "clone:orig-changed"],
+      [{}, { size: () => [W, H] }, "clone:not-scaled"],
+      [{}, { size: () => [ws.W, Math.round(ws.W * 1.5)] }, "clone:aspect"],
+      [{ noClone: true }, {}, "clone:unsupported"],
+    ];
+    for (const [to, vo, why] of cases) {
+      const tr = camTrack(to), cv = cloneVideo(vo);
+      const v = { videoWidth: W, videoHeight: H, frame: frames[0] };
+      const b = createDetAnalyzer(v, { makeCanvas, storage: null, glare: false, frames: "clone", track: tr, cloneVideo: cv });
+      b.analyze(0);
+      await tick();
+      const o = b.analyze(125);
+      assert.equal(o.timing.path, "main", why);
+      assert.deepEqual([b.path, b.grabInfo().why], ["main", why]);
+      if (tr.clones.length) assert.equal(tr.clones[0].stopped, true, `${why}: clone stopped`);
+      if (to.bad) assert.deepEqual(tr.applied.at(-1), { width: { ideal: W }, height: { ideal: H } }, "the original's size asked back");
+    }
+  });
+
+  test("auto off Chromium never clones; a clone that stops delivering frames is dropped (no stale frames)", async () => {
+    const tr0 = camTrack(), cv0 = cloneVideo();
+    const v0 = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    const b0 = createDetAnalyzer(v0, { makeCanvas, storage: null, glare: false, frames: "auto", chromium: false, track: tr0, cloneVideo: cv0 });
+    b0.analyze(0);
+    await tick();
+    assert.equal(tr0.clones.length, 0);
+    assert.notEqual(b0.path, "clone");
+    assert.equal(b0.grabInfo().clone, null);
+
+    let t = 0;
+    const tr = camTrack(), cv = cloneVideo();
+    const v = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    const b = createDetAnalyzer(v, { makeCanvas, storage: null, glare: false, frames: "clone", track: tr, cloneVideo: cv, now: () => t });
+    b.analyze(t);
+    await tick();
+    cv.frame = small(frames[1]);
+    cv.fire();
+    t = 500;
+    assert.equal(b.analyze(t).timing.path, "clone");
+    t = 1600; // no clone frame for 1.6 s: this frame from the video
+    assert.equal(b.analyze(t).timing.path, "main");
+    assert.equal(b.path, "clone");
+    t = 3600;
+    assert.equal(b.analyze(t).timing.path, "main");
+    assert.deepEqual([b.path, b.grabInfo().why], ["main", "clone:stalled"]);
+    assert.equal(tr.clones[0].stopped, true);
+  });
+
+  test("cloneMatches: same orientation and aspect within 1 %", () => {
+    assert.equal(cloneMatches(480, 853, 2160, 3840), true);
+    assert.equal(cloneMatches(853, 480, 2160, 3840), false);
+    assert.equal(cloneMatches(480, 640, 2160, 3840), false);
+    assert.equal(cloneMatches(0, 0, 2160, 3840), false);
+  });
+});
+
+describe("stripSharpness and grabRegions", () => {
+  test("stripSharpness: a card's collector strip is sharp, an empty box's isn't, outside the image 0", () => {
+    const W = 480, H = 853, q = placeCard(W * 0.5, H * 0.5, W * 0.6, 0, 0);
+    const img = background("cloth", W, H, 5);
+    drawCard(img, makeCard(5), q);
+    const flat = { w: W, h: H, d: new Uint8ClampedArray(W * H * 4).fill(230) };
+    assert.ok(stripSharpness(img, q) > 40, String(stripSharpness(img, q)));
+    assert.ok(stripSharpness(flat, q) < 1);
+    assert.equal(stripSharpness(img, q.map(([x, y]) => [x + 2 * W, y])), 0);
+  });
+
+  test("grabRegions reads the source once; the same pixels as one read per region (scale 1 and scaled)", () => {
+    const VW2 = 2160, VH2 = 3840, quad = placeCard(VW2 / 2, VH2 / 2, VW2 * 0.7, 2, 0.004);
+    const img = background("cloth", VW2, VH2, 3);
+    drawCard(img, makeCard(3), quad);
+    let reads = 0;
+    const src = { frame: img };
+    const mk = (w, h) => {
+      const c = makeCanvas(w, h), ctx = c.getContext(), draw = ctx.drawImage.bind(ctx);
+      ctx.drawImage = (s2, ...a) => { if (s2 === src) reads++; return draw(s2, ...a); };
+      return c;
+    };
+    const still = { w: VW2, h: VH2 };
+    const pc = regionPlan(still, quad, null, 1000, 1.3), ps = regionPlan(still, quad, { x0: -0.03, y0: 0.85, x1: 1.03, y1: 1.04 }, 4000, 1);
+    assert.ok(pc.k < 1 && ps.k === 1, `${pc.k} ${ps.k}`);
+    const [ci, si] = grabRegions(src, [pc, ps], mk);
+    assert.equal(reads, 1, "one read of the camera frame");
+    const one = (p) => {
+      const c = makeCanvas(p.dw, p.dh);
+      c.getContext().drawImage({ frame: img }, p.x, p.y, p.w, p.h, 0, 0, p.dw, p.dh);
+      return c.getContext().getImageData(0, 0, p.dw, p.dh).data;
+    };
+    assert.deepEqual([ci.w, ci.h, si.w, si.h], [pc.dw, pc.dh, ps.dw, ps.dh]);
+    assert.deepEqual(si.d, one(ps));
+    assert.deepEqual(ci.d, one(pc));
+    // no plan at scale 1: each region is read on its own (a scaled union would differ)
+    reads = 0;
+    const p2 = regionPlan(still, quad, null, 500, 1);
+    grabRegions(src, [p2, p2], mk);
+    assert.equal(reads, 2);
+  });
+});
+
+describe("captureCard with a frame source (cfg.crop)", () => {
+  const video = () => ({ videoWidth: VW, videoHeight: VH, frame: scene });
+  const pixelsLog = () => {
+    const calls = [];
+    return { calls, available: () => true, call: async (op, payload) => { calls.push({ op, payload }); return op === "probe" ? { card: "Q0FSRA==", strip: "U1RSSVA=" } : null; } };
+  };
+  const readRect = (r) => {
+    const c = makeCanvas(r.dw, r.dh);
+    c.getContext().drawImage({ frame: scene }, r.x, r.y, r.w, r.h, 0, 0, r.dw, r.dh);
+    return { w: r.dw, h: r.dh, d: c.getContext().getImageData(0, 0, r.dw, r.dh).data };
+  };
+
+  test("card + strip regions come from crop(): the same pixels and quads as the page's read, nothing read here", async () => {
+    const ref = pixelsLog(), viaCrop = pixelsLog();
+    await captureCard(video(), null, QUAD, { preferPhoto: false, makeCanvas, pixels: ref });
+    let rects = null;
+    const shot = await captureCard({ videoWidth: VW, videoHeight: VH }, null, QUAD, {
+      preferPhoto: false, makeCanvas, pixels: viaCrop, crop: async (rs) => { rects = rs; return rs.map(readRect); },
+    });
+    assert.equal(rects.length, 2);
+    assert.equal(shot.crop, true);
+    assert.equal(shot.ms.grab, 0);
+    const p = viaCrop.calls[0].payload, r = ref.calls[0].payload;
+    for (const k of ["card", "strip"]) {
+      assert.deepEqual([p[k].img.w, p[k].img.h], [r[k].img.w, r[k].img.h], k);
+      assert.deepEqual(p[k].q, r[k].q, k);
+      assert.deepEqual(p[k].img.d, r[k].img.d, k);
+      assert.deepEqual([p[k].outW, p[k].outH], [r[k].outW, r[k].outH], k);
+    }
+  });
+
+  test("crop() without a frame (null) or failing: the page reads the regions itself", async () => {
+    for (const crop of [async () => null, async () => { throw new Error("gone"); }]) {
+      const px = pixelsLog();
+      const shot = await captureCard(video(), null, QUAD, { preferPhoto: false, makeCanvas, pixels: px, crop });
+      assert.equal(shot.crop, false);
+      assert.equal(px.calls[0].op, "probe");
+      assert.ok(px.calls[0].payload.card.img.w > 600);
+    }
   });
 });

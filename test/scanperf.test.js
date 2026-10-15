@@ -3,7 +3,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { FramePacer, PACER_DEFAULTS, PerfMonitor, percentile, summarize } from "../public/scanperf.js";
+import { FramePacer, PACER_DEFAULTS, PerfMonitor, RES_DROP, percentile, shouldDropResolution, summarize } from "../public/scanperf.js";
 
 describe("percentile / summarize", () => {
   test("nearest rank; non-finite values ignored; empty → null", () => {
@@ -90,5 +90,45 @@ describe("PerfMonitor", () => {
     const b = m.snapshot(1);
     assert.equal(b.raf.n, 600);
     assert.equal(b.raf.max, 999);
+  });
+});
+
+describe("shouldDropResolution", () => {
+  const costs = (v, n = 8) => new Array(n).fill(v);
+  test("a slow main-thread read of a 4K stream drops to 1080p", () => {
+    assert.equal(shouldDropResolution({ path: "main", vw: 2160, vh: 3840, costs: costs(450) }), true);
+    assert.equal(shouldDropResolution({ path: "main", vw: 3840, vh: 2160, costs: [...costs(10, 20), ...costs(200)] }), true, "the last 8 count");
+    assert.equal(shouldDropResolution({ path: "bitmap", vw: 2160, vh: 3840, costs: costs(450) }), true, "createImageBitmap on the page");
+  });
+
+  test("never on the track path, at 1080p or below, before 8 frames, or at/under the threshold", () => {
+    assert.equal(shouldDropResolution({ path: "track", vw: 2160, vh: 3840, costs: costs(450) }), false);
+    assert.equal(shouldDropResolution({ path: undefined, vw: 2160, vh: 3840, costs: costs(450) }), false);
+    assert.equal(shouldDropResolution({ path: "main", vw: 1080, vh: 1920, costs: costs(450) }), false);
+    assert.equal(shouldDropResolution({ path: "main", vw: 2160, vh: 3840, costs: costs(450, 7) }), false);
+    assert.equal(shouldDropResolution({ path: "main", vw: 2160, vh: 3840, costs: costs(RES_DROP.mainMs) }), false);
+    assert.equal(shouldDropResolution({ path: "main", vw: 2160, vh: 3840, costs: costs(90) }, { mainMs: 60 }), true, "configurable");
+  });
+});
+
+describe("PerfMonitor worker series", () => {
+  test("wgrab/wsharp per frame and the probe crop time land in the beacon", () => {
+    const m = new PerfMonitor({ now: 0 });
+    m.frame({ total: 30, main: 0.2, grab: 0, detect: 20, sharp: 0, wgrab: 12, wsharp: 8 });
+    m.probe({ rtt: 900, capture: 100, crop: 40 });
+    const b = m.snapshot(5000);
+    assert.equal(b.wgrab.p50, 12);
+    assert.equal(b.wsharp.p50, 8);
+    assert.equal(b.probe_crop.p50, 40);
+    assert.equal(m.snapshot(6000).wgrab.n, 0, "a new window");
+  });
+
+  test("the probe's page read and worker job land in the beacon (probe_read, probe_job)", () => {
+    const m = new PerfMonitor({ now: 0 });
+    m.probe({ rtt: 900, capture: 400, read: 240, job: 120 });
+    m.probe({ rtt: 800, capture: 100, crop: 40, read: null, job: 60 });
+    const b = m.snapshot(5000);
+    assert.deepEqual([b.probe_read.n, b.probe_read.p50], [1, 240]);
+    assert.deepEqual([b.probe_job.n, b.probe_job.max], [2, 120]);
   });
 });

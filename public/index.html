@@ -656,6 +656,8 @@ ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
 }
 .cam video, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .cam canvas { pointer-events: none; }
+/* the analysis clone of the camera track (scanlib frames 'clone'): kept in the page but invisible */
+.cam video.cam-analysis { inset: auto; left: 0; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
 .cam-start { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 12px; padding: 20px; text-align: center; }
 .cam-start p { margin: 0; max-width: 340px; color: #d7d6dd; font-size: .92rem; }
 .cam-hud { position: absolute; left: 8px; right: 8px; display: flex; align-items: center; gap: 8px; }
@@ -4786,6 +4788,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   const overlayRef = useRef(null);
   const streamRef = useRef(null);
   const trackRef = useRef(null);
+  const cloneRef = useRef(null); // hidden <video> of the analysis clone (scanlib createDetAnalyzer cloneVideo)
   const obsRef = useRef(null);
   // false | "probe" (a probe crop: the analysis loop keeps running) | "shot" (shutter / auto-ask: the loop waits)
   const capturingRef = useRef(false);
@@ -4822,7 +4825,10 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     const stale = () => gen !== genRef.current || !activeRef.current || document.hidden;
     setCam({ state: "starting", error: null, vw: 0, vh: 0 });
     try {
-      const stream = await lib.openCamera();
+      // ?scanres=1080: start at 1080p (field test; slow phones on the main-thread read drop to it on their own)
+      let res = null;
+      try { res = new URLSearchParams(window.location.search).get("scanres"); } catch { res = null; }
+      const stream = await lib.openCamera(res === "1080" ? { width: 1920, height: 1080 } : undefined);
       if (stale()) {
         lib.stopStream(stream);
         if (gen === genRef.current) stop();
@@ -4879,7 +4885,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     capturingRef.current = "probe";
     try {
       // the warps, JPEGs and the glare map run in the scan worker when there is one
-      shot = await lib.captureCard(v, trackRef.current, p.quad, { preferPhoto: false, pixels: pixelsRef.current, glare: true });
+      shot = await lib.captureCard(v, trackRef.current, p.quad, { preferPhoto: false, pixels: pixelsRef.current, glare: true, crop: detRef.current?.crop });
     } catch {
       pc.failed(p.id);
       perfRef.current?.probe({ error: true });
@@ -4902,7 +4908,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
       // a failed answer with a reflection makes the controller show the reflection hint
       const glareP = shot.glare ? Promise.race([shot.glare, new Promise((r) => setTimeout(() => r(null), 1500))]).catch(() => null) : Promise.resolve(null);
       const res = await pending;
-      perfRef.current?.probe({ rtt: Date.now() - t0, capture: shot.ms?.total });
+      perfRef.current?.probe({ rtt: Date.now() - t0, capture: shot.ms?.total, crop: shot.crop ? shot.ms?.crop : null, read: shot.crop ? null : shot.ms?.grab, job: shot.ms?.job });
       const glare = await glareP;
       const outcome = pc.answer(p.id, res, Date.now(), { glare });
       recEvent({ kind: "probe", id: p.id, outcome: res?.outcome ?? null, reason: res?.reason ?? null, ms: Date.now() - t0, status: res?.result?.status ?? null, store_printing_id: res?.result?.store_printing_id ?? null, finish: res?.result?.finish ?? null, scan_id: res?.scan?.id ?? null, ...geo, glare: glare ? { code: glare.code, fraction: glare.fraction, regions: glare.regions } : null });
@@ -4930,7 +4936,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     try {
       const det = detRef.current;
       const opts = det?.captureOpts ? det.captureOpts() : { preferPhoto: true };
-      const shot = await lib.captureCard(v, trackRef.current, quad, { ...opts, preferPhoto: opts.preferPhoto !== false && live.current.photo !== false, pixels: pixelsRef.current });
+      const shot = await lib.captureCard(v, trackRef.current, quad, { ...opts, preferPhoto: opts.preferPhoto !== false && live.current.photo !== false, pixels: pixelsRef.current, crop: det?.crop });
       const rec = {
         kind: "manual", det: "v2", quad_source: quadSource, fallback: quadSource !== "track", allow_claude: true, shot: shot.kind,
         strip_w: shot.stripSize?.[0] ?? null, sharp: Number.isFinite(o.sharp) ? Math.round(o.sharp) : null, prior_learned: Boolean(o.priorLearned), t: Date.now(),
@@ -4955,7 +4961,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     // stage the card next to the Claude scan.
     pc?.manual({ ...o, now: Date.now() });
     try {
-      const shot = await lib.captureCard(v, trackRef.current, o.corners, { preferPhoto: false, pixels: pixelsRef.current });
+      const shot = await lib.captureCard(v, trackRef.current, o.corners, { preferPhoto: false, pixels: pixelsRef.current, crop: detRef.current?.crop });
       const rec = {
         kind: "auto_claude", det: "v2", quad_source: o.accepted ? "track" : "weak", fallback: false, allow_claude: true, shot: shot.kind,
         strip_w: shot.stripSize?.[0] ?? null, sharp: Number.isFinite(o.sharp) ? Math.round(o.sharp) : null, prior_learned: Boolean(o.priorLearned), t: Date.now(),
@@ -5012,7 +5018,10 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   };
 
   // Analysis loop (8 fps at most, slower when the phone can't keep up) + overlay drawing + perf beacon.
-  // Field-test knobs: ?scanworker=0 (no workers), ?scangrab=cpu|gpu|auto (work-frame canvas, default auto).
+  // Field-test knobs: ?scanworker=0 (no workers), ?scangrab=cpu|gpu|auto (main-thread work-frame canvas,
+  // default auto), ?scanframes=auto|clone|main|track|bitmap (where the work frame comes from, default
+  // auto: a small clone of the camera track on Chrome, else the 4K video; track/bitmap = the beta.2
+  // worker paths, experiments only), ?scanres=1080|4k (start at 1080p / never drop to it).
   useEffect(() => {
     if (cam.state !== "on" || !lib) return;
     const v = videoRef.current;
@@ -5023,7 +5032,9 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     const detW = useWorkers ? lib.createScanWorker() : null;
     const pxW = useWorkers ? lib.createScanWorker() : null;
     let det = null;
-    try { det = lib.createDetAnalyzer(v, { detectWorker: detW, pixels: pxW, grabMode }); } catch (e) {
+    const frames = ["auto", "clone", "main", "track", "bitmap"].includes(qs?.get("scanframes")) ? qs.get("scanframes") : "auto";
+    const resPref = qs?.get("scanres") || null;
+    try { det = lib.createDetAnalyzer(v, { detectWorker: detW, pixels: pxW, grabMode, frames, track: trackRef.current, cloneVideo: cloneRef.current }); } catch (e) {
       detW?.close(); pxW?.close();
       live.current.onError?.(`Could not start the card detector: ${e.message}`);
       return;
@@ -5039,6 +5050,9 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     let seenLast = null, probeThumb = null, prevStill = false; // auto-ask: the probe answer (pc.last) seen, the last probe's card thumbnail
     const msHist = [];
     let dbgAt = 0;
+    // main-thread frame-read cost per analysis (the work-frame read): a slow read of the 4K video drops it to 1080p once
+    const readCosts = [];
+    let resDrop = null;
     const pct = (a, q) => { const b = [...a].sort((x, y) => x - y); return b.length ? b[Math.min(b.length - 1, Math.floor(q * b.length))] : null; };
 
     const poly = (ctx, q) => { ctx.beginPath(); q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.stroke(); };
@@ -5147,7 +5161,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
             window.__scanDebug = { o: { ...o, thumb: undefined, cardThumb: undefined }, r: r && { ...r, probe: r.probe && { id: r.probe.id } }, stats: pc.stats };
             if (Date.now() - dbgAt > 500) {
               dbgAt = Date.now();
-              setDbg({ a50: pct(msHist.map((x) => x[0]), 0.5), a90: pct(msHist.map((x) => x[0]), 0.9), m50: pct(msHist.map((x) => x[2]), 0.5), gap: pacer?.gap(), wk: Boolean(detW?.available()), gm: det.grabInfo?.().mode ?? "?", st: r?.state, f: o.found, w: o.weak, a: o.accepted, s: o.stable, cmad: r?.cmad, sharp: o.sharp, mode: o.mode, prior: o.priorLearned, sent: pc.stats.sent, last: pc.last?.outcome, lms: pc.last?.ms });
+              setDbg({ a50: pct(msHist.map((x) => x[0]), 0.5), a90: pct(msHist.map((x) => x[0]), 0.9), m50: pct(msHist.map((x) => x[2]), 0.5), gap: pacer?.gap(), wk: Boolean(detW?.available()), gm: `${det.grabInfo?.().path ?? "?"}/${det.grabInfo?.().mode ?? det.grabInfo?.().wmode ?? "?"}`, st: r?.state, f: o.found, w: o.weak, a: o.accepted, s: o.stable, cmad: r?.cmad, sharp: o.sharp, mode: o.mode, prior: o.priorLearned, sent: pc.stats.sent, last: pc.last?.outcome, lms: pc.last?.ms });
             }
           }
           if (r) {
@@ -5183,7 +5197,21 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
           // main-thread time of this frame: the analyzer's part plus the controller, overlay and React updates
           const main = o.timing.main + (performance.now() - tPost);
           pacer?.note(main);
-          perf?.frame({ total: o.ms, main, grab: o.timing.grab, detect: o.timing.detect, sharp: o.timing.sharp });
+          perf?.frame({ total: o.ms, main, grab: o.timing.grab, detect: o.timing.detect, sharp: o.timing.sharp, wgrab: o.timing.wgrab });
+          readCosts.push(o.timing.grab || 0);
+          if (readCosts.length > 20) readCosts.shift();
+          const tr = trackRef.current;
+          if (!resDrop && resPref !== "4k" && tr?.applyConstraints && lib.shouldDropResolution?.({ path: o.timing.path, vw: o.vw, vh: o.vh, costs: readCosts.slice(4) })) {
+            resDrop = { from: [o.vw, o.vh], cost: Math.round(readCosts.slice(-8).sort((x, y) => x - y)[4]), at: Date.now(), ok: null };
+            // 1080 px short side in the track's own width/height convention (Android reports the
+            // sensor's landscape size for a portrait video), so the aspect and the framing stay
+            let st = {};
+            try { st = tr.getSettings?.() || {}; } catch { st = {}; }
+            const sw = st.width || o.vw, sh = st.height || o.vh, k = 1080 / Math.min(sw, sh);
+            tr.applyConstraints({ width: { ideal: Math.round(sw * k) }, height: { ideal: Math.round(sh * k) } })
+              .then(() => { resDrop.ok = true; readCosts.length = 0; })
+              .catch(() => { resDrop.ok = false; });
+          }
         }
       } else last = now;
       next();
@@ -5219,6 +5247,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
         video: { w: st.width ?? null, h: st.height ?? null, fps: st.frameRate ?? null, vw: v.videoWidth, vh: v.videoHeight, resize: st.resizeMode ?? null },
         worker: Boolean(detW?.available()), detect_worker: detW ? detW.state : "none", pixel_worker: pxW ? pxW.state : "none",
         encoder: Boolean(pxW?.available() && pxW.encoder), grab_mode: det.grabInfo ? det.grabInfo() : null, gap: pacer ? pacer.gap() : null,
+        frame_path: det.path ?? null, res: resDrop,
         dropped_frames: vq && vq0 ? vq.dropped - vq0.dropped : null, decoded_frames: vq && vq0 ? vq.total - vq0.total : null,
         record: Boolean(live.current.record?.session), visible: !document.hidden,
       });
@@ -5233,6 +5262,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
       clearInterval(beacon);
       if (rafId !== null) cancelAnimationFrame(rafId);
       try { longObs?.disconnect(); } catch { /* ignore */ }
+      try { det.close?.(); } catch { /* ignore */ }
       detW?.close(); pxW?.close();
       if (pixelsRef.current === pxW) pixelsRef.current = null;
       if (perfRef.current === perf) perfRef.current = null;
@@ -5263,6 +5293,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   return (
     <div className="cam" style={style}>
       <video ref={videoRef} playsInline muted autoPlay aria-label="Camera preview" />
+      <video ref={cloneRef} className="cam-analysis" playsInline muted aria-hidden="true" tabIndex={-1} />
       <canvas ref={overlayRef} aria-hidden="true" hidden={!on} />
       {!on && (
         <div className="cam-start">
