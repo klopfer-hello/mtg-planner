@@ -181,12 +181,25 @@ not part of backups.
 with `?scandebug=1`), the scanner also sends a small summary every 5 seconds to
 `POST /api/debug/perf`: frame-analysis and probe timings, frame gaps, long
 tasks, dropped frames, the granted camera size, whether the scan workers run,
-and the phone's browser string, CPU core count, device memory and pixel ratio.
-No images. Nothing is sent during normal scanning. The server keeps the newest
-500 entries (≤ 4 KB each) in `debug-perf.jsonl` next to the database (env
-`DEBUG_PERF_FILE`); `GET /api/debug/perf?limit=` lists them. Not part of
-backups. Test switches for a slow phone: `?scanworker=0` (no worker threads)
-and `?scangrab=cpu|gpu|auto` (how the camera frame is read; default `auto`).
+where the camera frame is read (`frame_path`) and whether the camera dropped
+to 1080p (`res`), and the phone's browser string, CPU core count, device
+memory and pixel ratio. No images. Nothing is sent during normal scanning. The
+server keeps the newest 500 entries (≤ 4 KB each) in `debug-perf.jsonl` next
+to the database (env `DEBUG_PERF_FILE`); `GET /api/debug/perf?limit=` lists
+them. Not part of backups.
+
+**Where the camera frame is read.** On Chrome (Android and desktop) the camera
+frames go straight to the scanner's worker thread, which reads the small
+analysis frame, the bottom strip and the probe crops itself, so the page stays
+smooth even with a 4K camera. Safari and Firefox read the frame on the page as
+before. If reading on the page is very slow (more than 120 ms per frame), the
+camera switches once from 4K to 1080p; the bottom strip sent to the server is
+then about half as wide.
+
+Test switches for a slow phone: `?scanworker=0` (no worker threads),
+`?scanframes=auto|track|bitmap|main` (who reads the camera frame; default
+`auto`), `?scangrab=cpu|gpu|auto` (how the page reads it; default `auto`) and
+`?scanres=1080|4k` (start at 1080p / never drop to it).
 
 ## Calibration mode
 

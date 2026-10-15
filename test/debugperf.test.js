@@ -29,6 +29,18 @@ describe("sanitizePerf", () => {
     assert.equal(({}).polluted, undefined);
   });
 
+  test("keeps the frame-path fields (where the camera frame is read, worker timings, the 1080p drop)", () => {
+    const out = sanitizePerf({
+      frame_path: "track", wgrab: { n: 3, p50: 12 }, wsharp: { n: 3, p50: 8 }, probe_crop: { n: 1, p50: 40 },
+      res: { from: [2160, 3840], cost: 450, at: 1, ok: true },
+    });
+    assert.equal(out.frame_path, "track");
+    assert.deepEqual(out.wgrab, { n: 3, p50: 12 });
+    assert.deepEqual(out.res.from, [2160, 3840]);
+    assert.equal(out.probe_crop.p50, 40);
+    assert.equal(out.wsharp.p50, 8);
+  });
+
   test("nesting deeper than 3 levels and long arrays are cut; 400 for non-objects or nothing known; 413 when too large", () => {
     const out = sanitizePerf({ video: { a: { b: { c: 1 } } }, screen: { list: Array.from({ length: 40 }, (_, i) => i) } });
     assert.deepEqual(out.video, { a: {} });

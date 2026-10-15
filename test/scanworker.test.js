@@ -4,7 +4,7 @@
 // captureCard through a worker and inline, analyzeAsync vs analyze, and the
 // small pure helpers. Procedural frames only.
 
-import { test, describe, before } from "node:test";
+import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
   bytesToBase64, captureCard, createDetAnalyzer, createScanWorker, glareMap, glareSummary, warpQuad,
@@ -384,5 +384,166 @@ describe("createDetAnalyzer: analyzeAsync", () => {
     assert.equal(j[7], ref[7], "same pixels as the q0.7 attempt");
     assert.equal(await an.frameJpegAsync(0.7, { fallback: 0.5, maxLen: 8 }), null, "still too long: null");
     assert.equal(dec(await an.frameJpegAsync(0.7, { fallback: 0.5, maxLen: 1e6 }))[6], 70, "fits: no retry");
+  });
+});
+
+// The frame paths: the analyzer with the real worker module (loaded above) behind a client that
+// calls its onmessage directly; camera frames are fake VideoFrames ({displayWidth, displayHeight,
+// frame: RGBA}) from a ReadableStream, read by the worker through the test canvas.
+describe("frame path 'track' (camera frames read in the detect worker)", () => {
+  const W = 720, H = 1280, q = placeCard(W * 0.45, H * 0.52, W * 0.55, 6, 0.01);
+  const frames = [1, 2, 3].map((n) => {
+    const img = background("cloth", W, H, 21);
+    drawCard(img, makeCard(21), q);
+    return addNoise(img, n, 4);
+  });
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const vf = (img, extra = {}) => ({ displayWidth: img.w, displayHeight: img.h, frame: img, closed: false, close() { this.closed = true; }, ...extra });
+  let ctl;
+
+  function workerClient() {
+    const pending = new Map();
+    let seq = 1000;
+    globalThis.self.postMessage = (m) => {
+      const p = pending.get(m.id);
+      if (!p) return;
+      pending.delete(m.id);
+      if (m.ok) p.res(m.result); else p.rej(new Error(m.error));
+    };
+    globalThis.self.__mkCanvas = makeCanvas;
+    const client = {
+      calls: [],
+      available: () => true,
+      encoder: true,
+      call(op, payload = {}) {
+        client.calls.push(op);
+        const id = ++seq;
+        return new Promise((res, rej) => { pending.set(id, { res, rej }); globalThis.self.onmessage({ data: { ...payload, id, op } }); });
+      },
+    };
+    return client;
+  }
+
+  const camTrack = () => ({ readyState: "live", stream: new ReadableStream({ start(c) { ctl = c; } }) });
+  before(() => {
+    globalThis.MediaStreamTrackProcessor = class { constructor({ track }) { this.readable = track.stream; } };
+  });
+  after(() => {
+    delete globalThis.MediaStreamTrackProcessor;
+    delete globalThis.self.__mkCanvas;
+  });
+
+  test("same analysis as the main path; no frame read on the page; old frames closed; crop and frameJpeg from the worker's frame", async () => {
+    const dw = workerClient();
+    const vA = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    const vB = { videoWidth: W, videoHeight: H }; // no pixels: a read on the page would throw
+    const a = createDetAnalyzer(vA, { makeCanvas, storage: null, glare: false });
+    const b = createDetAnalyzer(vB, { makeCanvas, storage: null, glare: false, detectWorker: dw, frames: "auto", track: camTrack() });
+    assert.equal(await b.analyzeAsync(0), null, "the first call attaches the track");
+    assert.equal(b.grabInfo().path, "track");
+    assert.equal(await b.analyzeAsync(50), null, "no frame yet");
+    const sent = [];
+    for (let i = 0; i < 8; i++) {
+      const f = vf(frames[i % 3]);
+      sent.push(f);
+      ctl.enqueue(f);
+      await tick();
+      vA.frame = frames[i % 3];
+      const t = 1000 + i * 125;
+      const oa = a.analyze(t), ob = await b.analyzeAsync(t);
+      for (const k of ["found", "weak", "accepted", "stable", "mode", "blank", "sharp"]) assert.deepEqual(ob[k], oa[k], `${k} @${i}`);
+      assert.deepEqual(ob.corners, oa.corners, `corners @${i}`);
+      assert.deepEqual(Array.from(ob.cardThumb || []), Array.from(oa.cardThumb || []));
+      assert.equal(ob.timing.path, "track");
+      assert.equal(ob.timing.grab, 0, "nothing read on the page");
+      assert.ok(Number.isFinite(ob.timing.wgrab) && Number.isFinite(ob.timing.wsharp));
+    }
+    assert.ok(a.analyze(9999).stable, "the card was tracked to stable");
+    assert.ok(sent.slice(0, -1).every((f) => f.closed), "every frame but the analysed one is closed");
+    assert.equal(sent.at(-1).closed, false);
+    assert.equal(await b.analyzeAsync(5000), null, "no new frame: nothing analysed twice");
+    // probe crop: the newest frame's region at the asked size, same pixels as a read on the page
+    const rect = { x: 100.5, y: 200, w: 400, h: 560, dw: 300, dh: 420 };
+    const [img] = await b.crop([rect]);
+    const ref = makeCanvas(300, 420);
+    ref.getContext().drawImage({ frame: sent.at(-1).frame }, rect.x, rect.y, rect.w, rect.h, 0, 0, 300, 420);
+    assert.deepEqual([img.w, img.h], [300, 420]);
+    assert.deepEqual(img.d, ref.getContext().getImageData(0, 0, 300, 420).data);
+    const j = Buffer.from(await b.frameJpegAsync(0.7), "base64");
+    assert.deepEqual([j[2] | (j[3] << 8), j[4] | (j[5] << 8)], [480, 853], "the worker's 480 px work frame");
+    b.close();
+    await tick();
+    assert.equal(sent.at(-1).closed, true, "close() detaches: the held frame is closed");
+  });
+
+  test("a rotated frame turns the track path off for good (no createImageBitmap here: main)", async () => {
+    const dw = workerClient();
+    const v = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    const b = createDetAnalyzer(v, { makeCanvas, storage: null, glare: false, detectWorker: dw, frames: "track", track: camTrack() });
+    await b.analyzeAsync(0);
+    ctl.enqueue(vf({ w: H, h: W, d: new Uint8ClampedArray(W * H * 4) }, { displayWidth: H, displayHeight: W, rotation: 90 }));
+    await tick();
+    assert.equal(await b.analyzeAsync(100), null);
+    assert.deepEqual([b.grabInfo().path, b.grabInfo().why], ["main", "track:orientation"]);
+    assert.ok(dw.calls.includes("detach"));
+    const o = await b.analyzeAsync(200);
+    assert.equal(o.timing.path, "main");
+    assert.equal(o.timing.worker, true, "detect still runs in the worker");
+  });
+
+  test("auto without MediaStreamTrackProcessor (Safari, Firefox) stays on the page's read", async () => {
+    const saved = globalThis.MediaStreamTrackProcessor;
+    delete globalThis.MediaStreamTrackProcessor;
+    try {
+      const dw = workerClient();
+      const v = { videoWidth: W, videoHeight: H, frame: frames[0] };
+      const b = createDetAnalyzer(v, { makeCanvas, storage: null, glare: false, detectWorker: dw, frames: "auto", track: camTrack() });
+      const o = await b.analyzeAsync(0);
+      assert.equal(o.timing.path, "main");
+      assert.equal(b.path, "main");
+      assert.deepEqual(dw.calls, ["detect"]);
+    } finally { globalThis.MediaStreamTrackProcessor = saved; }
+  });
+});
+
+describe("captureCard with a frame source (cfg.crop)", () => {
+  const video = () => ({ videoWidth: VW, videoHeight: VH, frame: scene });
+  const pixelsLog = () => {
+    const calls = [];
+    return { calls, available: () => true, call: async (op, payload) => { calls.push({ op, payload }); return op === "probe" ? { card: "Q0FSRA==", strip: "U1RSSVA=" } : null; } };
+  };
+  const readRect = (r) => {
+    const c = makeCanvas(r.dw, r.dh);
+    c.getContext().drawImage({ frame: scene }, r.x, r.y, r.w, r.h, 0, 0, r.dw, r.dh);
+    return { w: r.dw, h: r.dh, d: c.getContext().getImageData(0, 0, r.dw, r.dh).data };
+  };
+
+  test("card + strip regions come from crop(): the same pixels and quads as the page's read, nothing read here", async () => {
+    const ref = pixelsLog(), viaCrop = pixelsLog();
+    await captureCard(video(), null, QUAD, { preferPhoto: false, makeCanvas, pixels: ref });
+    let rects = null;
+    const shot = await captureCard({ videoWidth: VW, videoHeight: VH }, null, QUAD, {
+      preferPhoto: false, makeCanvas, pixels: viaCrop, crop: async (rs) => { rects = rs; return rs.map(readRect); },
+    });
+    assert.equal(rects.length, 2);
+    assert.equal(shot.crop, true);
+    assert.equal(shot.ms.grab, 0);
+    const p = viaCrop.calls[0].payload, r = ref.calls[0].payload;
+    for (const k of ["card", "strip"]) {
+      assert.deepEqual([p[k].img.w, p[k].img.h], [r[k].img.w, r[k].img.h], k);
+      assert.deepEqual(p[k].q, r[k].q, k);
+      assert.deepEqual(p[k].img.d, r[k].img.d, k);
+      assert.deepEqual([p[k].outW, p[k].outH], [r[k].outW, r[k].outH], k);
+    }
+  });
+
+  test("crop() without a frame (null) or failing: the page reads the regions itself", async () => {
+    for (const crop of [async () => null, async () => { throw new Error("gone"); }]) {
+      const px = pixelsLog();
+      const shot = await captureCard(video(), null, QUAD, { preferPhoto: false, makeCanvas, pixels: px, crop });
+      assert.equal(shot.crop, false);
+      assert.equal(px.calls[0].op, "probe");
+      assert.ok(px.calls[0].payload.card.img.w > 600);
+    }
   });
 });
