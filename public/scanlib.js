@@ -14,9 +14,19 @@
 // capture.js ProbeController). The classic guide-frame scanner was removed in
 // v0.5.0. Also here: glare advice and the scan sounds (Web Audio, synthesized,
 // no files).
+//
+// Main thread vs worker (v0.6.2, Pixel 9 report: the page froze): the camera
+// frame is read on the main thread (drawImage + getImageData); everything
+// heavy after that runs in a module worker when the browser has one
+// (scanworker.js via createScanWorker): detect() per frame, the probe crop's
+// perspective warps, its JPEG encoding (OffscreenCanvas) and the glare map.
+// Without a worker the same code runs inline, with async JPEG encoding.
 
 import { detect, refine } from './det/detect.mjs';
 import { QuadTracker, BoxPrior, PRIOR_STORAGE_KEY, frameThumb, align } from './det/track.mjs';
+
+// frame pacing + perf beacon helpers (pure), re-exported for the page
+export { FramePacer, PerfMonitor, PACER_DEFAULTS } from './scanperf.js';
 
 /** Capture tuning. Values come from the synthetic-capture research. */
 export const CAPTURE_DEFAULTS = Object.freeze({
@@ -330,8 +340,11 @@ export async function grabStill(video, track, corners, { preferPhoto = true, tim
   return { source: video, w: vw, h: vh, corners, kind: "video", drift, reject };
 }
 
-/** Warp the region `region` (card fractions) of a still into an RGBA image. */
-function warpRegion(still, corners, region, outW, outH, oversample = 1.3) {
+/**
+ * Read the pixels around the region `region` (card fractions) of a still, scaled so the region is
+ * ~outW * oversample wide: {img (RGBA), q (the region's corners in img px)} for warpQuad.
+ */
+function regionGrab(still, corners, region, outW, oversample = 1.3, mk = makeCanvas) {
   const q = region ? regionQuad(corners, region) : corners;
   const b = quadBounds(q), size = quadSize(q);
   // Clip the source rect to the still; warpQuad clamps sampling outside it.
@@ -339,11 +352,11 @@ function warpRegion(still, corners, region, outW, outH, oversample = 1.3) {
   const w = Math.min(still.w, Math.ceil(b.x + b.w)) - x, h = Math.min(still.h, Math.ceil(b.y + b.h)) - y;
   if (w < 4 || h < 4) throw new Error("Card is outside the frame");
   const k = Math.min(1, (outW * oversample) / size.w);
-  const img = grabRegion(still.source, { x, y, w, h }, k);
-  return warpQuad(img, scaleQuad(q, k, k, -x * k, -y * k), outW, outH);
+  const img = grabRegion(still.source, { x, y, w, h }, k, mk);
+  return { img, q: scaleQuad(q, k, k, -x * k, -y * k) };
 }
 
-/** RGBA image -> base64 JPEG (no data: prefix). */
+/** RGBA image -> base64 JPEG (no data: prefix). Synchronous: blocks the main thread while encoding. */
 export function encodeJpeg(img, quality) {
   const c = makeCanvas(img.w, img.h);
   ctx2d(c).putImageData(new ImageData(img.d, img.w, img.h), 0, 0);
@@ -351,38 +364,183 @@ export function encodeJpeg(img, quality) {
   return url.slice(url.indexOf(",") + 1);
 }
 
+/** Bytes -> base64 (chunked, so a 400 KB JPEG never hits the argument limit). */
+export function bytesToBase64(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let s = "";
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+const asClamped = (d) => (d instanceof Uint8ClampedArray ? d : new Uint8ClampedArray(d.buffer ?? d, d.byteOffset ?? 0, d.length ?? undefined));
+
+/**
+ * RGBA image -> base64 JPEG via canvas.toBlob (the browser encodes off the main
+ * thread); toDataURL where toBlob is missing or yields nothing.
+ */
+export async function encodeJpegAsync(img, quality, mk = makeCanvas) {
+  const c = mk(img.w, img.h);
+  ctx2d(c).putImageData(new ImageData(asClamped(img.d), img.w, img.h), 0, 0);
+  return canvasJpeg(c, quality);
+}
+
+/** A canvas -> base64 JPEG, asynchronously where toBlob exists. */
+async function canvasJpeg(c, quality) {
+  if (typeof c.toBlob === "function") {
+    const blob = await new Promise((res) => { try { c.toBlob(res, "image/jpeg", quality); } catch { res(null); } });
+    if (blob) return bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
+  }
+  if (typeof c.toDataURL !== "function") return null;
+  const url = c.toDataURL("image/jpeg", quality);
+  return url.slice(url.indexOf(",") + 1);
+}
+
+/**
+ * Glare of a rectified card as the probe path reports it: {code, advice (hint text | null),
+ * regions (fractions rounded to 0.001), fraction}. `limits`: captureAdvice overrides.
+ */
+export function glareSummary(g, limits = null) {
+  const code = captureAdvice(g, null, limits || {});
+  const r3 = (v) => Math.round(v * 1000) / 1000, regions = {};
+  for (const [k, v] of Object.entries(g.regions)) regions[k] = r3(v);
+  return { code, advice: code === "ok" ? null : ADVICE_HINTS[code], regions, fraction: r3(g.fraction) };
+}
+
+const yieldTask = () => new Promise((r) => setTimeout(r, 0));
+const clockNow = () => (globalThis.performance ? performance.now() : Date.now());
+const r1 = (v) => Math.round(v * 10) / 10;
+
+/**
+ * Client of the scanner worker (public/scanworker.js, a module worker): ops 'detect' (detector A2
+ * on a work frame), 'probe' (warp card + strip; JPEGs via OffscreenCanvas when the worker has one,
+ * else the raw RGBA comes back), 'glareLast' (glare of the last probe card), 'glare' (warp + glare).
+ * Jobs run one after another per worker. available() is false until the worker reported ready,
+ * and for good after a load error, a crash or a timed-out job (callers then work inline).
+ * @param {{url?: string|URL, WorkerCtor?: Function, timeoutMs?: number}} [opts]
+ */
+export function createScanWorker({ url = null, WorkerCtor = globalThis.Worker, timeoutMs = 10000 } = {}) {
+  let w = null, broken = false, ready = false, encoder = false, seq = 0;
+  const pending = new Map();
+  const fail = (err) => {
+    broken = true;
+    for (const p of pending.values()) { clearTimeout(p.t); p.reject(err); }
+    pending.clear();
+    try { w?.terminate(); } catch { /* ignore */ }
+  };
+  if (typeof WorkerCtor !== "function") broken = true;
+  else {
+    try {
+      w = new WorkerCtor(url || new URL("./scanworker.js", import.meta.url), { type: "module" });
+      w.onmessage = (e) => {
+        const m = e.data;
+        if (m && m.ready) { ready = true; encoder = Boolean(m.encoder); return; }
+        const p = m && pending.get(m.id);
+        if (!p) return;
+        pending.delete(m.id);
+        clearTimeout(p.t);
+        if (m.ok) p.resolve(m.result); else p.reject(new Error(m.error || "scan worker error"));
+      };
+      w.onerror = (e) => { try { e?.preventDefault?.(); } catch { /* ignore */ } fail(new Error("scan worker failed")); };
+      w.onmessageerror = () => fail(new Error("scan worker message error"));
+    } catch { broken = true; w = null; }
+  }
+
+  function call(op, payload = {}, transfer = []) {
+    if (broken || !w) return Promise.reject(new Error("scan worker unavailable"));
+    const id = ++seq;
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => { if (pending.has(id)) fail(new Error("scan worker timeout")); }, timeoutMs);
+      pending.set(id, { resolve, reject, t });
+      try { w.postMessage({ ...payload, id, op }, transfer); } catch (e) { pending.delete(id); clearTimeout(t); reject(e); }
+    });
+  }
+
+  return {
+    call,
+    available: () => ready && !broken,
+    get encoder() { return encoder; },
+    get state() { return broken ? "off" : ready ? "ready" : "loading"; },
+    close: () => fail(new Error("scan worker closed")),
+  };
+}
+
 /**
  * Full capture: still -> rectified 1000x1400 card (q85) + high-res bottom
  * strip (q92). `corners` are the tracker-smoothed video-space corners (or the
  * learned box / defaultCardQuad for a shutter shot without a tracked card).
  * cfg: CAPTURE_DEFAULTS overrides plus grabStill options ({preferPhoto,
- * detOpts}; the analyzer hands them out via captureOpts()).
- * Returns {card, strip, cardPreview (data URL), kind, stripSize, drift, reject}.
+ * detOpts}; the analyzer hands them out via captureOpts()), `pixels` (a
+ * createScanWorker client: the warps, JPEGs and glare run there) and `glare`
+ * (true: also measure the card's glare, a promise that settles after the
+ * JPEGs, so it never delays the upload; glareMap of the 1000 px card works on
+ * the same 500x700 planes as the old separate 500x700 rectify).
+ * Only the pixel reads (drawImage + getImageData) stay on the main thread; the
+ * JPEGs are encoded asynchronously (worker OffscreenCanvas, else toBlob).
+ * Returns {card, strip, cardPreview (data URL), kind, stripSize, drift, reject,
+ * glare (Promise<glareSummary|null>|null), worker, ms {grab, total}}.
  */
 export async function captureCard(video, track, corners, cfg = {}) {
   const c = { ...CAPTURE_DEFAULTS, ...cfg };
+  const mk = cfg.makeCanvas || makeCanvas;
+  const t0 = clockNow();
   const still = await grabStill(video, track, corners, cfg);
+  const [cw, ch] = c.cardSize;
+  const r = c.stripRegion;
+  let sw, sh, grabMs = 0, cardB64, stripB64, glare = null, worker = false;
+  // The pixel reads (main thread). The still stays open until the JPEGs exist: a failed or timed-out
+  // worker job (its pixels were transferred) reads them again and finishes inline, so a shutter
+  // tap is never lost.
+  const grab = () => {
+    const t = clockNow();
+    const g = { card: regionGrab(still, still.corners, null, cw, 1.3, mk), strip: regionGrab(still, still.corners, r, sw, 1, mk) };
+    grabMs += clockNow() - t;
+    return g;
+  };
   try {
-    const [cw, ch] = c.cardSize;
-    const card = warpRegion(still, still.corners, null, cw, ch);
-    const r = c.stripRegion;
-    const stripQ = regionQuad(still.corners, r), ss = quadSize(stripQ);
-    const sw = Math.max(200, Math.min(c.stripMaxWidth, Math.round(ss.w)));
-    const sh = Math.max(40, Math.round(sw * ((r.y1 - r.y0) * 88) / ((r.x1 - r.x0) * 63)));
-    const strip = warpRegion(still, still.corners, r, sw, sh, 1);
-    const cardB64 = encodeJpeg(card, c.cardQuality);
-    return {
-      card: cardB64,
-      strip: encodeJpeg(strip, c.stripQuality),
-      cardPreview: `data:image/jpeg;base64,${cardB64}`,
-      kind: still.kind,
-      stripSize: [sw, sh],
-      drift: still.drift ?? null,
-      reject: still.reject ?? null,
-    };
+    const ss = quadSize(regionQuad(still.corners, r));
+    sw = Math.max(200, Math.min(c.stripMaxWidth, Math.round(ss.w)));
+    sh = Math.max(40, Math.round(sw * ((r.y1 - r.y0) * 88) / ((r.x1 - r.x0) * 63)));
+    let g = grab();
+    const px = c.pixels && c.pixels.available() ? c.pixels : null;
+    if (px) {
+      try {
+        const job = px.call("probe", {
+          card: { img: g.card.img, q: g.card.q, outW: cw, outH: ch, quality: c.cardQuality },
+          strip: { img: g.strip.img, q: g.strip.q, outW: sw, outH: sh, quality: c.stripQuality },
+          glare: Boolean(c.glare),
+        }, [g.card.img.d.buffer, g.strip.img.d.buffer]);
+        const gl = c.glare ? px.call("glareLast", {}).catch(() => null) : null;
+        const out = await job;
+        if (out.raw) [cardB64, stripB64] = await Promise.all([encodeJpegAsync(out.card, c.cardQuality, mk), encodeJpegAsync(out.strip, c.stripQuality, mk)]);
+        else { cardB64 = out.card; stripB64 = out.strip; }
+        glare = gl;
+        worker = true;
+      } catch {
+        g = grab();
+      }
+    }
+    if (!worker) {
+      const card = warpQuad(g.card.img, g.card.q, cw, ch);
+      await yieldTask();
+      const strip = warpQuad(g.strip.img, g.strip.q, sw, sh);
+      [cardB64, stripB64] = await Promise.all([encodeJpegAsync(card, c.cardQuality, mk), encodeJpegAsync(strip, c.stripQuality, mk)]);
+      if (c.glare) glare = yieldTask().then(() => glareSummary(glareMap(card))).catch(() => null);
+    }
   } finally {
     if (still.source && still.source !== video) still.source.close?.();
   }
+  return {
+    card: cardB64,
+    strip: stripB64,
+    cardPreview: `data:image/jpeg;base64,${cardB64}`,
+    kind: still.kind,
+    stripSize: [sw, sh],
+    drift: still.drift ?? null,
+    reject: still.reject ?? null,
+    glare,
+    worker,
+    ms: { grab: r1(grabMs), total: r1(clockNow() - t0) },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -441,7 +599,14 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
  * accepted, stable, corners (smoothed, video px, TL,TR,BR,BL), rawCorners,
  * jitter, drift, mode, score, orientConf, thumb (24x40), cardThumb (12x16),
  * sharp, glare {advice, code, regions}, priorQuad (video px | null),
- * priorLearned (box mode active), now, ms}.
+ * priorLearned (box mode active), now, ms, timing {main, grab, detect, sharp,
+ * mode, worker}}.
+ *
+ * analyzeAsync(now) is the same with detect() in opts.detectWorker (a
+ * createScanWorker client) once it is ready; opts.pixels (another client)
+ * takes the stable-track glare map off the main thread (the hint then lands
+ * one answer later). opts.grabMode 'cpu' (default) | 'gpu' | 'auto' picks the
+ * work-frame canvas (see grab()).
  *
  * The learned box persists per device in localStorage mtg.scan.prior:
  * loadPrior() on create, savePrior() after each accepted capture (it adds that
@@ -450,7 +615,8 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
  *
  * @param {HTMLVideoElement|{videoWidth:number, videoHeight:number}} video
  * @param {object} [opts] {workShort, storage, makeCanvas (tests), prior/tracker (instances),
- *   priorOpts, trackerOpts, glare (true), glareDelayMs (800), glareEveryMs (1500), blankSharp (DET_BLANK_SHARP), now}
+ *   priorOpts, trackerOpts, glare (true), glareDelayMs (800), glareEveryMs (1500), blankSharp (DET_BLANK_SHARP), now,
+ *   detectWorker, pixels, grabMode}
  *
  * An outline whose strip is blank (sharp < blankSharp) is reported as no card
  * (found/accepted/stable false, corners/cardThumb null, blank true; sharp and
@@ -476,26 +642,51 @@ export function createDetAnalyzer(video, opts = {}) {
   const tracker = opts.tracker || new QuadTracker(opts.trackerOpts || {});
   const blankSharp = opts.blankSharp ?? DET_BLANK_SHARP;
   const glareOn = opts.glare !== false, glareEveryMs = opts.glareEveryMs ?? 1500, glareDelayMs = opts.glareDelayMs ?? 800;
+  const detectWorker = opts.detectWorker || null, pixels = opts.pixels || null;
   const noGlare = () => ({ advice: null, code: "ok", regions: null });
-  let work = null, strip = null, last = null, wasStable = false, runId = 0, addedRun = -1;
-  let glare = noGlare(), glareAt = -Infinity, stableSince = null;
+  let work = null, last = null, wasStable = false, runId = 0, addedRun = -1;
+  let glare = noGlare(), glareAt = -Infinity, stableSince = null, glarePending = false;
+  // Work-frame read: 'cpu' (willReadFrequently canvas, the tested default), 'gpu' (accelerated canvas:
+  // the browser scales the camera frame on the GPU and reads back only 480 px; Android keeps camera
+  // frames on the GPU) or 'auto' (time both on the first frames, keep 'gpu' only when clearly faster).
+  const grabPref = opts.grabMode || "cpu";
+  let grabMode = grabPref === "auto" ? null : grabPref;
+  const grabTrials = { cpu: [], gpu: [] }, GRAB_TRIALS = 6, GRAB_WARM = 2;
+  const canvases = new Map();
 
   const toVideo = (q, s) => (q ? q.map(([x, y]) => [x / s, y / s]) : null);
+  const canvasFor = (kind, mode, w, h) => {
+    const key = `${kind}:${mode}`;
+    let c = canvases.get(key);
+    if (!c || c.width !== w || c.height !== h) { c = mk(w, h); canvases.set(key, c); }
+    return c;
+  };
+  const ctxOf = (c, mode) => (mode === "gpu" ? c.getContext("2d") : ctx2d(c));
+  const median = (a) => { const b = [...a].sort((x, y) => x - y); return b.length ? b[b.length >> 1] : Infinity; };
+
+  function pickMode() {
+    if (grabMode) return grabMode;
+    const { cpu, gpu } = grabTrials;
+    if (cpu.length >= GRAB_TRIALS + GRAB_WARM && gpu.length >= GRAB_TRIALS + GRAB_WARM) {
+      grabMode = median(gpu.slice(GRAB_WARM)) < 0.85 * median(cpu.slice(GRAB_WARM)) ? "gpu" : "cpu";
+      return grabMode;
+    }
+    return cpu.length <= gpu.length ? "cpu" : "gpu";
+  }
 
   function sharpness(vw, vh, cornersV) {
     const sr = quadBounds(regionQuad(cornersV, { x0: 0, y0: 0.86, x1: 1, y1: 1 }));
     const sx = Math.max(0, sr.x), sy = Math.max(0, sr.y), sw = Math.min(vw - sx, sr.w), sh = Math.min(vh - sy, sr.h);
     if (!(sw > 8 && sh > 4)) return 0;
     const k = Math.min(1, 640 / sw), dw = Math.max(8, Math.round(sw * k)), dh = Math.max(4, Math.round(sh * k));
-    if (!strip || strip.width !== dw || strip.height !== dh) strip = mk(dw, dh);
-    const sctx = ctx2d(strip);
+    const mode = grabMode || "cpu", strip = canvasFor("strip", mode, dw, dh), sctx = ctxOf(strip, mode);
     sctx.drawImage(video, sx, sy, sw, sh, 0, 0, dw, dh);
     const sd = sctx.getImageData(0, 0, dw, dh);
     return laplacianVariance(toGray({ w: dw, h: dh, d: sd.data }));
   }
 
-  // full-res video region around `quad`, drawn so the card is ~targetW*1.3 wide, rectified to outW x outH
-  function rectify(quad, targetW, outW, outH) {
+  // full-res video region around `quad`, read so the card is ~targetW*1.3 wide: {img, q (img px)}
+  function rectGrab(quad, targetW) {
     const vw = video.videoWidth, vh = video.videoHeight;
     const xs = quad.map((p) => p[0]), ys = quad.map((p) => p[1]);
     const x = Math.max(0, Math.floor(Math.min(...xs))), y = Math.max(0, Math.floor(Math.min(...ys)));
@@ -504,21 +695,76 @@ export function createDetAnalyzer(video, opts = {}) {
     const k = Math.min(1, (targetW * 1.3) / quadSize(quad).w);
     const img = grabRegion(video, { x, y, w, h }, k, mk);
     const kx = img.w / w, ky = img.h / h;
-    return warpQuad(img, quad.map(([a, b]) => [(a - x) * kx, (b - y) * ky]), outW, outH);
+    return { img, q: quad.map(([a, b]) => [(a - x) * kx, (b - y) * ky]) };
   }
 
-  function analyze(now = clock()) {
+  // rectified outW x outH card of `quad` from the current video frame
+  function rectify(quad, targetW, outW, outH) {
+    const g = rectGrab(quad, targetW);
+    return g ? warpQuad(g.img, g.q, outW, outH) : null;
+  }
+
+  // the stable-track glare hint, measured in the pixel worker (only the pixel read stays here)
+  function requestGlare(quad) {
+    let g = null;
+    try { g = rectGrab(quad, 500); } catch { g = null; }
+    if (!g) return;
+    glarePending = true;
+    const run = runId;
+    pixels.call("glare", { img: g.img, q: g.q, outW: 500, outH: 700, limits: { typeLine: Infinity } }, [g.img.d.buffer])
+      .then((sm) => { if (sm && run === runId && last?.seen) glare = { advice: sm.advice, code: sm.code, regions: sm.regions }; })
+      .catch(() => { /* glare is advisory only */ })
+      .finally(() => { glarePending = false; });
+  }
+
+  // the camera frame at 480 px short side (main thread: drawImage + getImageData)
+  function grab() {
     const t0 = clock();
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return null;
     const { W, H, s } = workSize(vw, vh, workShort);
-    if (!work || work.width !== W || work.height !== H) work = mk(W, H);
-    const wctx = ctx2d(work);
+    const mode = pickMode();
+    const c = canvasFor("work", mode, W, H), wctx = ctxOf(c, mode);
     wctx.drawImage(video, 0, 0, W, H);
-    const id = wctx.getImageData(0, 0, W, H), img = { w: W, h: H, d: id.data };
-    const po = prior.opts(W, H);
-    let r;
-    try { r = detect(img, po); } catch { r = { found: false, weak: false, corners: null }; }
+    const id = wctx.getImageData(0, 0, W, H);
+    work = c;
+    const grabMs = clock() - t0;
+    if (!grabMode) grabTrials[mode].push(grabMs);
+    return { vw, vh, W, H, s, img: { w: W, h: H, d: id.data }, t0, grabMs, mode };
+  }
+
+  const detectSafe = (img, po) => { try { return detect(img, po); } catch { return { found: false, weak: false, corners: null }; } };
+
+  /** One frame, all on the calling thread. */
+  function analyze(now = clock()) {
+    const g = grab();
+    if (!g) return null;
+    const po = prior.opts(g.W, g.H), td = clock();
+    const r = detectSafe(g.img, po);
+    return finish(g, po, r, now, clock() - td, 0);
+  }
+
+  /**
+   * One frame with detect() in the detect worker (opts.detectWorker, a createScanWorker client) when
+   * it is ready, else analyze(). The frame's pixels travel to the worker and back (transferred, no
+   * copy); the tracker, prior, sharpness and thumbnails stay here. Resolves null when the worker
+   * failed with this frame (it is then off, the next frame runs inline).
+   */
+  async function analyzeAsync(now = clock()) {
+    if (!detectWorker || !detectWorker.available()) return analyze(now);
+    const g = grab();
+    if (!g) return null;
+    const po = prior.opts(g.W, g.H), td = clock();
+    let out;
+    try { out = await detectWorker.call("detect", { img: g.img, opts: po }, [g.img.d.buffer]); } catch { return null; }
+    const wait = clock() - td;
+    g.img = { w: g.W, h: g.H, d: out.d };
+    return finish(g, po, out.r, now, Number.isFinite(out.ms) ? out.ms : wait, wait);
+  }
+
+  // tracker + prior + sharpness + glare + thumbnails for a detected frame
+  function finish(g, po, r, now, detectMs, waitMs) {
+    const { vw, vh, W, H, s, img } = g;
     prior.noteFrame(r);
     const tr = tracker.update(r);
     if (tr.stable && !wasStable) {
@@ -530,7 +776,9 @@ export function createDetAnalyzer(video, opts = {}) {
     const tracked = Boolean(tr.corners && tr.seen && tr.found);
     const trackedV = tracked ? toVideo(tr.corners, s) : null;
     let sharp = null;
+    const ts = clock();
     if (trackedV) { try { sharp = sharpness(vw, vh, trackedV); } catch { sharp = null; } }
+    const sharpMs = clock() - ts;
     // sharpness() is 0 when the strip lies outside the frame: that is no measurement, not a blank card
     const blank = tracked && Number.isFinite(sharp) && sharp > 0 && sharp < blankSharp;
     const seen = tracked && !blank;
@@ -539,17 +787,21 @@ export function createDetAnalyzer(video, opts = {}) {
     if (!seen) glare = noGlare();
     else if (glareOn && stable && now - stableSince >= glareDelayMs && now - glareAt >= glareEveryMs) {
       glareAt = now;
-      try {
-        const card = rectify(corners, 500, 500, 700);
-        if (card) {
-          // the stable-track hint keeps the beta.2 limits (typeLine only for failed probes, see glareOf)
-          const g = glareMap(card), code = captureAdvice(g, null, { typeLine: Infinity });
-          glare = { advice: code === "ok" ? null : ADVICE_HINTS[code], code, regions: g.regions };
-        }
-      } catch { /* glare is advisory only */ }
+      // the stable-track hint keeps the beta.2 limits (typeLine only for failed probes, see glareOf)
+      if (pixels && pixels.available()) { if (!glarePending) requestGlare(corners); }
+      else {
+        try {
+          const card = rectify(corners, 500, 500, 700);
+          if (card) {
+            const gm = glareMap(card), code = captureAdvice(gm, null, { typeLine: Infinity });
+            glare = { advice: code === "ok" ? null : ADVICE_HINTS[code], code, regions: gm.regions };
+          }
+        } catch { /* glare is advisory only */ }
+      }
     }
     const pq = (po.prior && po.prior.quad) || prior.learnedQuad(W, H);
     last = { W, H, s, tr, seen, mode: r.mode || "free", runId };
+    const total = clock() - g.t0;
     return {
       vw, vh, found: seen, weak: Boolean(seen && !tr.accepted), accepted: Boolean(seen && tr.accepted), stable,
       corners, rawCorners: r.corners ? toVideo(r.corners, s) : null,
@@ -558,7 +810,9 @@ export function createDetAnalyzer(video, opts = {}) {
       orientConf: Number.isFinite(r.orientConf) ? r.orientConf : null,
       thumb: frameThumb(img), cardThumb: seen ? quadThumb(img, tr.corners) : null,
       sharp, blank, glare, priorQuad: pq ? toVideo(pq, s) : null, priorLearned: Boolean(prior.active),
-      now, ms: clock() - t0,
+      now, ms: total,
+      // main-thread ms (total minus the wait for the detect worker), per step, and how the frame was read
+      timing: { main: r1(total - waitMs), grab: r1(g.grabMs), detect: r1(detectMs), sharp: r1(sharpMs), mode: g.mode, worker: waitMs > 0 },
     };
   }
 
@@ -572,10 +826,7 @@ export function createDetAnalyzer(video, opts = {}) {
     try {
       const card = rectify(quad, 500, 500, 700);
       if (!card) return null;
-      const g = glareMap(card), code = captureAdvice(g, null);
-      const r3 = (v) => Math.round(v * 1000) / 1000, regions = {};
-      for (const [k, v] of Object.entries(g.regions)) regions[k] = r3(v);
-      return { code, advice: code === "ok" ? null : ADVICE_HINTS[code], regions, fraction: r3(g.fraction) };
+      return glareSummary(glareMap(card));
     } catch { return null; }
   }
 
@@ -610,7 +861,7 @@ export function createDetAnalyzer(video, opts = {}) {
     tracker.reset();
     prior.caps = []; prior.misses = 0; prior.dormant = false;
     wasStable = false; last = null; addedRun = -1;
-    glare = noGlare(); glareAt = -Infinity; stableSince = null;
+    glare = noGlare(); glareAt = -Infinity; stableSince = null; runId++;
     loadPrior();
   }
 
@@ -632,8 +883,35 @@ export function createDetAnalyzer(video, opts = {}) {
     return url.slice(url.indexOf(",") + 1);
   }
 
+  /**
+   * frameJpeg without blocking: canvas.toBlob (the pixels are taken at call time). With
+   * `fallback`, a JPEG longer than `maxLen` base64 chars is encoded again at that quality from a
+   * copy taken now (the analysis loop redraws the work canvas meanwhile, and the record session's
+   * frame must stay the frame of its record); null when it is still too long.
+   */
+  function frameJpegAsync(quality = 0.7, { fallback = null, maxLen = Infinity } = {}) {
+    if (!work) return Promise.resolve(null);
+    let snap = null;
+    if (fallback != null) {
+      try {
+        snap = mk(work.width, work.height);
+        snap.getContext("2d").drawImage(work, 0, 0, work.width, work.height);
+      } catch { snap = null; }
+    }
+    return canvasJpeg(work, quality)
+      .then((j) => (j && j.length > maxLen && snap ? canvasJpeg(snap, fallback) : j))
+      .then((j) => (j && j.length > maxLen ? null : j))
+      .catch(() => null);
+  }
+
+  /** How the work frame is read: {mode ('cpu'|'gpu'|null while timing both), cpu/gpu median ms of the trials}. */
+  function grabInfo() {
+    const m = (a) => (a.length > GRAB_WARM ? r1(median(a.slice(GRAB_WARM))) : null);
+    return { mode: grabMode, pref: grabPref, cpu: m(grabTrials.cpu), gpu: m(grabTrials.gpu) };
+  }
+
   loadPrior();
-  return { analyze, prior, tracker, reset, glareOf, savePrior, loadPrior, forgetPrior, captureOpts, frameJpeg };
+  return { analyze, analyzeAsync, prior, tracker, reset, glareOf, savePrior, loadPrior, forgetPrior, captureOpts, frameJpeg, frameJpegAsync, grabInfo };
 }
 
 // ---------------------------------------------------------------------------

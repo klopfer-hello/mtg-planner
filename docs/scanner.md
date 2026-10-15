@@ -177,6 +177,17 @@ all sessions at 2 GB. Nothing is deleted automatically: when the storage is
 full, recording stops with a notice until you delete old sessions. They are
 not part of backups.
 
+**Performance numbers.** While a Record session runs (or the page is opened
+with `?scandebug=1`), the scanner also sends a small summary every 5 seconds to
+`POST /api/debug/perf`: frame-analysis and probe timings, frame gaps, long
+tasks, dropped frames, the granted camera size, whether the scan workers run,
+and the phone's browser string, CPU core count, device memory and pixel ratio.
+No images. Nothing is sent during normal scanning. The server keeps the newest
+500 entries (≤ 4 KB each) in `debug-perf.jsonl` next to the database (env
+`DEBUG_PERF_FILE`); `GET /api/debug/perf?limit=` lists them. Not part of
+backups. Test switches for a slow phone: `?scanworker=0` (no worker threads)
+and `?scangrab=cpu|gpu|auto` (how the camera frame is read; default `auto`).
+
 ## Calibration mode
 
 The default thresholds are deliberately **conservative**: they were tuned on

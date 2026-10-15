@@ -30,6 +30,7 @@ import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker, c
 import { ocrHelperStatus, ocrTools } from "./lib/ocr.js";
 import { decideFinish, identifyOriented, printingSummary, scanPriceEur } from "./lib/scanner.js";
 import { DebugError, DebugSessions } from "./lib/debugsessions.js";
+import { DebugPerf, PerfError } from "./lib/debugperf.js";
 import {
   BackupError, backupConfig, backupPath, createBackup, dbCounts, deleteBackup, gunzipToFile, listBackups, swapDatabase, validateBackupDb,
 } from "./lib/backups.js";
@@ -56,6 +57,8 @@ const SCAN_LIMIT = 12 * 1024 * 1024;
 const INCREMENT_LIMIT = 16 * 1024;
 // Record session frame upload: ≤ 300 KB JPEG as base64 plus a decision record.
 const DEBUG_FRAME_LIMIT = 512 * 1024;
+// Scanner perf beacon (lib/debugperf.js caps the stored entry at 4 KB).
+const DEBUG_PERF_LIMIT = 16 * 1024;
 const SCAN_MAX_CONCURRENT = Math.max(1, Number(process.env.SCAN_MAX_CONCURRENT) || 2);
 // "scanned" (indexModule.STORE_AS_SCANNED, the default): keep the detected printing and its language.
 const STORAGE_LANGS = [indexModule.STORE_AS_SCANNED, "en", "de", "fr", "it", "es", "pt", "ja", "ko", "ru", "zhs", "zht"];
@@ -1057,6 +1060,8 @@ function matcherHealth() {
 // records for offline replay (lib/debugsessions.js). Not part of backups.
 
 const debugSessions = new DebugSessions();
+// Scanner perf beacons (every ~5 s while the camera runs), last 500 kept. Not part of backups.
+const debugPerf = new DebugPerf();
 
 async function handleDebugApi(req, res, url) {
   const { pathname } = url;
@@ -1071,6 +1076,15 @@ async function handleDebugApi(req, res, url) {
     }
     await call(() => debugSessions.add({ session: body.session, seq: body.seq, frame, record: body.record ?? undefined }));
     return sendEmpty(res);
+  }
+  if (pathname === "/api/debug/perf") {
+    const perf = async (fn) => { try { return await fn(); } catch (err) { throw err instanceof PerfError ? new HttpError(err.status, err.message) : err; } };
+    if (method === "POST") {
+      const body = await readJson(req, DEBUG_PERF_LIMIT);
+      await perf(() => debugPerf.add(body));
+      return sendEmpty(res);
+    }
+    if (method === "GET") return sendJson(res, 200, { entries: await perf(() => debugPerf.list({ limit: url.searchParams.get("limit") ?? 100 })) });
   }
   if (pathname === "/api/debug/sessions" && method === "GET") return sendJson(res, 200, { sessions: await call(() => debugSessions.list()) });
   const m = /^\/api\/debug\/sessions\/([^/]+)$/.exec(pathname);

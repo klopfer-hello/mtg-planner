@@ -1,13 +1,13 @@
 // HTTP layer of the v0.5.0 scanner additions (server.js): POST /api/scan's
 // capture / dup_of validation and price_eur, the /increment {capture} body,
 // GET /api/scans/capture-log and the record-session routes
-// (/api/debug/frames, /api/debug/sessions). Real server on a free port,
+// (/api/debug/frames, /api/debug/sessions) and the perf beacon (/api/debug/perf). Real server on a free port,
 // temp DB, a one-printing card index; offline.
 
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -190,6 +190,32 @@ describe("record session API", () => {
     assert.equal((await call("DELETE", "/api/debug/sessions/a.b")).status, 400);
     assert.equal((await call("GET", "/api/debug/nope")).status, 404);
     assert.equal(existsSync(path.join(debugDir, "ok")), false);
+  });
+});
+
+describe("perf beacon API", () => {
+  test("POST stores a validated beacon (204) in <db dir>/debug-perf.jsonl; GET lists newest first", async () => {
+    const beacon = { session: "p1", ua: "Mozilla/5.0 (Linux; Android 15; Pixel 9)", video: { w: 2160, h: 3840, fps: 30 }, analyze: { n: 30, p50: 41.2, p90: 80, max: 120 }, worker: true, junk: 1 };
+    assert.equal((await call("POST", "/api/debug/perf", beacon)).status, 204);
+    assert.equal((await call("POST", "/api/debug/perf", { ...beacon, gap: 250 })).status, 204);
+    const lines = readFileSync(path.join(dir, "debug-perf.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.equal(lines.length, 2);
+    assert.equal(lines[0].junk, undefined);
+    assert.deepEqual(lines[0].video, { w: 2160, h: 3840, fps: 30 });
+    const got = await call("GET", "/api/debug/perf?limit=1");
+    assert.equal(got.status, 200);
+    assert.equal(got.body.entries.length, 1);
+    assert.equal(got.body.entries[0].gap, 250);
+    assert.ok(Date.parse(got.body.entries[0].at));
+  });
+
+  test("400 for nothing known, 413 for an oversized body; the scan worker module is served as JavaScript", async () => {
+    assert.equal((await call("POST", "/api/debug/perf", { nothing: 1 })).status, 400);
+    assert.equal((await call("POST", "/api/debug/perf", { ua: "x".repeat(20000) })).status, 413);
+    const res = await fetch(`${base}/scanworker.js`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type"), /javascript/);
+    await res.arrayBuffer();
   });
 });
 

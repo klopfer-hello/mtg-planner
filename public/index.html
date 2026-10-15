@@ -4141,6 +4141,27 @@ function cameraErrorMessage(e) {
   return e?.message || "Could not start the camera.";
 }
 
+/**
+ * Record session status line: elapsed time and frame counters, re-rendered once a second on its
+ * own (the counters live in a ref the camera loop updates), so recording never re-renders ScanTab.
+ */
+function RecordStatus({ rec, statsRef }) {
+  const [, tick] = useReducer((x) => x + 1, 0);
+  useEffect(() => {
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, []);
+  const st = statsRef.current && statsRef.current.session === rec.session ? statsRef.current : { frames: 0, errors: 0, full: null };
+  return (
+    <span className="small rec-status" role="status">
+      <span>● Recording {fmtElapsed(Date.now() - rec.startedAt)}</span>
+      <span>{plural(st.frames, "frame")}</span>
+      {st.errors > 0 && <span className="muted">{st.errors} not sent</span>}
+      {st.full && <span style={{ color: "var(--warn)" }}>{st.full}</span>}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Camera view: stream, analysis loop, overlay, probes and the shutter.
 
@@ -4165,7 +4186,11 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   const streamRef = useRef(null);
   const trackRef = useRef(null);
   const obsRef = useRef(null);
+  // false | "probe" (a probe crop: the analysis loop keeps running) | "shot" (shutter / auto-ask: the loop waits)
   const capturingRef = useRef(false);
+  const pixelsRef = useRef(null); // scanlib createScanWorker client for the probe crops (null = inline)
+  const perfRef = useRef(null); // scanperf PerfMonitor of the running camera (perf beacon)
+  const pacerRef = useRef(null); // scanperf FramePacer of the running camera
   const recRef = useRef({ session: null, seq: 0, last: 0, busy: false, events: [], frames: 0, bytes: 0, errors: 0, full: null });
   const live = useRef({});
   live.current = { paused, busy, auto: settings.auto, photo: settings.photo, flash, record, queued, plusOne, sendProbe, onManual, onAutoAsk, onRecorded, onError };
@@ -4250,14 +4275,16 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     if (!lib || !v || !v.videoWidth || !pc) { pc?.failed(p.id); return; }
     const gen = genRef.current;
     let shot;
-    capturingRef.current = true;
+    capturingRef.current = "probe";
     try {
-      shot = await lib.captureCard(v, trackRef.current, p.quad, { preferPhoto: false });
+      // the warps, JPEGs and the glare map run in the scan worker when there is one
+      shot = await lib.captureCard(v, trackRef.current, p.quad, { preferPhoto: false, pixels: pixelsRef.current, glare: true });
     } catch {
       pc.failed(p.id);
+      perfRef.current?.probe({ error: true });
       return;
     } finally {
-      capturingRef.current = false;
+      if (capturingRef.current === "probe") capturingRef.current = false;
     }
     const rec = {
       ...p.rec, det: "v2", shot: shot.kind, strip_w: shot.stripSize?.[0] ?? null, prior_learned: Boolean(o?.priorLearned),
@@ -4270,11 +4297,12 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     const geo = { corners: p.quad.map(([x, y]) => [Math.round(x), Math.round(y)]), drift: Number.isFinite(o?.drift) ? Math.round(o.drift * 1e4) / 1e4 : null, jitter: Number.isFinite(o?.jitter) ? Math.round(o.jitter * 1e4) / 1e4 : null };
     try {
       const pending = live.current.sendProbe({ shot, rec, precise, rescan: p.rescan ?? null });
-      // glare of the probed card, measured while the request is in flight (no added latency):
+      // glare of the probed card (the uploaded crop), measured while the request is in flight:
       // a failed answer with a reflection makes the controller show the reflection hint
-      let glare = null;
-      try { glare = detRef.current?.glareOf?.(p.quad) ?? null; } catch { glare = null; }
+      const glareP = shot.glare ? Promise.race([shot.glare, new Promise((r) => setTimeout(() => r(null), 1500))]).catch(() => null) : Promise.resolve(null);
       const res = await pending;
+      perfRef.current?.probe({ rtt: Date.now() - t0, capture: shot.ms?.total });
+      const glare = await glareP;
       const outcome = pc.answer(p.id, res, Date.now(), { glare });
       recEvent({ kind: "probe", id: p.id, outcome: res?.outcome ?? null, reason: res?.reason ?? null, ms: Date.now() - t0, status: res?.result?.status ?? null, store_printing_id: res?.result?.store_printing_id ?? null, finish: res?.result?.finish ?? null, scan_id: res?.scan?.id ?? null, ...geo, glare: glare ? { code: glare.code, fraction: glare.fraction, regions: glare.regions } : null });
       // A card staged from an accepted track teaches the box prior (savePrior adds it, then persists).
@@ -4283,6 +4311,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
       }
     } catch (e) {
       pc.failed(p.id);
+      perfRef.current?.probe({ rtt: Date.now() - t0, error: true });
       recEvent({ kind: "probe", id: p.id, outcome: "error", status_code: e?.status ?? null, ms: Date.now() - t0, ...geo });
     }
   }, [lib, probeRef, detRef]);
@@ -4290,16 +4319,17 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   // Shutter: a normal scan (Claude allowed) of the tracked quad, else the learned box, else the centre.
   const manualShot = async () => {
     const v = videoRef.current, pc = probeRef.current;
-    if (!lib || !v || !v.videoWidth || capturingRef.current) return;
+    // a probe crop in flight never swallows the tap (its finally leaves "shot" alone)
+    if (!lib || !v || !v.videoWidth || capturingRef.current === "shot") return;
     const o = obsRef.current || { vw: v.videoWidth, vh: v.videoHeight };
     let quad = o.found && o.corners ? o.corners : null, quadSource = "track";
     if (!quad && o.priorQuad) { quad = o.priorQuad; quadSource = "prior"; }
     if (!quad) { quad = lib.defaultCardQuad(v.videoWidth, v.videoHeight); quadSource = "default"; }
-    capturingRef.current = true;
+    capturingRef.current = "shot";
     try {
       const det = detRef.current;
       const opts = det?.captureOpts ? det.captureOpts() : { preferPhoto: true };
-      const shot = await lib.captureCard(v, trackRef.current, quad, { ...opts, preferPhoto: opts.preferPhoto !== false && live.current.photo !== false });
+      const shot = await lib.captureCard(v, trackRef.current, quad, { ...opts, preferPhoto: opts.preferPhoto !== false && live.current.photo !== false, pixels: pixelsRef.current });
       const rec = {
         kind: "manual", det: "v2", quad_source: quadSource, fallback: quadSource !== "track", allow_claude: true, shot: shot.kind,
         strip_w: shot.stripSize?.[0] ?? null, sharp: Number.isFinite(o.sharp) ? Math.round(o.sharp) : null, prior_learned: Boolean(o.priorLearned), t: Date.now(),
@@ -4318,13 +4348,13 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   // cropped from the video frame like a probe and sent ONCE as a normal scan with Claude allowed.
   const autoShot = async (o) => {
     const v = videoRef.current, pc = probeRef.current, aa = autoAskRef?.current;
-    if (!lib || !v || !v.videoWidth || capturingRef.current || !o?.found || !o.corners || !live.current.onAutoAsk) { aa?.cancel(); return; }
-    capturingRef.current = true;
+    if (!lib || !v || !v.videoWidth || capturingRef.current === "shot" || !o?.found || !o.corners || !live.current.onAutoAsk) { aa?.cancel(); return; }
+    capturingRef.current = "shot";
     // Hold the probe loop on this card right away: a probe started while the shot is taken could
     // stage the card next to the Claude scan.
     pc?.manual({ ...o, now: Date.now() });
     try {
-      const shot = await lib.captureCard(v, trackRef.current, o.corners, { preferPhoto: false });
+      const shot = await lib.captureCard(v, trackRef.current, o.corners, { preferPhoto: false, pixels: pixelsRef.current });
       const rec = {
         kind: "auto_claude", det: "v2", quad_source: o.accepted ? "track" : "weak", fallback: false, allow_claude: true, shot: shot.kind,
         strip_w: shot.stripSize?.[0] ?? null, sharp: Number.isFinite(o.sharp) ? Math.round(o.sharp) : null, prior_learned: Boolean(o.priorLearned), t: Date.now(),
@@ -4345,7 +4375,9 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     if (!R?.session) { S.events.length = 0; return; }
     if (S.session !== R.session) Object.assign(S, { session: R.session, seq: 0, last: 0, events: [], frames: 0, bytes: 0, errors: 0, full: null });
     const now = performance.now();
-    if (S.busy || now - S.last < RECORD_EVERY_MS) return;
+    // a slow phone (frame gap above 250 ms) records every second instead; never while a crop is read
+    const every = (pacerRef.current?.gap() ?? 0) > 250 ? RECORD_EVERY_MS * 2 : RECORD_EVERY_MS;
+    if (S.busy || capturingRef.current || now - S.last < every) return;
     S.last = now;
     S.busy = true;
     const pc = probeRef.current;
@@ -4358,13 +4390,14 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
       events: S.events.splice(0),
     };
     const session = S.session, seq = S.seq++;
-    // the analyzer's last 480 px work frame (what the detector saw)
+    // the analyzer's last 480 px work frame (what the detector saw), encoded off the main thread
+    // (toBlob); a too-big q0.7 JPEG is re-encoded at q0.5 from a copy of the SAME frame
     const d = detRef.current;
-    let jpeg = d?.frameJpeg?.(0.7) || null;
-    if (jpeg && jpeg.length > RECORD_MAX_B64) jpeg = d.frameJpeg(0.5);
-    if (jpeg && jpeg.length > RECORD_MAX_B64) jpeg = null;
-    api("/api/debug/frames", { method: "POST", json: { session, seq, ...(jpeg ? { jpeg } : {}), record } })
-      .then(() => { if (S.session === session && jpeg) { S.frames++; S.bytes += Math.floor((jpeg.length * 3) / 4); } })
+    const sync = () => { const j = d?.frameJpeg?.(0.7); const k = j && j.length > RECORD_MAX_B64 ? d.frameJpeg(0.5) : j; return k && k.length > RECORD_MAX_B64 ? null : k || null; };
+    (d?.frameJpegAsync ? d.frameJpegAsync(0.7, { fallback: 0.5, maxLen: RECORD_MAX_B64 }) : Promise.resolve().then(sync))
+      .catch(() => null)
+      .then((jpeg) => api("/api/debug/frames", { method: "POST", json: { session, seq, ...(jpeg ? { jpeg } : {}), record } })
+        .then(() => { if (S.session === session && jpeg) { S.frames++; S.bytes += Math.floor((jpeg.length * 3) / 4); } }))
       .catch((e) => {
         if (S.session !== session) return;
         S.errors++;
@@ -4377,18 +4410,31 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
       });
   };
 
-  // Analysis loop (~8 fps) + overlay drawing.
+  // Analysis loop (8 fps at most, slower when the phone can't keep up) + overlay drawing + perf beacon.
+  // Field-test knobs: ?scanworker=0 (no workers), ?scangrab=cpu|gpu|auto (work-frame canvas, default auto).
   useEffect(() => {
     if (cam.state !== "on" || !lib) return;
     const v = videoRef.current;
+    let qs = null;
+    try { qs = new URLSearchParams(window.location.search); } catch { qs = null; }
+    const useWorkers = qs?.get("scanworker") !== "0" && typeof lib.createScanWorker === "function";
+    const grabMode = ["cpu", "gpu", "auto"].includes(qs?.get("scangrab")) ? qs.get("scangrab") : "auto";
+    const detW = useWorkers ? lib.createScanWorker() : null;
+    const pxW = useWorkers ? lib.createScanWorker() : null;
     let det = null;
-    try { det = lib.createDetAnalyzer(v, {}); } catch (e) {
+    try { det = lib.createDetAnalyzer(v, { detectWorker: detW, pixels: pxW, grabMode }); } catch (e) {
+      detW?.close(); pxW?.close();
       live.current.onError?.(`Could not start the card detector: ${e.message}`);
       return;
     }
     detRef.current = det;
-    const gap = 1000 / (lib.CAPTURE_DEFAULTS?.fps || 8);
-    let alive = true, timer = null, last = 0, shown = { phase: "", hint: "", state: "" }, dims = [cam.vw, cam.vh];
+    pixelsRef.current = pxW;
+    const pacer = lib.FramePacer ? new lib.FramePacer({ minGapMs: 1000 / (lib.CAPTURE_DEFAULTS?.fps || 8) }) : null;
+    const perf = lib.PerfMonitor ? new lib.PerfMonitor() : null;
+    pacerRef.current = pacer;
+    perfRef.current = perf;
+    const hasVfc = typeof v.requestVideoFrameCallback === "function";
+    let alive = true, timer = null, fbTimer = null, vfcId = null, frameSeq = 0, analysedSeq = -1, waiting = false, last = 0, lastStart = 0, shown = { phase: "", hint: "", state: "" }, dims = [cam.vw, cam.vh];
     let seenLast = null, probeThumb = null, prevStill = false; // auto-ask: the probe answer (pc.last) seen, the last probe's card thumbnail
     const msHist = [];
     let dbgAt = 0;
@@ -4433,13 +4479,46 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
       }
     };
 
-    const loop = () => {
+    // Next analysis: pacer.gap() after the last start, and only on a video frame not analysed yet
+    // (requestVideoFrameCallback counts presented frames where the browser has it; a due analysis
+    // without a new frame waits for the next one, 200 ms at most). One analysis at a time (it awaits
+    // the detect worker).
+    const onFrame = () => {
+      vfcId = null;
+      if (!alive) return;
+      frameSeq++;
+      try { vfcId = v.requestVideoFrameCallback(onFrame); } catch { vfcId = null; }
+      if (waiting) { waiting = false; clearTimeout(fbTimer); fbTimer = null; loop(); }
+    };
+    if (hasVfc) { try { vfcId = v.requestVideoFrameCallback(onFrame); } catch { vfcId = null; } }
+    const clearWait = () => { clearTimeout(timer); clearTimeout(fbTimer); timer = fbTimer = null; waiting = false; };
+    const next = () => {
+      if (!alive) return;
+      clearWait();
+      const wait = Math.max(0, last + (pacer ? pacer.gap() : 125) - performance.now());
+      timer = setTimeout(() => {
+        timer = null;
+        if (!alive) return;
+        if (!hasVfc || vfcId === null || frameSeq !== analysedSeq) { loop(); return; }
+        waiting = true;
+        fbTimer = setTimeout(() => { fbTimer = null; if (waiting) { waiting = false; loop(); } }, 200);
+      }, wait);
+    };
+
+    const loop = async () => {
       if (!alive) return;
       const now = performance.now();
-      if (now - last >= gap && v.readyState >= 2 && !capturingRef.current) {
+      if (v.readyState >= 2 && capturingRef.current !== "shot") {
         last = now;
+        analysedSeq = frameSeq;
+        if (lastStart) perf?.interval(now - lastStart);
+        lastStart = now;
         let o = null;
-        try { o = det.analyze(now); } catch { o = null; }
+        try { o = await det.analyzeAsync(now); } catch { o = null; }
+        if (!alive) return;
+        // a shutter / auto-ask shot started while the detect worker had the frame: no probe from it
+        if (capturingRef.current === "shot") { next(); return; }
+        const tPost = performance.now();
         const pc = probeRef.current;
         if (o && pc) {
           if (o.vw !== dims[0] || o.vh !== dims[1]) { dims = [o.vw, o.vh]; setCam((c) => ({ ...c, vw: o.vw, vh: o.vh })); }
@@ -4462,12 +4541,12 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
           try { r = pc.step({ ...o, now: Date.now(), paused: L.paused || !L.auto, busy: L.busy || wants, plusOne: L.plusOne }); } catch { r = null; }
           prevStill = r ? r.still : false;
           if (debugOn) {
-            msHist.push([o.ms, performance.now() - t0]);
+            msHist.push([o.ms, performance.now() - t0, o.timing?.main ?? o.ms]);
             if (msHist.length > 60) msHist.shift();
             window.__scanDebug = { o: { ...o, thumb: undefined, cardThumb: undefined }, r: r && { ...r, probe: r.probe && { id: r.probe.id } }, stats: pc.stats };
             if (Date.now() - dbgAt > 500) {
               dbgAt = Date.now();
-              setDbg({ a50: pct(msHist.map((x) => x[0]), 0.5), a90: pct(msHist.map((x) => x[0]), 0.9), st: r?.state, f: o.found, w: o.weak, a: o.accepted, s: o.stable, cmad: r?.cmad, sharp: o.sharp, mode: o.mode, prior: o.priorLearned, sent: pc.stats.sent, last: pc.last?.outcome, lms: pc.last?.ms });
+              setDbg({ a50: pct(msHist.map((x) => x[0]), 0.5), a90: pct(msHist.map((x) => x[0]), 0.9), m50: pct(msHist.map((x) => x[2]), 0.5), gap: pacer?.gap(), wk: Boolean(detW?.available()), gm: det.grabInfo?.().mode ?? "?", st: r?.state, f: o.found, w: o.weak, a: o.accepted, s: o.stable, cmad: r?.cmad, sharp: o.sharp, mode: o.mode, prior: o.priorLearned, sent: pc.stats.sent, last: pc.last?.outcome, lms: pc.last?.ms });
             }
           }
           if (r) {
@@ -4499,11 +4578,66 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
             else if (ask?.ask) autoShot(o);
           } else recordTick(null, o);
         }
-      }
-      timer = setTimeout(loop, 30);
+        if (o?.timing) {
+          // main-thread time of this frame: the analyzer's part plus the controller, overlay and React updates
+          const main = o.timing.main + (performance.now() - tPost);
+          pacer?.note(main);
+          perf?.frame({ total: o.ms, main, grab: o.timing.grab, detect: o.timing.detect, sharp: o.timing.sharp });
+        }
+      } else last = now;
+      next();
     };
     loop();
-    return () => { alive = false; clearTimeout(timer); if (detRef.current === det) detRef.current = null; };
+
+    // Perf beacon: every 5 s while the camera runs AND a Record session runs or ?scandebug=1 is set
+    // (POST /api/debug/perf, lib/debugperf.js; opt-in diagnostics, docs/scanner.md).
+    const beaconId = `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    let longObs = null, rafId = null, rafLast = 0, vq0 = null;
+    try {
+      longObs = new PerformanceObserver((list) => { for (const e of list.getEntries()) perf?.longTask(e.duration); });
+      longObs.observe({ type: "longtask", buffered: false });
+    } catch { longObs = null; }
+    const rafTick = (t) => {
+      if (!alive) return;
+      if (rafLast) perf?.raf(t - rafLast);
+      rafLast = t;
+      rafId = requestAnimationFrame(rafTick);
+    };
+    rafId = requestAnimationFrame(rafTick);
+    const playback = () => { try { const q = v.getVideoPlaybackQuality?.(); return q ? { dropped: q.droppedVideoFrames, total: q.totalVideoFrames } : null; } catch { return null; } };
+    vq0 = playback();
+    const beacon = setInterval(() => {
+      if (!alive || !perf || document.hidden || !(debugOn || live.current.record?.session)) return;
+      let st = {};
+      try { st = trackRef.current?.getSettings?.() || {}; } catch { st = {}; }
+      const vq = playback();
+      const nav = navigator;
+      const body = perf.snapshot(Date.now(), {
+        session: beaconId, ua: nav.userAgent, platform: nav.userAgentData?.platform || nav.platform || null,
+        dpr: window.devicePixelRatio || 1, cores: nav.hardwareConcurrency ?? null, memory: nav.deviceMemory ?? null,
+        video: { w: st.width ?? null, h: st.height ?? null, fps: st.frameRate ?? null, vw: v.videoWidth, vh: v.videoHeight, resize: st.resizeMode ?? null },
+        worker: Boolean(detW?.available()), detect_worker: detW ? detW.state : "none", pixel_worker: pxW ? pxW.state : "none",
+        encoder: Boolean(pxW?.available() && pxW.encoder), grab_mode: det.grabInfo ? det.grabInfo() : null, gap: pacer ? pacer.gap() : null,
+        dropped_frames: vq && vq0 ? vq.dropped - vq0.dropped : null, decoded_frames: vq && vq0 ? vq.total - vq0.total : null,
+        record: Boolean(live.current.record?.session), visible: !document.hidden,
+      });
+      vq0 = vq;
+      api("/api/debug/perf", { method: "POST", json: body }).catch(() => {});
+    }, 5000);
+
+    return () => {
+      alive = false;
+      clearWait();
+      if (vfcId !== null) { try { v.cancelVideoFrameCallback?.(vfcId); } catch { /* ignore */ } vfcId = null; }
+      clearInterval(beacon);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      try { longObs?.disconnect(); } catch { /* ignore */ }
+      detW?.close(); pxW?.close();
+      if (pixelsRef.current === pxW) pixelsRef.current = null;
+      if (perfRef.current === perf) perfRef.current = null;
+      if (pacerRef.current === pacer) pacerRef.current = null;
+      if (detRef.current === det) detRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cam.state, lib, runProbe]);
 
@@ -4553,7 +4687,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
               {record?.session && <span className="pill s-rec"><span className="dot" aria-hidden="true" />REC</span>}
               {debugOn && dbg && (
                 <span className="pill" style={{ whiteSpace: "normal", fontWeight: 500, fontSize: ".72rem" }}>
-                  A2 {dbg.a50?.toFixed(0)}/{dbg.a90?.toFixed(0)} ms · {dbg.st} · {dbg.f ? "F" : "-"}{dbg.w ? "W" : "-"}{dbg.a ? "A" : "-"}{dbg.s ? "S" : "-"} · cmad {dbg.cmad?.toFixed(1) ?? "-"} · sharp {Math.round(dbg.sharp ?? 0)} · {dbg.mode}{dbg.prior ? " prior" : ""} · probes {dbg.sent} · {dbg.last || "-"}{dbg.lms != null ? ` ${dbg.lms} ms` : ""}
+                  A2 {dbg.a50?.toFixed(0)}/{dbg.a90?.toFixed(0)} ms (main {dbg.m50?.toFixed(0)}, gap {dbg.gap}, {dbg.wk ? "worker" : "inline"}, {dbg.gm}) · {dbg.st} · {dbg.f ? "F" : "-"}{dbg.w ? "W" : "-"}{dbg.a ? "A" : "-"}{dbg.s ? "S" : "-"} · cmad {dbg.cmad?.toFixed(1) ?? "-"} · sharp {Math.round(dbg.sharp ?? 0)} · {dbg.mode}{dbg.prior ? " prior" : ""} · probes {dbg.sent} · {dbg.last || "-"}{dbg.lms != null ? ` ${dbg.lms} ms` : ""}
                 </span>
               )}
             </span>
@@ -5114,11 +5248,11 @@ function ScanTab({ active, health, onCommitted }) {
   soundRef.current = sound;
   const soundsRef = useRef(null); // scanlib createScanSounds()
   const priceRef = useRef(new Map()); // scan id → price_eur (sound for +1)
-  const [rec, setRec] = useState(null); // record session {session, startedAt, frames, bytes, errors}
+  const [rec, setRec] = useState(null); // record session {session, startedAt}
+  const recStatsRef = useRef(null); // {session, frames, bytes, errors, full}: RecordStatus polls it (no tab re-render per frame)
   // Discarded rows waiting for their delete: id → timer (hidden from the list until then).
   const discardsRef = useRef(new Map());
   const [discarding, setDiscarding] = useState(() => new Set());
-  const [, tick] = useReducer((x) => x + 1, 0);
   // Auto-ask Claude for hard cards (public/autoask.js): per-device setting autoClaude; off when the
   // server has no Claude or SCAN_CLAUDE_PER_HOUR is 0 (/healthz scanner.vision).
   const autoAskRef = useRef(null);
@@ -5173,16 +5307,14 @@ function ScanTab({ active, health, onCommitted }) {
     probeRef.current = pc;
   }, [capMod]);
 
-  // Record session: elapsed time ticks; auto-off after RECORD_MAX_MS.
+  // Record session: auto-off after RECORD_MAX_MS (the elapsed time ticks inside RecordStatus).
   useEffect(() => {
     if (!rec) return;
-    const t = setInterval(() => {
-      if (Date.now() - rec.startedAt >= RECORD_MAX_MS) {
-        setRec(null);
-        setToast({ text: "Recording stopped after 15 minutes." });
-      } else tick();
-    }, 1000);
-    return () => clearInterval(t);
+    const t = setTimeout(() => {
+      setRec(null);
+      setToast({ text: "Recording stopped after 15 minutes." });
+    }, Math.max(0, rec.startedAt + RECORD_MAX_MS - Date.now()));
+    return () => clearTimeout(t);
   }, [rec?.session, rec?.startedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setSetting = (k, v) => setSettings((s) => { const n = { ...s, [k]: v }; store.set("mtg.scan.settings", n); return n; });
@@ -5608,7 +5740,7 @@ function ScanTab({ active, health, onCommitted }) {
           plusOne={Boolean(last?.scan?.id && !discarding.has(last.scan.id))}
           autoAskRef={autoAskRef} onAutoAsk={onAutoAsk}
           onFoil={(f) => setSetting("foil", f)} onStart={() => { probeSessionRef.current = newProbeSession(); }}
-          onRecorded={(p) => setRec((r) => (r && r.session === p.session ? { ...r, frames: p.frames, bytes: p.bytes, errors: p.errors, full: p.full } : r))}
+          onRecorded={(p) => { recStatsRef.current = p; }}
           overlay={(busy || last) && !sheetOpen ? <ResultCard {...resultProps} compact /> : null}
           valuePill={<CamValue last={lastPrice} total={totals} />} />
         {(busy || last) && <ResultCard {...resultProps} />}
@@ -5671,16 +5803,9 @@ function ScanTab({ active, health, onCommitted }) {
             <label className="switch" style={{ gridColumn: "1 / -1" }}><input type="checkbox" checked={settings.calibration} onChange={(e) => setSetting("calibration", e.target.checked)} /> Calibration mode: confirm the true printing after each scan</label>
             <div className="field" style={{ gridColumn: "1 / -1" }}>
               <label className="switch"><input type="checkbox" checked={Boolean(rec)}
-                onChange={(e) => setRec(e.target.checked ? { session: newRecordSession(), startedAt: Date.now(), frames: 0, bytes: 0, errors: 0 } : null)} /> Record session</label>
+                onChange={(e) => { recStatsRef.current = null; setRec(e.target.checked ? { session: newRecordSession(), startedAt: Date.now() } : null); }} /> Record session</label>
               <span className="small muted">Sends small camera frames and scanner states to your server to tune the scanner. Stops by itself after 15 minutes.</span>
-              {rec && (
-                <span className="small rec-status" role="status">
-                  <span>● Recording {fmtElapsed(Date.now() - rec.startedAt)}</span>
-                  <span>{plural(rec.frames, "frame")}</span>
-                  {rec.errors > 0 && <span className="muted">{rec.errors} not sent</span>}
-                  {rec.full && <span style={{ color: "var(--warn)" }}>{rec.full}</span>}
-                </span>
-              )}
+              {rec && <RecordStatus rec={rec} statsRef={recStatsRef} />}
             </div>
             <RecordedSessions recording={rec?.session ?? null} />
           </div>
