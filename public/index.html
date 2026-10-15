@@ -2927,7 +2927,6 @@ function Message({ msg }) {
       <div className="bubble"><Markdown text={msg.content || "_(no answer)_"} /></div>
       <div className="meta">
         {msg.created_at && <span>{fmtDate(msg.created_at)}</span>}
-        {msg.cost_usd != null && <span title="Equivalent API cost reported by Claude Code">≈ ${Number(msg.cost_usd).toFixed(3)}</span>}
       </div>
     </div>
   );
