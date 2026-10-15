@@ -120,9 +120,7 @@ jobs:
             if [ -n "$OTHER" ]; then printf '### Other\n\n%s\n\n' "$OTHER"; fi
             IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
             printf '**Image:** `%s:%s`\n' "$IMAGE" "$GITHUB_REF_NAME"
-            if [ -n "$PREV_TAG" ]; then
-              printf '\n**Full changelog:** https://github.com/%s/compare/%s...%s\n' "$GITHUB_REPOSITORY" "$PREV_TAG" "$GITHUB_REF_NAME"
-            fi
+            # No compare link: only the latest release stays published, so the previous tag is deleted.
           } > CHANGELOG.md
           cat CHANGELOG.md
 
