@@ -41,6 +41,17 @@ describe("sanitizePerf", () => {
     assert.equal(out.wsharp.p50, 8);
   });
 
+  test("keeps the analysis clone's report (grab_mode.clone, flat) and the probe read/job series", () => {
+    const clone = { state: "ready", w: 480, h: 853, ask_w: 480, ask_h: 853, set_w: 480, set_h: 853, resize: "crop-and-scale", ow0: 2160, oh0: 3840, ow1: 2160, oh1: 3840, setup_ms: 42.5, frames: 120 };
+    const out = sanitizePerf({
+      frame_path: "clone", grab_mode: { path: "clone", why: null, mode: "cpu", clone },
+      probe_read: { n: 2, p50: 240 }, probe_job: { n: 2, p50: 90 },
+    });
+    assert.deepEqual(out.grab_mode.clone, clone);
+    assert.equal(out.probe_read.p50, 240);
+    assert.equal(out.probe_job.p50, 90);
+  });
+
   test("nesting deeper than 3 levels and long arrays are cut; 400 for non-objects or nothing known; 413 when too large", () => {
     const out = sanitizePerf({ video: { a: { b: { c: 1 } } }, screen: { list: Array.from({ length: 40 }, (_, i) => i) } });
     assert.deepEqual(out.video, { a: {} });

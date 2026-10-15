@@ -7,13 +7,13 @@
 // is the client and falls back to the same code inline when this worker can't
 // load.
 //
-// Camera frames (Pixel 9 beacon, 0.6.2-beta.1: reading the 4K frame on the
-// main thread took ~230 ms for the 480 px work frame plus ~220 ms for the strip
-// sharpness, GPU -> CPU readback): where the page can, the frames are read here
-// instead. 'attach' takes a MediaStreamTrackProcessor's readable (Chrome: the
-// page never touches the 4K frame; the newest VideoFrame is kept, the rest are
-// closed), the *Bitmap ops take ImageBitmaps the page cut and scaled with
-// createImageBitmap (no readback on the page).
+// Camera frames (experiments only since 0.6.2-beta.3, ?scanframes=track|bitmap):
+// 'attach' takes a MediaStreamTrackProcessor's readable (the newest VideoFrame
+// is kept, the rest are closed), the *Bitmap ops take ImageBitmaps the page cut
+// and scaled with createImageBitmap. On the Pixel 9 the processor path stalled
+// the camera (autofocus, preview), so by default the page reads a small clone
+// of the camera track (scanlib.js) and the strip sharpness comes from the work
+// frame.
 //
 // Ops (one job at a time, in order):
 //   detect {img, opts}             -> {r (detect() result), d (the pixels back), ms}
@@ -27,15 +27,12 @@
 //                                     fw, fh, frames} | {none: true} (no new frame yet); error
 //                                     'orientation' when the frame is not upright like the video
 //   frameBitmap {bitmap, opts, mode?} -> the same for an ImageBitmap the page scaled
-//   sharp {rect, dw, dh, vw, vh}   -> {sharp}: Laplacian variance of rect (video px) of the frame
-//                                     the last 'frame' analysed, read at dw x dh
-//   sharpBitmap {bitmap}           -> {sharp} of a scaled strip ImageBitmap
 //   crop {rects[{x, y, w, h, dw, dh}], vw, vh} -> {imgs: RGBA[] | null} of the newest frame
 //   cropBitmaps {bitmaps}          -> {imgs: RGBA[]}
 //   grabInfo                       -> {mode, cpu, gpu (median ms), frames, attached}
 
 import { detect } from './det/detect.mjs';
-import { bytesToBase64, glareMap, glareSummary, laplacianVariance, toGray, warpQuad } from './scanlib.js';
+import { bytesToBase64, glareMap, glareSummary, warpQuad } from './scanlib.js';
 
 const encoder = (() => {
   try {
@@ -179,7 +176,7 @@ const ops = {
     return { result: { ok: true } };
   },
   frame({ W, H, vw, vh, opts, mode }) {
-    // the newest frame becomes the analysed one ('sharp' reads it; held until the next one)
+    // the newest frame becomes the analysed one (held until the next one: crop() may read it)
     if (!latest) return { result: { none: true, frames } };
     closeFrame(held);
     held = latest;
@@ -192,18 +189,6 @@ const ops = {
     try {
       const out = analyseRead(bitmap, null, bitmap.width, bitmap.height, opts, mode);
       return { result: out, transfer: [out.d.buffer] };
-    } finally { bitmap.close?.(); }
-  },
-  sharp({ rect, dw, dh, vw, vh }) {
-    if (!held) return { result: { sharp: null } };
-    const { fw, fh } = frameDims(held, vw, vh);
-    const img = read(cachedCtx('strip', grabMode || 'cpu', dw, dh), held, scaleRect(rect, fw / vw, fh / vh), dw, dh);
-    return { result: { sharp: laplacianVariance(toGray(img)) } };
-  },
-  sharpBitmap({ bitmap }) {
-    try {
-      const { width: w, height: h } = bitmap;
-      return { result: { sharp: laplacianVariance(toGray(read(cachedCtx('strip', grabMode || 'cpu', w, h), bitmap, null, w, h))) } };
     } finally { bitmap.close?.(); }
   },
   crop({ rects, vw, vh }) {

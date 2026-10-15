@@ -188,18 +188,26 @@ server keeps the newest 500 entries (≤ 4 KB each) in `debug-perf.jsonl` next
 to the database (env `DEBUG_PERF_FILE`); `GET /api/debug/perf?limit=` lists
 them. Not part of backups.
 
-**Where the camera frame is read.** On Chrome (Android and desktop) the camera
-frames go straight to the scanner's worker thread, which reads the small
-analysis frame, the bottom strip and the probe crops itself, so the page stays
-smooth even with a 4K camera. Safari and Firefox read the frame on the page as
-before. If reading on the page is very slow (more than 120 ms per frame), the
-camera switches once from 4K to 1080p; the bottom strip sent to the server is
-then about half as wide.
+**Where the camera frame is read.** The card finder looks at a small copy of
+the camera picture (480 px on the short side), several times a second. On
+Chrome (Android and desktop) that copy comes from a second, invisible copy of
+the camera feed that the browser delivers at that small size, so the page
+never has to read the full 4K picture for it. The preview, the probe crops and
+the shutter photo still use the full 4K picture. The sharpness check uses the
+small copy too. Each probe reads the 4K picture once for the card and its
+bottom strip together. Safari and Firefox read the small copy from the 4K
+picture on the page. If that read is very slow (more than 120 ms per frame),
+the camera switches once from 4K to 1080p; the bottom strip sent to the server
+is then about half as wide.
 
 Test switches for a slow phone: `?scanworker=0` (no worker threads),
-`?scanframes=auto|track|bitmap|main` (who reads the camera frame; default
-`auto`), `?scangrab=cpu|gpu|auto` (how the page reads it; default `auto`) and
-`?scanres=1080|4k` (start at 1080p / never drop to it).
+`?scanframes=auto|clone|main|track|bitmap` (where the small copy comes from;
+default `auto` = `clone` on Chrome, else `main`; `track` and `bitmap` read the
+camera in the worker thread and are experiments only: on a Pixel 9 `track`
+made the camera stall), `?scangrab=cpu|gpu|auto` (how the page reads it;
+default `auto`) and `?scanres=1080|4k` (start at 1080p / never drop to it).
+The perf beacon's `grab_mode` says which source ran (`path`, `why` when the
+copy failed, `clone` with its size).
 
 ## Calibration mode
 

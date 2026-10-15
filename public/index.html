@@ -573,6 +573,8 @@ ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; }
 }
 .cam video, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .cam canvas { pointer-events: none; }
+/* the analysis clone of the camera track (scanlib frames 'clone'): kept in the page but invisible */
+.cam video.cam-analysis { inset: auto; left: 0; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
 .cam-start { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 12px; padding: 20px; text-align: center; }
 .cam-start p { margin: 0; max-width: 340px; color: #d7d6dd; font-size: .92rem; }
 .cam-hud { position: absolute; left: 8px; right: 8px; display: flex; align-items: center; gap: 8px; }
@@ -4185,6 +4187,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   const overlayRef = useRef(null);
   const streamRef = useRef(null);
   const trackRef = useRef(null);
+  const cloneRef = useRef(null); // hidden <video> of the analysis clone (scanlib createDetAnalyzer cloneVideo)
   const obsRef = useRef(null);
   // false | "probe" (a probe crop: the analysis loop keeps running) | "shot" (shutter / auto-ask: the loop waits)
   const capturingRef = useRef(false);
@@ -4304,7 +4307,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
       // a failed answer with a reflection makes the controller show the reflection hint
       const glareP = shot.glare ? Promise.race([shot.glare, new Promise((r) => setTimeout(() => r(null), 1500))]).catch(() => null) : Promise.resolve(null);
       const res = await pending;
-      perfRef.current?.probe({ rtt: Date.now() - t0, capture: shot.ms?.total, crop: shot.crop ? shot.ms?.crop : null });
+      perfRef.current?.probe({ rtt: Date.now() - t0, capture: shot.ms?.total, crop: shot.crop ? shot.ms?.crop : null, read: shot.crop ? null : shot.ms?.grab, job: shot.ms?.job });
       const glare = await glareP;
       const outcome = pc.answer(p.id, res, Date.now(), { glare });
       recEvent({ kind: "probe", id: p.id, outcome: res?.outcome ?? null, reason: res?.reason ?? null, ms: Date.now() - t0, status: res?.result?.status ?? null, store_printing_id: res?.result?.store_printing_id ?? null, finish: res?.result?.finish ?? null, scan_id: res?.scan?.id ?? null, ...geo, glare: glare ? { code: glare.code, fraction: glare.fraction, regions: glare.regions } : null });
@@ -4415,9 +4418,9 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
 
   // Analysis loop (8 fps at most, slower when the phone can't keep up) + overlay drawing + perf beacon.
   // Field-test knobs: ?scanworker=0 (no workers), ?scangrab=cpu|gpu|auto (main-thread work-frame canvas,
-  // default auto), ?scanframes=auto|track|bitmap|main (who reads the camera frame, default auto: the
-  // detect worker via the camera track on Chrome, else the page), ?scanres=1080|4k (start at 1080p /
-  // never drop to it).
+  // default auto), ?scanframes=auto|clone|main|track|bitmap (where the work frame comes from, default
+  // auto: a small clone of the camera track on Chrome, else the 4K video; track/bitmap = the beta.2
+  // worker paths, experiments only), ?scanres=1080|4k (start at 1080p / never drop to it).
   useEffect(() => {
     if (cam.state !== "on" || !lib) return;
     const v = videoRef.current;
@@ -4428,9 +4431,9 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     const detW = useWorkers ? lib.createScanWorker() : null;
     const pxW = useWorkers ? lib.createScanWorker() : null;
     let det = null;
-    const frames = ["auto", "track", "bitmap", "main"].includes(qs?.get("scanframes")) ? qs.get("scanframes") : "auto";
+    const frames = ["auto", "clone", "main", "track", "bitmap"].includes(qs?.get("scanframes")) ? qs.get("scanframes") : "auto";
     const resPref = qs?.get("scanres") || null;
-    try { det = lib.createDetAnalyzer(v, { detectWorker: detW, pixels: pxW, grabMode, frames, track: trackRef.current }); } catch (e) {
+    try { det = lib.createDetAnalyzer(v, { detectWorker: detW, pixels: pxW, grabMode, frames, track: trackRef.current, cloneVideo: cloneRef.current }); } catch (e) {
       detW?.close(); pxW?.close();
       live.current.onError?.(`Could not start the card detector: ${e.message}`);
       return;
@@ -4446,7 +4449,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     let seenLast = null, probeThumb = null, prevStill = false; // auto-ask: the probe answer (pc.last) seen, the last probe's card thumbnail
     const msHist = [];
     let dbgAt = 0;
-    // main-thread frame-read cost per analysis (grab + sharp): a slow main-thread read drops 4K to 1080p once
+    // main-thread frame-read cost per analysis (the work-frame read): a slow read of the 4K video drops it to 1080p once
     const readCosts = [];
     let resDrop = null;
     const pct = (a, q) => { const b = [...a].sort((x, y) => x - y); return b.length ? b[Math.min(b.length - 1, Math.floor(q * b.length))] : null; };
@@ -4593,8 +4596,8 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
           // main-thread time of this frame: the analyzer's part plus the controller, overlay and React updates
           const main = o.timing.main + (performance.now() - tPost);
           pacer?.note(main);
-          perf?.frame({ total: o.ms, main, grab: o.timing.grab, detect: o.timing.detect, sharp: o.timing.sharp, wgrab: o.timing.wgrab, wsharp: o.timing.wsharp });
-          readCosts.push((o.timing.grab || 0) + (o.timing.sharp || 0));
+          perf?.frame({ total: o.ms, main, grab: o.timing.grab, detect: o.timing.detect, sharp: o.timing.sharp, wgrab: o.timing.wgrab });
+          readCosts.push(o.timing.grab || 0);
           if (readCosts.length > 20) readCosts.shift();
           const tr = trackRef.current;
           if (!resDrop && resPref !== "4k" && tr?.applyConstraints && lib.shouldDropResolution?.({ path: o.timing.path, vw: o.vw, vh: o.vh, costs: readCosts.slice(4) })) {
@@ -4689,6 +4692,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   return (
     <div className="cam" style={style}>
       <video ref={videoRef} playsInline muted autoPlay aria-label="Camera preview" />
+      <video ref={cloneRef} className="cam-analysis" playsInline muted aria-hidden="true" tabIndex={-1} />
       <canvas ref={overlayRef} aria-hidden="true" hidden={!on} />
       {!on && (
         <div className="cam-start">

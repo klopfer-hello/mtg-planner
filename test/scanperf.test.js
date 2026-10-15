@@ -122,4 +122,13 @@ describe("PerfMonitor worker series", () => {
     assert.equal(b.probe_crop.p50, 40);
     assert.equal(m.snapshot(6000).wgrab.n, 0, "a new window");
   });
+
+  test("the probe's page read and worker job land in the beacon (probe_read, probe_job)", () => {
+    const m = new PerfMonitor({ now: 0 });
+    m.probe({ rtt: 900, capture: 400, read: 240, job: 120 });
+    m.probe({ rtt: 800, capture: 100, crop: 40, read: null, job: 60 });
+    const b = m.snapshot(5000);
+    assert.deepEqual([b.probe_read.n, b.probe_read.p50], [1, 240]);
+    assert.deepEqual([b.probe_job.n, b.probe_job.max], [2, 120]);
+  });
 });
