@@ -193,8 +193,6 @@ mtg-planner is **source-available** under the
   `Required Notice` line from the license file when you share it.
 - **Not allowed:** any **commercial use**. For example: selling it, offering
   it as a paid service, or building it into a commercial product.
-- Versions up to **v0.1.0** were released under the **MIT License** and stay
-  under MIT. The new license applies from v0.2.0 on.
 - Third-party parts (scryfall-mcp, Tesseract, libjpeg-turbo, Node.js, the
   Claude Code CLI, Scryfall data) keep their own licenses, see
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
