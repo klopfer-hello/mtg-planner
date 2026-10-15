@@ -1,7 +1,7 @@
 // Scanner OCR: collector-line parsing, set-code matching, the ★/• pixel
 // classifier and PNM handling run offline on fixtures. Tests that spawn
 // tesseract/djpeg skip when the binaries are missing; CI runs the suite inside
-// the built image, which has them (see README "Development").
+// the built image, which has them (see docs/development.md).
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";

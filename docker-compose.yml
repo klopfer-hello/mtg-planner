@@ -1,7 +1,7 @@
 # mtg-planner: canonical compose file (pulls the published GHCR image).
 #
 # There is no authentication: keep it on a trusted network or put an
-# authenticating reverse proxy in front (see README "Security").
+# authenticating reverse proxy in front (see docs/backups-and-security.md).
 #
 # Host-specific additions (local build, reverse-proxy labels/networks) belong in
 # a gitignored docker-compose.override.yml, see docker-compose.override.yml.example.

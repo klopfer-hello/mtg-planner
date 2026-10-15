@@ -3,7 +3,7 @@
 // card index jobs), manual backup/restore of the app database and the static
 // single-page app. Node stdlib only.
 //
-// Unauthenticated by design: meant for a trusted LAN (see README "Security").
+// Unauthenticated by design: meant for a trusted LAN (see docs/backups-and-security.md).
 
 import http from "node:http";
 import crypto from "node:crypto";

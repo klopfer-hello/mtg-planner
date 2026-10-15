@@ -15,6 +15,7 @@ docker-compose*.example
 *.db
 *.db-*
 .DS_Store
+docs
 # ...except what the image needs from those.
 !scripts/entrypoint.sh
 !THIRD_PARTY_NOTICES.md
