@@ -777,8 +777,9 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 .toast .btn { min-height: 36px; background: none; border-color: transparent; color: inherit; text-decoration: underline; }
 @media (min-width: 768px) { .toast { bottom: 24px; } }
 .binder-bar { display: grid; gap: 8px; min-width: 0; }
-.chips.scroll { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; padding-bottom: 4px; scrollbar-width: thin; }
-.chip.lg { min-height: 44px; padding: 0 14px; flex: none; }
+/* Binder chips wrap onto more lines (no side scrolling); a very long name is cut with "…". */
+.chip.lg { min-height: 44px; padding: 0 14px; flex: none; max-width: 100%; }
+.chip.lg .chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip .cnt { opacity: .72; font-variant-numeric: tabular-nums; }
 .chip.dashed { border-style: dashed; }
 .tile { position: relative; }
@@ -1542,6 +1543,8 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged }) {
 // ===========================================================================
 
 const PAGE_SIZE = 60;
+// Select mode "All": at most this many cards (the server takes ≤1000 items per move/delete).
+const SELECT_ALL_MAX = 1000;
 const QUICK_FILTERS = [
   ["Commanders", "is:commander"],
   ["Creatures", "t:creature"],
@@ -1750,13 +1753,30 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
     if (n.has(k)) n.delete(k); else n.set(k, { key: k, oracle_id: r.oracle_id, scryfall_id: r.scryfall_id, name: r.name });
     return n;
   });
-  const allOnPage = rows.length > 0 && rows.every((r) => selected.has(keyOf(r)));
-  const selectPage = () => setSelected((m) => {
-    const n = new Map(m);
-    if (allOnPage) for (const r of rows) n.delete(keyOf(r));
-    else for (const r of rows) n.set(keyOf(r), { key: keyOf(r), oracle_id: r.oracle_id, scryfall_id: r.scryfall_id, name: r.name });
-    return n;
-  });
+  // "All" means every card of the current view (search + binder), not just the loaded pages: it pages
+  // through /api/collection. Capped at SELECT_ALL_MAX, the server's per-action item limit.
+  const [selectingAll, setSelectingAll] = useState(false);
+  const [selectCapped, setSelectCapped] = useState(false);
+  const allSelected = total != null && total > 0 && selected.size >= Math.min(total, SELECT_ALL_MAX);
+  const selectAll = async () => {
+    if (allSelected) { setSelected(new Map()); setSelectCapped(false); return; }
+    setSelectingAll(true);
+    try {
+      const all = new Map();
+      for (let offset = 0; all.size < SELECT_ALL_MAX; offset += 500) {
+        const params = new URLSearchParams({ q: dq, group, sort, dir, limit: "500", offset: String(offset) });
+        if (binder != null) params.set("binder", binder);
+        const data = await api(`/api/collection?${params}`);
+        for (const r of data.rows) if (all.size < SELECT_ALL_MAX) all.set(keyOf(r), { key: keyOf(r), oracle_id: r.oracle_id, scryfall_id: r.scryfall_id, name: r.name });
+        if (data.rows.length < 500 || offset + 500 >= data.total) { setSelectCapped(data.total > SELECT_ALL_MAX); break; }
+      }
+      setSelected(all);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSelectingAll(false);
+    }
+  };
   const stopSelecting = () => { setSelecting(false); setSelected(new Map()); };
   const binderName = binder == null ? null : binder || UNSORTED;
   const [showToast, toastEl] = useEditToast(() => { binderList.reload(); onChanged?.(); });
@@ -1851,8 +1871,11 @@ function CollectionTab({ dataVersion, onOpenCard, onGoImport, onGoScan, onChange
 
       {selecting && (
         <div className="commit-bar" role="region" aria-label="Selection">
-          <span className="grow small">{selected.size ? plural(selected.size, group === "card" ? "card" : "printing") + " selected" : "Tap cards to select"}</span>
-          <button type="button" className="btn ghost" onClick={selectPage} disabled={!rows.length}>{allOnPage ? "None" : "All"}</button>
+          <span className="grow small">{selected.size
+            ? plural(selected.size, group === "card" ? "card" : "printing") + " selected" + (selectCapped && allSelected ? ` (max ${SELECT_ALL_MAX} at once)` : "")
+            : "Tap cards to select"}</span>
+          <button type="button" className="btn ghost" onClick={selectAll} disabled={!rows.length || selectingAll}>
+            {selectingAll ? "…" : allSelected ? "None" : "All"}</button>
           <button type="button" className="btn danger" disabled={!selected.size} onClick={() => setSheet("delete")} aria-label="Delete the selected copies"><Icon.trash /><span className="sel-del-label"> Delete</span></button>
           <button type="button" className="btn primary" disabled={!selected.size} onClick={() => setSheet("move")}>Move to…</button>
         </div>
@@ -3381,6 +3404,9 @@ function Collapsible({ label, children }) {
 }
 
 const IMPORT_MODE_LABEL = { delta: "Only new copies (delta)", add: "Add everything", replace: "Replace (sync)" };
+// Import target choices that aren't binder names ('' = Unsorted is a real value).
+const IMPORT_AS_FILE = "\u0000file";
+const IMPORT_NEW_BINDER = "\u0000new";
 
 /**
  * Delta import lists: entries may be strings or objects
@@ -3684,6 +3710,13 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
     } catch (e) { setMasterState({ busy: false, error: e.message }); }
   };
   const pickMode = (m) => { modeTouched.current = true; setMode(m); };
+  // Where the cards go: as in the file (default), Unsorted, one binder or a new one. Picked per import.
+  const [target, setTarget] = useState(IMPORT_AS_FILE);
+  const [newBinder, setNewBinder] = useState("");
+  const [binderNames, setBinderNames] = useState([]);
+  useEffect(() => {
+    api("/api/binders").then((d) => setBinderNames((d?.binders || []).map((b) => b.name))).catch(() => setBinderNames([]));
+  }, [dataVersion]);
   const [busy, setBusy] = useState(false);
   const [started, setStarted] = useState(null);
   const [elapsed, setElapsed] = useState(0);
@@ -3717,6 +3750,7 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
   const submit = async (e) => {
     e.preventDefault();
     if (!file || busy) return;
+    if (target === IMPORT_NEW_BINDER && !newBinder.trim()) { setError("Enter a name for the new binder."); return; }
     const confirmReplace = mode === "replace" && master === "app";
     if (confirmReplace && !window.confirm(
       "Replace your ManaBox cards?\n\nmtg-planner is the master of your collection. A replace import DELETES every card that came from ManaBox " +
@@ -3730,9 +3764,13 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
       const text = await file.text();
       const params = new URLSearchParams({ mode, filename: file.name });
       if (confirmReplace) params.set("confirm_replace", "1");
+      if (target === IMPORT_NEW_BINDER) { params.set("binder", newBinder.trim()); params.set("create_binder", "1"); }
+      else if (target !== IMPORT_AS_FILE) params.set("binder", target);
       const summary = await api(`/api/import/manabox?${params}`, { method: "POST", body: text, headers: { "Content-Type": "text/csv" } });
       setResult(summary);
       setFile(null);
+      setTarget(IMPORT_AS_FILE);
+      setNewBinder("");
       if (fileInput.current) fileInput.current.value = "";
       onImported();
     } catch (err) {
@@ -3812,6 +3850,24 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
             </div>
           )}
         </fieldset>
+
+        <div className="stack" style={{ gap: 6 }}>
+          <label className="label" htmlFor="import-target">Put the cards into</label>
+          <select id="import-target" className="select" value={target} disabled={busy}
+            onChange={(e) => { setTarget(e.target.value); setError(null); }}>
+            <option value={IMPORT_AS_FILE}>Binders as in ManaBox</option>
+            <option value="">Unsorted</option>
+            {binderNames.map((n) => <option key={n} value={n}>{n}</option>)}
+            <option value={IMPORT_NEW_BINDER}>+ New binder…</option>
+          </select>
+          {target === IMPORT_NEW_BINDER && (
+            <input className="input" type="text" maxLength={100} placeholder="Name of the new binder" value={newBinder}
+              disabled={busy} onChange={(e) => setNewBinder(e.target.value)} aria-label="Name of the new binder" />
+          )}
+          {target !== IMPORT_AS_FILE && (
+            <span className="small muted">All cards of this file go there. Deck binders still become decks.</span>
+          )}
+        </div>
 
         <button type="submit" className="btn primary" disabled={!file || busy}>
           {busy ? <><span className="spinner" aria-hidden="true" style={{ borderTopColor: "var(--accent-ink)" }} /> Importing…</> : <><Icon.import /> Import</>}
@@ -5951,9 +6007,9 @@ function BinderBar({ data, error, onRetry, filter, onFilter, onNew, onManage }) 
         </div>
       </div>
       {error && <ErrorNotice error={`Could not load binders: ${error}`} onRetry={onRetry} />}
-      <div className="chips scroll" role="group" aria-label="Show binder">
+      <div className="chips" role="group" aria-label="Show binder">
         {chip("__all", "All", null, filter == null, () => onFilter(null))}
-        {list.map((b) => chip(b.name, <><Icon.collection /> {b.name}</>, b.copies ?? 0, sameName(filter, b.name), () => onFilter(sameName(filter, b.name) ? null : b.name)))}
+        {list.map((b) => chip(b.name, <><Icon.collection /> <span className="chip-name">{b.name}</span></>, b.copies ?? 0, sameName(filter, b.name), () => onFilter(sameName(filter, b.name) ? null : b.name)))}
         {chip("__unsorted", UNSORTED, unsorted, filter === "", () => onFilter(filter === "" ? null : ""), " dashed")}
       </div>
       {data && list.length === 0 && (

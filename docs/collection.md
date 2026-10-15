@@ -40,6 +40,12 @@ language, condition and binder: increases are added into their ManaBox binder,
 decreases are listed as "ManaBox has fewer copies of X (−n)" and nothing is
 deleted.
 
+**Put the cards into** (optional, chosen per import): *Binders as in ManaBox*
+(default), *Unsorted*, one of your binders, or a *new binder*. Every card of
+the file then goes into that binder; deck binders still become decks. The
+snapshot uses that binder too, so importing the same file into another binder
+adds its cards there.
+
 Every printing is resolved against Scryfall, which also refreshes its price.
 ManaBox **deck binders** become decks automatically (a *replace* import also
 removes decks whose binder is gone), and **list binders** (wish lists) are
@@ -76,7 +82,8 @@ In the **Collection** tab:
   many copies and the target binder (or a new one).
 - **Select** turns the grid or list into a selection; **Move to…** moves every
   copy of the selected cards, or, while a binder filter is active, only the
-  copies in that binder.
+  copies in that binder. **All** selects every card of the current view (search
+  + binder filter, all pages), at most 1000 at once.
 
 ## The collection master
 
@@ -172,7 +179,7 @@ same-origin request.
 | `POST /api/collection/move` | `{items, to_binder, create?, confirm_master?}`; an item is `{scryfall_id, finish, language, condition, binder, source?, quantity}` (copies of one row key), `{oracle_id, from_binder?}` (every copy of a card) or `{printing_id, from_binder?}` (every copy of a printing); `to_binder: ""` is Unsorted |
 | `GET /api/collection?binder=` | the collection list filtered by exact binder (`binder=` = Unsorted) |
 | `GET\|PATCH /api/settings` | `{collection_master: "manabox" \| "app"}` (also in `GET /api/stats`) |
-| `POST /api/import/manabox?mode=replace\|delta\|add` | raw CSV body; the summary lists `added` and `decreased` rows in delta mode |
+| `POST /api/import/manabox?mode=replace\|delta\|add&binder=&create_binder=1` | raw CSV body; `binder` puts every card into that binder (empty = Unsorted, a new name needs `create_binder=1`, else 404); the summary lists `added` and `decreased` rows in delta mode |
 | `POST /api/refresh-prices` | re-fetch card data and prices of everything you own or use in a deck |
 | `PATCH /api/decks/:id {status}` | `idea` or `built` |
 | `GET /api/shopping-list` | `{built: {items, total_eur}, per_deck}` |

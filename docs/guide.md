@@ -49,7 +49,9 @@ No ManaBox? Go straight to [Scanning](#2-scanning).
 1. Open the **Settings** tab (the gear).
 2. Tap **Choose CSV file** and pick the file.
 3. Keep the **Mode** marked **default**.
-4. Tap **Import**.
+4. Optional: under **Put the cards into**, pick a binder or **+ New binder…**.
+   Leave it at **Binders as in ManaBox** to keep ManaBox's binders.
+5. Tap **Import**.
 
 **You should now see:** "Import complete." and a short summary. Your cards
 are in the **Collection** tab, with prices.
@@ -189,7 +191,8 @@ value.
 **Move cards:**
 
 1. Tap **Select**.
-2. Tap the cards.
+2. Tap the cards. Or tap **All**: it selects every card of the current view
+   (search and binder filter), not just the ones on screen.
 3. Tap **Move to…**.
 4. Pick the binder.
 

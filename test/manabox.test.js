@@ -108,6 +108,29 @@ describe("importManaBoxCsv", () => {
     assert.equal(JSON.parse(imports[1].summary).total_cards_after, 3);
   });
 
+  test("targetBinder puts every card into one binder; deck binders still become decks", async () => {
+    const text = csv(
+      row("Box", "binder", "Sol Ring", "c21", "263", "normal", "2", ID.sol),
+      row("", "", "Lightning Bolt", "m10", "146", "normal", "1", ID.lightning),
+      row("Elves", "deck", "Serra Angel", "dmu", "33", "normal", "1", ID.serra),
+    );
+    const first = await importManaBoxCsv(ctx.db, text, { targetBinder: "New Box" });
+    const binders = ctx.db.prepare("SELECT binder, SUM(quantity) AS q FROM collection GROUP BY binder").all().map((r) => ({ ...r }));
+    assert.deepEqual(binders, [{ binder: "New Box", q: 4 }]);
+    assert.deepEqual(first.binders_created, ["New Box"]);
+    assert.equal(ctx.db.prepare("SELECT origin FROM binders WHERE name = 'New Box'").get().origin, "app");
+    assert.equal(ctx.db.prepare("SELECT COUNT(*) AS n FROM binders WHERE name IN ('Box', 'Elves')").get().n, 0);
+    assert.deepEqual(listDecks(ctx.db).map((d) => d.name), ["Elves"]);
+    // The snapshot uses the target, so the same file into the same binder adds nothing.
+    const again = await importManaBoxCsv(ctx.db, text, { mode: "delta", targetBinder: "New Box" });
+    assert.equal(again.added_copies, 0);
+    assert.equal(again.decreased_copies, 0);
+    assert.equal(ctx.db.prepare("SELECT SUM(quantity) AS q FROM collection").get().q, 4);
+    // '' = Unsorted.
+    await importManaBoxCsv(ctx.db, csv(row("Box", "binder", "Sol Ring", "c21", "263", "normal", "1", ID.sol)), { targetBinder: "" });
+    assert.deepEqual(ctx.db.prepare("SELECT binder, quantity FROM collection").all().map((r) => ({ ...r })), [{ binder: "", quantity: 1 }]);
+  });
+
   test("add mode merges quantities on top", async () => {
     const one = csv(row("", "", "Sol Ring", "c21", "263", "normal", "2", ID.sol));
     await importManaBoxCsv(ctx.db, one);

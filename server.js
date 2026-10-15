@@ -39,8 +39,8 @@ import {
   updateScan,
 } from "./lib/scans.js";
 import {
-  BinderError, collectionMaster, createBinder, deckToBinder, defaultImportMode, deleteBinder, listBinders, moveCopies, renameBinder,
-  setCollectionMaster,
+  BinderError, MAX_BINDER_NAME, collectionMaster, createBinder, deckToBinder, defaultImportMode, deleteBinder, findBinder, listBinders,
+  moveCopies, renameBinder, setCollectionMaster,
 } from "./lib/binders.js";
 import { deleteCopies, editCopies, listEdits, relanguageScans, undoEdit } from "./lib/edits.js";
 
@@ -1289,6 +1289,18 @@ async function handleApi(req, res, url) {
         { code: "confirm_replace" });
     }
     const filename = (query.get("filename") || "").slice(0, 255) || null;
+    // binder (optional): put every card of this import into one binder; present but empty =
+    // Unsorted. A binder that doesn't exist yet needs create_binder=1 (a typo shouldn't make one).
+    let targetBinder = null;
+    if (query.has("binder")) {
+      const name = String(query.get("binder")).trim();
+      if (name.length > MAX_BINDER_NAME) throw new HttpError(400, `Binder name is too long (max ${MAX_BINDER_NAME})`);
+      targetBinder = name ? findBinder(db, name) : "";
+      if (targetBinder == null) {
+        if (query.get("create_binder") !== "1") { req.resume(); throw new HttpError(404, `Binder "${name}" not found (send create_binder=1 to create it)`); }
+        targetBinder = name;
+      }
+    }
     // text/csv is not a CORS-safelisted type; text/plain is accepted only with
     // the SPA's X-Requested-With header (which also forces a preflight).
     const type = String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
@@ -1298,7 +1310,7 @@ async function handleApi(req, res, url) {
     const buf = await readBody(req, CSV_LIMIT);
     const text = buf.toString("utf8");
     if (!text.trim()) throw new HttpError(400, "The CSV file is empty.");
-    const summary = await exclusive(() => importManaBoxCsv(db, text, { mode, filename }).catch((err) => { throw importError(err); }));
+    const summary = await exclusive(() => importManaBoxCsv(db, text, { mode, filename, targetBinder }).catch((err) => { throw importError(err); }));
     return sendJson(res, 200, summary);
   }
   if (pathname === "/api/settings") {
