@@ -1,0 +1,75 @@
+{
+ "_note": "Calibration set (plan v0.7.0 §5). expected = the auto bracket by the app's rules; band = the group's score band. Sources and authors: NOTICE.md and each list's header.",
+ "decks": [
+  {
+   "label": "precon-blight-curse",
+   "group": "precon",
+   "expected": 2
+  },
+  {
+   "label": "precon-lorehold-spirit",
+   "group": "precon",
+   "expected": 2
+  },
+  {
+   "label": "precon-doom-prevails",
+   "group": "precon",
+   "expected": 2
+  },
+  {
+   "label": "precon-temur-roar",
+   "group": "precon",
+   "expected": 2
+  },
+  {
+   "label": "upgraded-lorehold-spirit",
+   "group": "upgraded",
+   "expected": 3
+  },
+  {
+   "label": "upgraded-world-shaper",
+   "group": "upgraded",
+   "expected": 3
+  },
+  {
+   "label": "upgraded-blight-curse",
+   "group": "upgraded",
+   "expected": 3
+  },
+  {
+   "label": "optimized-chatterfang",
+   "group": "optimized",
+   "expected": 3
+  },
+  {
+   "label": "optimized-edgar-markov",
+   "group": "optimized",
+   "expected": 4
+  },
+  {
+   "label": "optimized-wilhelt",
+   "group": "optimized",
+   "expected": 4
+  },
+  {
+   "label": "cedh-tymna-thrasios",
+   "group": "cedh",
+   "expected": 4
+  },
+  {
+   "label": "cedh-vivi-storm",
+   "group": "cedh",
+   "expected": 4
+  },
+  {
+   "label": "edge-precon-world-shaper",
+   "group": "edge",
+   "expected": 3
+  },
+  {
+   "label": "edge-upgraded-temur-roar",
+   "group": "edge",
+   "expected": 2
+  }
+ ]
+}

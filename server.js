@@ -13,12 +13,16 @@ import path from "node:path";
 
 import { SCHEMA_VERSION, cardPrice, getAppMeta, openDb, setAppMeta, stats } from "./lib/db.js";
 import { QUERY_HELP, searchCollection } from "./lib/query.js";
-import { IMPORT_MODES, importManaBoxCsv, refreshOwnedCards } from "./lib/manabox.js";
+import { CARD_FACTS_META, IMPORT_MODES, backfillCardFacts, cardFactsPending, importManaBoxCsv, refreshOwnedCards } from "./lib/manabox.js";
 import { syncEnglishPrices } from "./lib/prices.js";
 import {
-  DECK_STATUSES, DeckError, cardUsage, deckDetail, eurForFinish, exportDeck, listDecks, normalizeFormat, parseDecklist, saveDeck, setCommander,
-  shoppingList, updateDeckCard,
+  DECK_STATUSES, DeckError, bracketVerdict, cardUsage, deckComboRequest, deckDetail, deckPower, draftDeck, eurForFinish, exportDeck, listDecks,
+  normalizeFormat, parseDecklist, saveDeck, setCommander, shoppingList, updateDeckCard,
 } from "./lib/decks.js";
+import {
+  SpellbookError, backoffUntil, createSpellbookScheduler, pruneSpellbookCache, seedSpellbookSettings, setSpellbookSettings, spellbookHealth, spellbookOptedOut,
+  spellbookSettings,
+} from "./lib/spellbook.js";
 import * as claudeLib from "./lib/claude.js";
 import { MAX_CONCURRENT, activeClaudeRuns, claudeConfigured, killAll, prepareMcpConfig, runTurn, runVision, visionCap } from "./lib/claude.js";
 import {
@@ -273,6 +277,61 @@ async function runEnglishPrices() {
   }
 }
 
+// v9 card facts (game_changer, produced_mana, layout) for owned and deck cards
+// that were fetched before migration v9: one /cards/collection request per chunk
+// (outside the lock), then only its write through exclusive() (a busy import →
+// 409 → retry later; a running restore → retry later), after boot and after
+// a restore. Never on a request path; off with the scheduler (SCHEDULER_ENABLED=false).
+let cardFactsTimer = null;
+let cardFactsRunning = false;
+const CARD_FACTS_RETRY_MS = 60_000;
+function scheduleCardFacts(delay = 5000) {
+  if (shuttingDown || !schedulerConfig().enabled) return;
+  clearTimeout(cardFactsTimer);
+  cardFactsTimer = setTimeout(runCardFacts, delay);
+  cardFactsTimer.unref?.();
+}
+async function runCardFacts() {
+  if (shuttingDown) return;
+  if (restoring || cardFactsRunning) return scheduleCardFacts(CARD_FACTS_RETRY_MS);
+  cardFactsRunning = true;
+  try {
+    if (!cardFactsPending(db).length && getAppMeta(db, CARD_FACTS_META)) return;
+    const r = await backfillCardFacts(() => db, {
+      runChunk: (fn) => {
+        if (restoring) throw new HttpError(503, "restore running");
+        return exclusive(fn);
+      },
+    });
+    if (r.refreshed || r.skipped) console.log(`[cards] v9 card facts: ${r.refreshed} refreshed, ${r.skipped} without a Game Changer flag`);
+  } catch (err) {
+    console.warn(`[cards] v9 card facts: ${err.message}; retrying in ${CARD_FACTS_RETRY_MS / 1000} s`);
+    cardFactsRunning = false;
+    return scheduleCardFacts(CARD_FACTS_RETRY_MS);
+  } finally {
+    cardFactsRunning = false;
+  }
+}
+
+/** /healthz card_facts: the v9 backfill's meta {done_at, refreshed, skipped (count)} or null while not done. */
+function cardFactsHealth() {
+  try {
+    const m = JSON.parse(getAppMeta(db, CARD_FACTS_META) || "null");
+    return m ? { done_at: m.done_at ?? null, refreshed: m.refreshed ?? 0, skipped: Array.isArray(m.skipped) ? m.skipped.length : 0 } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** /healthz spellbook (never fails the health check). */
+function spellbookHealthz() {
+  try {
+    return { ...spellbookHealth(db), queued: spellbook.pending().length };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
 /**
  * Scryfall outages/network errors become 502; a Scryfall 4xx (it rejected
  * something from the user's file) and everything else (bad CSV) become 400.
@@ -292,7 +351,96 @@ function getDeckOr404(id) {
   const detail = deckDetail(db, id);
   if (!detail) throw new HttpError(404, "Deck not found");
   for (const c of detail.cards) c.prices = parseJsonField(c.prices, null);
+  // Missing or stale combos: fetch in the background (the UI re-reads once after a few seconds).
+  if (detail.combos?.needs_fetch && detail.spellbook_request) spellbook.ensure(detail.spellbook_request);
   return detail;
+}
+
+// Commander Spellbook (lib/spellbook.js): combos for the bracket and score.
+// Deck reads only look at the cache; this scheduler fills it in the background,
+// never inside exclusive() (a fetch must not 409 imports and moves) and never
+// while a restore swaps the DB (every write goes to the db current at write time).
+const spellbook = createSpellbookScheduler({
+  db: () => db,
+  restoring: () => restoring,
+  version: VERSION,
+  log: console,
+  requestFor: (conn, deckId) => deckComboRequest(conn, deckId),
+});
+
+/** Refresh the combos of a deck a few seconds after a write (debounced per deck; a cache hit makes no call). */
+function scheduleSpellbook(deckId) {
+  if (!shuttingDown && deckId) spellbook.schedule(Number(deckId));
+}
+
+/** SQLite's datetime('now'): decks.updated_at uses it, so "decks changed since" works across a write. */
+const sqlNow = () => db.prepare("SELECT datetime('now') AS t").get().t;
+
+/** Schedule the combos of every deck written since `since` (imports, scan commits, chat turns). */
+function scheduleChangedDecks(since) {
+  try {
+    for (const { id } of db.prepare("SELECT id FROM decks WHERE updated_at >= ?").all(since)) scheduleSpellbook(id);
+  } catch (err) {
+    console.warn(`[spellbook] ${err.message}`);
+  }
+}
+
+/** Optional bracket_declared from a body: undefined = not given, null = auto, 1-5. */
+function bracketDeclared(v) {
+  if (v === undefined) return undefined;
+  if (v === null || v === "") return null;
+  if (!Number.isInteger(v) || v < 1 || v > 5) throw new HttpError(400, "bracket_declared must be 1-5 or null (auto)");
+  return v;
+}
+
+/** POST /api/decks/:id/combos: refetch the deck's combos now (202), refused while backing off / disabled. */
+function postDeckCombos(id) {
+  if (!db.prepare("SELECT 1 FROM decks WHERE id = ?").get(id)) throw new HttpError(404, "Deck not found");
+  const settings = spellbookSettings(db);
+  if (!settings.enabled) {
+    throw new HttpError(503, settings.env_disabled ? "The combo check is turned off (SPELLBOOK_ENABLED=false)" : "The combo check is turned off in Settings");
+  }
+  const request = deckComboRequest(db, id);
+  if (!request) throw new HttpError(400, "Combos are only checked for Commander decks");
+  const until = backoffUntil(db);
+  if (until > Date.now()) {
+    throw new HttpError(409, "The combo check is paused (Commander Spellbook was unreachable or asked us to wait); try again later", { retry_at: new Date(until).toISOString() });
+  }
+  spellbook.refresh(request);
+  return { status: "pending", deck_id: id };
+}
+
+/**
+ * POST /api/decks/evaluate {text, format?, commander?, target_bracket?}: stats and power of a
+ * decklist without saving it. Waits up to 8 s for the combos, else answers with them pending.
+ */
+async function evaluateDeck(req) {
+  const body = await readJson(req);
+  const text = optString(body.text, "text", 200000) || "";
+  const format = normalizeFormat(optString(body.format, "format", 50));
+  const commander = Array.isArray(body.commander)
+    ? body.commander.slice(0, 4).map((c, i) => optString(c, `commander[${i}]`, 300)).filter(Boolean)
+    : optString(body.commander, "commander", 300) || null;
+  const target = body.target_bracket == null ? null : bracketDeclared(body.target_bracket);
+  if (!parseDecklist(text).items.length) throw new HttpError(400, "The decklist is empty");
+  let draft;
+  try {
+    draft = await draftDeck(db, { text, format, commander });
+  } catch (err) {
+    throw importError(err);
+  }
+  const combos = draft.request ? await spellbook.evaluate(draft.request, { waitMs: 8000 }) : undefined;
+  const p = deckPower(db, draft.deck, draft.rows, { combos });
+  return {
+    stats: p.stats, power: p.power, combos: p.combos, unresolved: draft.unresolved, parse_errors: draft.parse_errors,
+    ...(target != null ? { verdict: bracketVerdict(p.power, target) } : {}),
+  };
+}
+
+/** Settings fields of the combo check (GET/PATCH /api/settings). */
+function spellbookSettingsView() {
+  const s = spellbookSettings(db);
+  return { spellbook_enabled: s.enabled, spellbook: { enabled: s.enabled, env_disabled: s.env_disabled, url: s.url } };
 }
 
 async function createDeck(req) {
@@ -316,6 +464,7 @@ async function createDeck(req) {
     if (err instanceof DeckError) throw new HttpError(err.status, err.message);
     throw importError(err);
   }
+  scheduleSpellbook(saved.id);
   return { id: saved.id, unresolved: saved.unresolved, parse_errors: errors };
 }
 
@@ -326,7 +475,7 @@ function deckStatus(v) {
   return v;
 }
 
-/** PATCH /api/decks/:id {name?, format?, description?, status?} -> the deck row. */
+/** PATCH /api/decks/:id {name?, format?, description?, status?, bracket_declared?} -> the deck row. */
 async function patchDeck(req, id) {
   const deck = db.prepare("SELECT * FROM decks WHERE id = ?").get(id);
   if (!deck) throw new HttpError(404, "Deck not found");
@@ -336,10 +485,14 @@ async function patchDeck(req, id) {
   const format = body.format === undefined ? deck.format : normalizeFormat(optString(body.format, "format", 50));
   const description = body.description === undefined ? deck.description : optString(body.description, "description", 5000) || null;
   const status = deckStatus(body.status) ?? deck.status;
+  const declared = bracketDeclared(body.bracket_declared);
+  const bracket = declared === undefined ? deck.bracket_declared : declared;
   // Idea -> built: the cards this deck now shares with other built decks (they were "in use" while it was an idea).
   const before = status === "built" && deck.status !== "built" ? deckDetail(db, id) : null;
-  db.prepare("UPDATE decks SET name = ?, format = ?, description = ?, status = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(name, format, description, status, id);
+  db.prepare("UPDATE decks SET name = ?, format = ?, description = ?, status = ?, bracket_declared = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(name, format, description, status, bracket, id);
+  // A format change can make it a commander deck (or not).
+  if (format !== deck.format) scheduleSpellbook(id);
   const row = db.prepare("SELECT * FROM decks WHERE id = ?").get(id);
   if (status === deck.status) return row;
   const after = deckDetail(db, id);
@@ -383,6 +536,7 @@ async function patchDeckCard(req, id) {
   const change = deckCall(() => updateDeckCard(db, id, {
     name: optString(body.name, "name", 300), board: body.board, to_board: body.to_board ?? null, quantity: body.quantity ?? null,
   }));
+  scheduleSpellbook(id);
   return { ...getDeckOr404(id), change };
 }
 
@@ -390,6 +544,7 @@ async function patchDeckCard(req, id) {
 async function postCommander(req, id) {
   const body = await readJson(req);
   const change = deckCall(() => setCommander(db, id, { name: optString(body.name, "name", 300), replace: optString(body.replace, "replace", 300) }));
+  scheduleSpellbook(id);
   return { ...getDeckOr404(id), change };
 }
 
@@ -441,6 +596,7 @@ async function postMessage(req, res, chatId) {
 
   const controller = new AbortController();
   runs.set(chatId, controller);
+  const turnStart = sqlNow(); // decks Claude saves in this turn get their combos checked afterwards
 
   let userMsgId;
   try {
@@ -485,6 +641,7 @@ async function postMessage(req, res, chatId) {
     runs.delete(chatId);
     clearInterval(keepAlive);
     scheduleEnglishPrices();
+    scheduleChangedDecks(turnStart);
   }
 
   try {
@@ -888,9 +1045,11 @@ async function handleScanApi(req, res, url) {
   if (pathname === "/api/scans/manual" && method === "POST") return sendJson(res, 201, await postManualScan(req));
   if (pathname === "/api/scans/commit" && method === "POST") {
     const body = await readJson(req);
+    const since = sqlNow();
     const result = await exclusive(() => commitScans(db, body.ids, body.target, { idx }).catch((err) => {
       throw err instanceof ScanError ? scanErr(err) : importError(err);
     }));
+    if (body.target?.type === "deck") scheduleChangedDecks(since);
     return sendJson(res, 200, result);
   }
   if ((m = /^\/api\/scans\/(\d+)(?:\/(image|strip|increment|truth))?$/.exec(pathname))) {
@@ -1151,6 +1310,7 @@ async function restoreBackup({ name = null, upload = null }) {
       await gunzipToFile(source, tmp);
       const checked = validateBackupDb(tmp, { schemaVersion: SCHEMA_VERSION, imageDir: defaultImageDir() });
       const safety = await createBackup(db, { dir: BACKUP.dir, kind: "pre-restore", version: VERSION, protect: name ? [name] : [] });
+      const spellbookOff = spellbookOptedOut(db); // the user's opt-out survives the restore
       try {
         db = swapDatabase({ dbFile: DB_FILE, newFile: tmp, close: () => db.close(), open: () => openDb(DB_FILE) });
       } catch (err) {
@@ -1169,6 +1329,12 @@ async function restoreBackup({ name = null, upload = null }) {
         counts: dbCounts(db),
       };
       try { setAppMeta(db, "last_restore", JSON.stringify({ at: new Date().toISOString(), from: name ?? "upload", safety_backup: safety.name })); } catch { /* informational */ }
+      // The restored DB brings its own Spellbook settings, but an opt-out (in the live DB
+      // before the restore, or SPELLBOOK_ENABLED=false) always wins: the stricter one is kept.
+      try {
+        seedSpellbookSettings(db, process.env, console, { keepOff: spellbookOff });
+        pruneSpellbookCache(db);
+      } catch (err) { console.warn(`[spellbook] ${err.message}`); }
       console.log(`[backup] restored ${name ?? "an uploaded backup"} (schema v${checked.schema_version} → v${restored.schema_version}); safety backup ${safety.name}`);
       return { restored, safety_backup: safety };
     });
@@ -1178,6 +1344,7 @@ async function restoreBackup({ name = null, upload = null }) {
     restoring = false;
     backupBusy = false;
     scheduleEnglishPrices();
+    scheduleCardFacts(); // a restored v8 backup lacks the v9 card facts
   }
 }
 
@@ -1324,15 +1491,30 @@ async function handleApi(req, res, url) {
     const buf = await readBody(req, CSV_LIMIT);
     const text = buf.toString("utf8");
     if (!text.trim()) throw new HttpError(400, "The CSV file is empty.");
+    const since = sqlNow();
     const summary = await exclusive(() => importManaBoxCsv(db, text, { mode, filename, targetBinder }).catch((err) => { throw importError(err); }));
+    scheduleChangedDecks(since); // rebuilt ManaBox decks
     return sendJson(res, 200, summary);
   }
   if (pathname === "/api/settings") {
-    if (method === "GET") return sendJson(res, 200, { collection_master: collectionMaster(db) });
+    if (method === "GET") return sendJson(res, 200, { collection_master: collectionMaster(db), ...spellbookSettingsView() });
     if (method === "PATCH") {
       const body = await readJson(req);
+      const patch = {};
+      if (body.spellbook_enabled !== undefined) {
+        if (typeof body.spellbook_enabled !== "boolean") throw new HttpError(400, "spellbook_enabled must be true or false");
+        if (body.spellbook_enabled && spellbookSettings(db).env_disabled) {
+          throw new HttpError(409, "The combo check is turned off on the server (SPELLBOOK_ENABLED=false)");
+        }
+        patch.enabled = body.spellbook_enabled;
+      }
+      // Where the card names go is a server setting only (env SPELLBOOK_URL), never a LAN request.
+      if (body.spellbook_url !== undefined) throw new HttpError(400, "The Commander Spellbook URL can only be set on the server (SPELLBOOK_URL)");
       if (body.collection_master !== undefined) scanCall(() => setCollectionMaster(db, body.collection_master));
-      return sendJson(res, 200, { collection_master: collectionMaster(db) });
+      if (Object.keys(patch).length) {
+        try { setSpellbookSettings(db, patch); } catch (err) { throw err instanceof SpellbookError ? new HttpError(err.status ?? 400, err.message) : err; }
+      }
+      return sendJson(res, 200, { collection_master: collectionMaster(db), ...spellbookSettingsView() });
     }
     throw new HttpError(405, "Method not allowed");
   }
@@ -1383,12 +1565,21 @@ async function handleApi(req, res, url) {
   }
 
   if (pathname === "/api/decks") {
-    if (method === "GET") return sendJson(res, 200, listDecks(db));
+    if (method === "GET") {
+      const decks = listDecks(db);
+      for (const d of decks) if (d.spellbook_request) spellbook.ensure(d.spellbook_request);
+      return sendJson(res, 200, decks);
+    }
     if (method === "POST") return sendJson(res, 201, await createDeck(req));
   }
+  if (pathname === "/api/decks/evaluate") {
+    if (method !== "POST") throw new HttpError(405, "Method not allowed");
+    return sendJson(res, 200, await evaluateDeck(req));
+  }
   if (pathname === "/api/shopping-list" && method === "GET") return sendJson(res, 200, shoppingList(db));
-  if ((m = /^\/api\/decks\/(\d+)\/(cards|commander|to-binder|status-preview)$/.exec(pathname))) {
+  if ((m = /^\/api\/decks\/(\d+)\/(cards|commander|to-binder|status-preview|combos)$/.exec(pathname))) {
     const id = Number(m[1]);
+    if (m[2] === "combos" && method === "POST") return sendJson(res, 202, postDeckCombos(id));
     if (m[2] === "status-preview" && method === "GET") return sendJson(res, 200, statusPreview(id, query.get("status") || "built"));
     if (m[2] === "cards" && method === "PATCH") return sendJson(res, 200, await patchDeckCard(req, id));
     if (m[2] === "commander" && method === "POST") return sendJson(res, 200, await postCommander(req, id));
@@ -1547,6 +1738,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/healthz") {
       return sendJson(res, 200, {
         ok: true, version: VERSION, claude_configured: claudeConfigured(), claude_cli: claudeCliHealth(), scanner: await scannerHealth(),
+        spellbook: spellbookHealthz(), card_facts: cardFactsHealth(),
       });
     }
     if (url.pathname === "/api" || url.pathname.startsWith("/api/")) return await handleApi(req, res, url);
@@ -1590,6 +1782,14 @@ const scheduler = createScheduler({
 });
 
 prepareMcpConfig();
+// Spellbook settings live in meta (shared with the MCP process); the env seeds them and its "false" always wins.
+try {
+  seedSpellbookSettings(db, process.env, console);
+  const pruned = pruneSpellbookCache(db);
+  if (pruned) console.log(`[spellbook] pruned ${pruned} cache entries unused for 60 days`);
+} catch (err) {
+  console.warn(`[spellbook] ${err.message}`);
+}
 // First commit after boot creates the app DB's WAL file (one fsync, ~60 ms
 // on a spinning disk): pay it here instead of in the first scan's staging.
 try { setAppMeta(db, "last_start", new Date().toISOString()); } catch (err) { console.warn(`[db] ${err.message}`); }
@@ -1597,6 +1797,8 @@ autoIndex();
 scheduler.start();
 server.listen(PORT, () => {
   console.log(`mtg-planner ${VERSION} listening on :${PORT} (static: ${STATIC_DIR}, claude: ${claudeConfigured() ? "configured" : "not configured"})`);
+  // CARD_FACTS_DELAY_MS: tests only (default 30 s after start).
+  scheduleCardFacts(Number(process.env.CARD_FACTS_DELAY_MS) >= 0 && process.env.CARD_FACTS_DELAY_MS ? Number(process.env.CARD_FACTS_DELAY_MS) : 30000);
   // Preload the fingerprints now so the first scan doesn't pay for it.
   if (matcher instanceof MatcherWorker) {
     matcher.start();
@@ -1617,6 +1819,8 @@ function shutdown(signal) {
   console.log(`${signal} received, shutting down`);
   server.close();
   scheduler.stop();
+  spellbook.close();
+  clearTimeout(cardFactsTimer);
   for (const controller of runs.values()) controller.abort();
   indexJob.controller?.abort();
   killAll();

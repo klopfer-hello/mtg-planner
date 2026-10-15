@@ -1,0 +1,95 @@
+// "Temur Roar" Precon Upgrade
+// Source: https://archidekt.com/decks/12356066 by mjburns (Archidekt), author's bracket 3, list updated 2026-10-13, retrieved 2026-10-15
+
+Commander
+1 Ureni of the Unwritten
+
+Deck
+1 Eshki, Temur's Roar
+1 Thundermane Dragon
+1 Keiga, the Tide Star
+1 Blasphemous Act
+1 Lathliss, Dragon Queen
+1 Nogi, Draco-Zealot
+1 Temur Ascendancy
+1 Dragon's Hoard
+1 Steel Hellkite
+1 Cinder Glade
+1 Exotic Orchard
+1 Flooded Grove
+1 Haven of the Spirit Dragon
+1 Hinterland Harbor
+1 Karplusan Forest
+1 Kessig Wolf Run
+1 Mossfire Valley
+1 Mosswort Bridge
+1 Rockfall Vale
+1 Rootbound Crag
+1 Shivan Reef
+1 Sulfur Falls
+1 Yavimaya Coast
+1 Temple of the Dragon Queen
+1 Arcane Signet
+1 Sol Ring
+1 Command Tower
+1 Encroaching Dragonstorm
+1 Rapid Hybridization
+1 Reality Shift
+1 Dragonlord's Servant
+1 Beast Within
+1 Elemental Bond
+1 Farseek
+1 Evolving Wilds
+1 Frontier Bivouac
+1 Kodama's Reach
+3 Island
+6 Mountain
+5 Forest
+1 Bountiful Landscape
+1 Path of Ancestry
+1 Kozilek's Unsealing
+1 Dragonhawk, Fate's Tempest
+1 Kiora, Behemoth Beckoner
+1 Lightning Greaves
+1 Temur Battlecrier
+1 Magmatic Hellkite
+1 Herd Heirloom
+1 Twinflame Tyrant
+1 Chaos Warp
+1 Arena of Glory
+1 Hammerhead Tyrant
+1 Atarka, World Render
+1 Atsushi, the Blazing Sky
+1 Hellkite Courser
+1 Broodcaller Scourge
+1 Deceptive Frostkite
+1 Dragonlord Atarka
+1 Dragonmaster Outcast
+1 Scourge of the Throne
+1 Leyline Tyrant
+1 Parapet Thrasher
+1 Thunderbreak Regent
+1 Reflections of Littjara
+1 Dragon Tempest
+1 Become the Avalanche
+1 Dragonologist
+1 Will of the Temur
+1 Balefire Dragon
+1 Miirym, Sentinel Wyrm
+1 Carnelian Orb of Dragonkind
+1 Cavern-Hoard Dragon
+1 Ganax, Astral Hunter
+1 Goldspan Dragon
+1 Mox Jasper
+1 Thornspire Verge
+1 Maelstrom of the Spirit Dragon
+1 Terror of the Peaks
+1 Klauth, Unrivaled Ancient
+1 Dragonborn Champion
+1 Selvala's Stampede
+1 Sarkhan, Soul Aflame
+1 Talisman of Creativity
+1 Ancient Bronze Dragon
+1 Nylea, Keen-Eyed
+1 Scaled Nurturer
+1 Counterspell

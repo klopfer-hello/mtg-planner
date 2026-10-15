@@ -4,6 +4,11 @@
 // conflicts, shopping list), plus two write tools: save_deck (decks the user then
 // sees in the app) and edit_copies (fix language / printing / finish / condition
 // of owned copies; lib/edits.js, actor 'claude', logged and undoable in the app).
+// evaluate_deck is a dry run: stats, Commander bracket and 1-10 score of a draft
+// list (lib/power.js) without saving it. Its combo check (Commander Spellbook,
+// lib/spellbook.js) uses this process's own DB connection but the server's
+// settings, rate slots and backoff from the shared meta table, so turning it off
+// in the app (or SPELLBOOK_ENABLED=false) also stops it here.
 // No delete, backup or restore tools by design: deleting is app-only. Spawned by
 // the CLI per chat turn via --mcp-config.
 //
@@ -19,8 +24,10 @@ import { createInterface } from "node:readline";
 import { cardPrice, formatPrice, getAppMeta, openDb, setAppMeta, stats } from "./lib/db.js";
 import { QUERY_HELP, searchCollection } from "./lib/query.js";
 import {
-  BOARDS, DECK_STATUSES, allocation, cardKey, cardUsage, deckDetail, deckToText, findDeck, isBasicLand, listDecks, saveDeck, shoppingList,
+  BOARDS, DECK_STATUSES, allocation, bracketVerdict, cardKey, cardUsage, deckDetail, deckPower, deckToText, draftDeck, findDeck, isBasicLand,
+  listDecks, powerLines, saveDeck, shoppingList,
 } from "./lib/decks.js";
+import { createSpellbookScheduler } from "./lib/spellbook.js";
 import { BinderError, listBinders } from "./lib/binders.js";
 import { EDIT_CONDITIONS, editCopies } from "./lib/edits.js";
 import { getPrinting, openIndex } from "./lib/cardindex.js";
@@ -53,6 +60,11 @@ function getIndex() {
   }
   return idx;
 }
+// Combo checks (Commander Spellbook): the turn waits at most COMBO_WAIT_MS for one.
+const COMBO_WAIT_MS = 8000;
+let combosScheduler;
+const combos = () => (combosScheduler ??= createSpellbookScheduler({ db: () => getDb(), version: VERSION, log: { warn: (m) => log(m) } }));
+
 const indexPrinting = (id) => {
   const i = getIndex();
   if (!i) return null;
@@ -118,6 +130,31 @@ const SEARCH_EXAMPLES = [
   'src:scan                         copies added with the in-app scanner (src:manabox = synced from ManaBox)',
   'lightning                        names containing "lightning"',
 ];
+
+/** The cards array of save_deck / evaluate_deck. */
+const CARDS_SCHEMA = {
+  type: "array", minItems: 1, maxItems: 500,
+  items: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "Exact English card name." },
+      quantity: { type: "integer", minimum: 1, default: 1 },
+      board: { type: "string", enum: BOARDS, default: "main" },
+      companion: { type: "boolean", description: "true for the companion (kept on the side board, outside the 99)." },
+      set: { type: "string", description: "Optional set code to force a printing, e.g. \"cmm\"." },
+      collector_number: { type: "string", description: "Optional collector number (with set)." },
+    },
+    required: ["name"],
+    additionalProperties: false,
+  },
+};
+
+const POWER_TEXT_HELP =
+  "Power lines: 'Stats:' (cards, lands, avg mana value, curve, colour pips vs land sources); for Commander decks also " +
+  "'Bracket: N <label> (...) - <the rules that set it, with cards>' (≥N = combos not checked yet, may be higher; tutors " +
+  "never set the bracket; Brackets 1 and 5 are only set by the user, the app hints 'looks cEDH-like'; Commander " +
+  "Spellbook's own rating is a second opinion only), 'Score x/10: <8 categories points/max>' and 'Not Commander-legal: ...' " +
+  "when there are problems.";
 
 const TOOLS = [
   {
@@ -220,7 +257,8 @@ const TOOLS = [
       "List the user's decks: id, name, format, status (built = a physical deck that claims its cards, idea = a plan), " +
       "source (manabox = synced from a ManaBox deck binder, manual = entered in the app, scan = filled with the app's camera " +
       "scanner, claude = saved by you), card count, value in EUR (commander+main+side), cards to buy (not owned at all), " +
-      "cards in other built decks (owned but claimed there, can be moved over), conflicts and last update.",
+      "cards in other built decks (owned but claimed there, can be moved over), conflicts, last update and, for Commander " +
+      "decks, the bracket and 1-10 power score (' · B3 · 6.4/10'; B≥3 / ≥6.4 = combos not checked yet, may be higher).",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { title: "List decks", readOnlyHint: true, openWorldHint: false },
     run: listDecksTool,
@@ -231,17 +269,46 @@ const TOOLS = [
       "Show one deck with its status (idea/built), every card, its board, and ownership against the collection: TO BUY n = " +
       "copies the user does not own at all; IN USE n in other deck(s) = owned copies claimed by other built decks (can be moved " +
       "over, not a purchase) on an idea deck; on a BUILT deck the same copies show as SHARED n with <deck> (CONFLICT: both " +
-      "built decks need them, buy extra to play both); basic. Per-card prices, the deck value in EUR, its shopping list and the in-use list.",
+      "built decks need them, buy extra to play both); basic. Per-card prices, the deck value in EUR, its shopping list and the in-use list. " +
+      POWER_TEXT_HELP,
     inputSchema: {
       type: "object",
       properties: {
         deck: { type: ["string", "integer"], description: "Deck id, or (part of) the deck name." },
+        target_bracket: { type: "integer", minimum: 1, maximum: 5, description: "Optional: add a verdict line for this Commander bracket (OK / OVER / UNDER)." },
       },
       required: ["deck"],
       additionalProperties: false,
     },
-    annotations: { title: "Show deck", readOnlyHint: true, openWorldHint: false },
+    annotations: { title: "Show deck", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     run: getDeck,
+  },
+  {
+    name: "evaluate_deck",
+    description:
+      "Dry run: check a DRAFT decklist without saving it to your decks (it only caches card data and combo results). Returns its stats and, for Commander decks, the bracket (1-5, " +
+      "from WotC's rules: Game Changers, mass land denial, extra turns, two-card combos) and the 1-10 power score with its " +
+      "breakdown. With target_bracket it ends with 'Target bracket N: OK', 'OVER - <the rules and cards that push it higher>' " +
+      "or 'UNDER - <weakest categories>'. Use it BEFORE save_deck when the user wants a deck for a bracket: swap the cards " +
+      "named in OVER and check again. Give the list as decklist text (\"1 Sol Ring\" per line, sections Commander/Deck/" +
+      "Sideboard) or as cards (same shape as save_deck). Card names (only names and counts) are sent to Commander Spellbook " +
+      "for the combo check unless the user turned it off. " + POWER_TEXT_HELP,
+    inputSchema: {
+      type: "object",
+      properties: {
+        decklist: { type: "string", description: "Decklist text, one \"<count> <name>\" per line; a \"Commander\" section (or commander) sets the commander." },
+        cards: { ...CARDS_SCHEMA, description: "Instead of decklist: the cards, like save_deck's cards." },
+        format: { type: "string", description: "Format, e.g. commander (default when there is a commander or ~100 cards)." },
+        commander: {
+          anyOf: [{ type: "string" }, { type: "array", items: { type: "string" }, maxItems: 2 }],
+          description: "Commander name (or two partners) when the list doesn't mark it.",
+        },
+        target_bracket: { type: "integer", minimum: 1, maximum: 5, description: "Bracket the user wants (1-5): adds the OK / OVER / UNDER verdict." },
+      },
+      additionalProperties: false,
+    },
+    annotations: { title: "Evaluate draft deck", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    run: evaluateDeckTool,
   },
   {
     name: "shopping_list",
@@ -263,7 +330,8 @@ const TOOLS = [
       "Put the commander (and partner/background) in board \"commander\", the 99 in \"main\", optional extras in " +
       "\"side\" or \"maybe\". Include basic lands with their counts. Decks with source manabox are re-synced from the " +
       "user's ManaBox binders on the next import, so prefer creating a new deck over overwriting one of those. " +
-      "Returns the deck id, any names that could not be resolved, and the deck with ownership and missing cost.",
+      "Returns the deck id, any names that could not be resolved, and the deck with ownership, missing cost, stats, bracket and " +
+      "score. With target_bracket it adds the verdict line (Target bracket N: OK / OVER / UNDER, see evaluate_deck).",
     inputSchema: {
       type: "object",
       properties: {
@@ -275,21 +343,8 @@ const TOOLS = [
           type: "string", enum: DECK_STATUSES,
           description: "idea (default for new decks: a plan, claims no cards) or built (the user has physically built it; its cards are then claimed). Omit to keep an existing deck's status.",
         },
-        cards: {
-          type: "array", minItems: 1, maxItems: 500,
-          items: {
-            type: "object",
-            properties: {
-              name: { type: "string", description: "Exact English card name." },
-              quantity: { type: "integer", minimum: 1, default: 1 },
-              board: { type: "string", enum: BOARDS, default: "main" },
-              set: { type: "string", description: "Optional set code to force a printing, e.g. \"cmm\"." },
-              collector_number: { type: "string", description: "Optional collector number (with set)." },
-            },
-            required: ["name"],
-            additionalProperties: false,
-          },
-        },
+        target_bracket: { type: "integer", minimum: 1, maximum: 5, description: "Optional Commander bracket the deck is meant for: adds the OK / OVER / UNDER verdict." },
+        cards: CARDS_SCHEMA,
       },
       required: ["name", "cards"],
       additionalProperties: false,
@@ -572,7 +627,10 @@ const deckLine = (k) =>
     ? `, ${k.in_use_count} shared with other built decks (buy extra to play both)`
     : `, ${k.in_use_count} in other built decks (can be moved)`) : ""}` +
   `${k.conflict_count ? `, ${k.conflict_count} CONFLICTS with other built decks` : ""}` +
-  `, source ${k.source}, updated ${k.updated_at}`;
+  `, source ${k.source}, updated ${k.updated_at}` +
+  `${k.bracket != null ? ` · B${k.bracket_partial && k.bracket_declared == null ? "≥" : ""}${k.bracket}` : ""}` +
+  `${k.score != null ? ` · ${k.score_partial ? "≥" : ""}${k.score.toFixed(1)}/10` : ""}` +
+  `${k.legal === false ? " · not Commander-legal" : ""}`;
 
 function shoppingListTool() {
   const { built, per_deck: perDeck } = shoppingList(getDb());
@@ -601,32 +659,91 @@ function listDecksTool() {
   return decks.length ? decks.map(deckLine).join("\n") : "The user has no decks yet.";
 }
 
-function getDeck(args) {
+/** target_bracket argument: undefined/null = none, else an integer 1-5 (ToolError otherwise). */
+function targetBracket(v) {
+  if (v == null) return null;
+  if (!Number.isInteger(v) || v < 1 || v > 5) throw new ToolError("target_bracket must be an integer 1-5.");
+  return v;
+}
+
+/**
+ * deckDetail with its combos checked when they are missing or stale: one
+ * Spellbook call (shared settings, slots and backoff), waiting at most
+ * COMBO_WAIT_MS; on timeout/offline the text says "combos not checked".
+ */
+async function detailWithCombos(d, id) {
+  const detail = deckDetail(d, id);
+  if (!detail?.combos?.needs_fetch || !detail.spellbook_request) return detail;
+  await combos().evaluate(detail.spellbook_request, { waitMs: COMBO_WAIT_MS });
+  return deckDetail(d, id);
+}
+
+async function getDeck(args) {
   const d = getDb();
+  const target = targetBracket(args.target_bracket);
   const deck = findDeck(d, args.deck);
   if (!deck) {
     const names = listDecks(d).map(deckLine);
     throw new ToolError(`No deck matches "${args.deck}".${names.length ? `\nDecks:\n${names.join("\n")}` : " The user has no decks."}`);
   }
-  return deckToText(deckDetail(d, deck.id));
+  const detail = await detailWithCombos(d, deck.id);
+  const text = deckToText(detail);
+  return target ? `${text}\n\n${bracketVerdict(detail.power, target)}` : text;
+}
+
+/** save_deck / evaluate_deck cards → deck items (ToolError on bad input). */
+function cardItems(cards) {
+  if (!Array.isArray(cards) || cards.length === 0) throw new ToolError("cards must be a non-empty array.");
+  if (cards.length > 500) throw new ToolError("At most 500 cards.");
+  return cards.map((c, i) => {
+    const cardName = String(c?.name ?? "").trim();
+    if (!cardName) throw new ToolError(`cards[${i}] has no name.`);
+    if (c.board != null && !BOARDS.includes(c.board)) throw new ToolError(`cards[${i}].board must be one of ${BOARDS.join(", ")}.`);
+    // A companion lives on the side board (outside the 99).
+    const companion = c.companion === true;
+    return {
+      name: cardName,
+      quantity: int(c.quantity, 1, 1, 999),
+      board: companion ? "side" : c.board ?? "main",
+      set: c.set ? String(c.set).toLowerCase() : undefined,
+      collector_number: c.set && c.collector_number != null ? String(c.collector_number) : undefined,
+      ...(companion ? { companion: true } : {}),
+    };
+  });
+}
+
+async function evaluateDeckTool(args) {
+  const target = targetBracket(args.target_bracket);
+  const hasText = typeof args.decklist === "string" && args.decklist.trim();
+  if (!hasText && args.cards == null) throw new ToolError("Give the draft as decklist (text) or cards.");
+  if (hasText && args.decklist.length > 200000) throw new ToolError("decklist is too long.");
+  const items = hasText ? null : cardItems(args.cards);
+  const commander = Array.isArray(args.commander) ? args.commander.slice(0, 2).map(String) : args.commander != null ? String(args.commander) : null;
+  const d = getDb();
+  const draft = await draftDeck(d, { text: hasText ? args.decklist : null, items, format: args.format ? String(args.format) : null, commander });
+  if (!draft.rows.length) {
+    throw new ToolError(`No cards recognised${draft.parse_errors.length ? ` (e.g. "${draft.parse_errors[0]}")` : ""}.`);
+  }
+  const view = draft.request ? await combos().evaluate(draft.request, { waitMs: COMBO_WAIT_MS }) : undefined;
+  const p = deckPower(d, draft.deck, draft.rows, { combos: view });
+  const counts = BOARDS.map((b) => `${b} ${draft.rows.filter((r) => r.board === b).reduce((a, r) => a + r.quantity, 0)}`).join(", ");
+  const lines = [`Draft${draft.deck.format ? ` [${draft.deck.format}]` : ""} (not saved): ${counts}.${p.power.commander ? "" : " Not a Commander deck: stats only (no bracket or score)."}`];
+  if (draft.unresolved.length) lines.push(`Not found on Scryfall (check spelling; left out of the checks): ${draft.unresolved.join("; ")}`);
+  if (draft.parse_errors.length) lines.push(`Lines not understood: ${draft.parse_errors.slice(0, 5).join("; ")}${draft.parse_errors.length > 5 ? "; ..." : ""}`);
+  lines.push(...powerLines(p));
+  if (p.combos?.items.length) {
+    const top = p.combos.items.slice(0, 5).map((c) => `${c.cards.join(" + ")} (${c.assembly_mv ?? "?"} mana)`);
+    lines.push(`Combos (Commander Spellbook): ${top.join("; ")}${p.combos.items.length > 5 ? "; ..." : ""}`);
+  }
+  if (target) lines.push(bracketVerdict(p.power, target));
+  return lines.join("\n");
 }
 
 async function saveDeckTool(args) {
   const name = String(args.name ?? "").trim();
   if (!name) throw new ToolError("name is required.");
-  if (!Array.isArray(args.cards) || args.cards.length === 0) throw new ToolError("cards must be a non-empty array.");
-  const items = args.cards.map((c, i) => {
-    const cardName = String(c?.name ?? "").trim();
-    if (!cardName) throw new ToolError(`cards[${i}] has no name.`);
-    if (c.board != null && !BOARDS.includes(c.board)) throw new ToolError(`cards[${i}].board must be one of ${BOARDS.join(", ")}.`);
-    return {
-      name: cardName,
-      quantity: int(c.quantity, 1, 1, 999),
-      board: c.board ?? "main",
-      set: c.set ? String(c.set).toLowerCase() : undefined,
-      collector_number: c.set && c.collector_number != null ? String(c.collector_number) : undefined,
-    };
-  });
+  const items = cardItems(args.cards);
+  const target = targetBracket(args.target_bracket);
   const d = getDb();
   let id;
   if (args.status != null && !DECK_STATUSES.includes(args.status)) throw new ToolError(`status must be ${DECK_STATUSES.join(" or ")}.`);
@@ -644,7 +761,10 @@ async function saveDeckTool(args) {
   if (saved.unresolved.length) {
     lines.push(`Could not resolve ${saved.unresolved.length} name(s) on Scryfall (kept as unknown cards — check spelling): ${saved.unresolved.join("; ")}`);
   }
-  lines.push("", deckToText(deckDetail(d, saved.id)));
+  // With a target the verdict needs the combos (usually cached by the evaluate_deck run before).
+  const detail = target ? await detailWithCombos(d, saved.id) : deckDetail(d, saved.id);
+  lines.push("", deckToText(detail));
+  if (target) lines.push("", bracketVerdict(detail.power, target));
   return lines.join("\n");
 }
 

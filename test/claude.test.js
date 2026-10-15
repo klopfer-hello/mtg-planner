@@ -127,7 +127,37 @@ describe("planner prompt", () => {
     assert.match(PLANNER_PROMPT, /No tables/);
     assert.match(PLANNER_PROMPT, /Never list the whole deck/);
     assert.match(PLANNER_PROMPT, /no text before or between tool calls/);
-    assert.ok(PLANNER_PROMPT.length < 2700, `prompt stays short (${PLANNER_PROMPT.length} chars)`);
+    // 2891 chars measured with the v0.7.0 bracket rule; cap = that + ~50.
+    assert.ok(PLANNER_PROMPT.length < 2940, `prompt stays short (${PLANNER_PROMPT.length} chars)`);
+  });
+
+  test("brackets: evaluate_deck before save_deck for a target bracket, tutors and B1/B5 rules", () => {
+    for (const s of ["evaluate_deck", "get_deck/evaluate_deck", "run evaluate_deck before save_deck", "OVER", "Tutors don't limit brackets", "B1/B5 are the user's call"]) {
+      assert.ok(PLANNER_PROMPT.includes(s), `prompt mentions ${s}`);
+    }
+    assert.match(PLANNER_PROMPT, /get_deck, evaluate_deck, shopping_list/, "evaluate_deck in the Tools line");
+  });
+});
+
+describe("MCP config", () => {
+  test("passes the Spellbook opt-out and the app version to the collection server", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { readFileSync } = await import("node:fs");
+    const url = new URL("../lib/claude.js", import.meta.url).href;
+    const run = (extra) => {
+      const env = { ...process.env, SCRYFALL_MCP_ENTRY: path.join(tmp, "none.js"), ...extra };
+      for (const k of Object.keys(env)) if (env[k] == null) delete env[k];
+      const file = execFileSync(process.execPath, ["--disable-warning=ExperimentalWarning", "--input-type=module", "-e",
+        `const m = await import(${JSON.stringify(url)}); process.stdout.write(m.prepareMcpConfig());`],
+      { env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      return JSON.parse(readFileSync(file, "utf8")).mcpServers.collection.env;
+    };
+    const off = run({ SPELLBOOK_ENABLED: "false", APP_VERSION: "9.9.9+test" });
+    assert.equal(off.SPELLBOOK_ENABLED, "false");
+    assert.equal(off.APP_VERSION, "9.9.9+test");
+    const dflt = run({ SPELLBOOK_ENABLED: null, APP_VERSION: null });
+    assert.equal(dflt.SPELLBOOK_ENABLED, undefined, "not set: the meta setting decides");
+    assert.equal(dflt.APP_VERSION, "dev");
   });
 });
 

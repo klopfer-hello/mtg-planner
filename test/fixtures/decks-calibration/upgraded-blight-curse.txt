@@ -1,0 +1,97 @@
+// Auntie Ool’s: »Blight Curse« (Heavily modified precon)
+// Source: https://archidekt.com/decks/20289302 by big_deck (Archidekt), author's bracket 3, list updated 2026-10-09, retrieved 2026-10-15
+
+Commander
+1 Auntie Ool, Cursewretch
+
+Deck
+1 Three Visits
+1 Dawnhand Dissident
+1 Haunted Ridge
+1 Blood Crypt
+1 Nature's Lore
+1 Sol Ring
+1 Village Pillagers
+1 Channeler Initiate
+1 Exotic Orchard
+1 Path of Ancestry
+1 Sinister Gnarlbark
+1 Puca's Covenant
+1 Glissa Sunslayer
+1 Ignoble Hierarch
+1 Woodland Cemetery
+1 Command Tower
+1 Tree of Perdition
+1 Assassin's Trophy
+1 Massacre Girl, Known Killer
+1 The Scorpion God
+1 Dusk Urchins
+1 Black Sun's Zenith
+1 Blowfly Infestation
+1 Soul Snuffers
+1 Evolution Sage
+1 Devoted Druid
+1 Flourishing Defenses
+1 Kulrath Knight
+1 Savage Lands
+1 Nest of Scarabs
+1 Overgrown Tomb
+1 Stomping Ground
+1 Ziatora's Proving Ground
+1 Twilight Mire
+1 Rockfall Vale
+1 Deathcap Glade
+1 Sulfurous Springs
+1 Graven Cairns
+1 Fire-Lit Thicket
+1 Llanowar Wastes
+1 Blasphemous Act
+1 Wickersmith's Tools
+1 Persist
+1 Poison-Tip Archer
+1 Necroskitter
+1 Oft-Nabbed Goat
+1 Thirsting Roots
+1 City of Brass
+1 Reflecting Pool
+1 Boggart Trawler // Boggart Bog
+1 Midnight Banshee
+1 Varragoth, Bloodsky Sire
+1 Insatiable Avarice
+1 Blazemire Verge
+1 Wastewood Verge
+1 Unnatural Restoration
+1 Quillspike
+1 Eventide's Shadow
+1 Obelisk Spider
+1 Cauldron of Essence
+1 The Reaper, King No More
+1 Nesting Grounds
+1 Karn's Bastion
+1 Spymaster's Vault
+1 Glistening Oil
+1 Bloated Contaminator
+1 Core Prowler
+1 Vraska, Betrayal's Sting
+1 Contagion Clasp
+1 Grim Affliction
+1 Hexing Squelcher
+1 Staff of Compleation
+1 Scuzzback Scrounger
+1 Dread Tiller
+1 Whisper of the Dross
+1 Fell the Profane // Fell Mire
+1 Hapatra, Vizier of Poisons
+1 Corrosive Mentor
+1 Cankerbloom
+10 Swamp
+1 Dragonskull Summit
+1 Reanimate
+1 Heroic Intervention
+1 Generous Patron
+1 Farseek
+1 Everlasting Torment
+1 Feed the Swarm
+1 Grave Venerations
+1 Sudden Spoiling
+1 Birds of Paradise

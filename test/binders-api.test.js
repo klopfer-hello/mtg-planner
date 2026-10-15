@@ -90,7 +90,7 @@ describe("binder API", () => {
     assert.deepEqual(body.binders.map((b) => [b.name, b.copies]), [["Box", 3], ["Scans", 2]]);
     assert.equal(body.unsorted.copies, 1);
     assert.equal(body.collection_master, "manabox");
-    assert.deepEqual((await call("GET", "/api/settings")).body, { collection_master: "manabox" });
+    assert.equal((await call("GET", "/api/settings")).body.collection_master, "manabox");
     assert.equal((await call("GET", "/api/stats")).body.collection_master, "manabox");
   });
 
@@ -154,7 +154,7 @@ describe("binder API", () => {
     assert.equal(r.body.code, "confirm_replace");
     assert.equal((await call("PATCH", "/api/settings", { collection_master: "nope" })).status, 400);
     r = await call("PATCH", "/api/settings", { collection_master: "manabox" });
-    assert.deepEqual(r.body, { collection_master: "manabox" });
+    assert.equal(r.body.collection_master, "manabox");
     // Back to ManaBox as master: replace passes the guard again (fails later on the empty body).
     r = await call("POST", "/api/import/manabox?mode=replace", undefined, { "Content-Type": "text/csv" });
     assert.equal(r.status, 400);

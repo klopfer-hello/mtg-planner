@@ -3,9 +3,11 @@
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  DeckError, deckDetail, deckToText, eurForFinish, eurOfPrinting, exportDeck, findDeck, listDecks, normalizeFormat, parseDecklist, saveDeck, saveDeckRows,
-  setCommander, updateDeckCard,
+  DeckError, bracketVerdict, canPair, deckComboRequest, deckDetail, deckPower, deckToText, draftDeck, eurForFinish, eurOfPrinting, exportDeck, findDeck,
+  listDecks, normalizeFormat, parseDecklist, powerLines, saveDeck, saveDeckRows, scoreText, setCommander, updateDeckCard,
 } from "../lib/decks.js";
+import { CEDH_HINT } from "../lib/power.js";
+import { SPELLBOOK_PARSER, deckPayloadRows, spellbookRequest } from "../lib/spellbook.js";
 import { upsertCards } from "../lib/db.js";
 import { ID, seedCards, seedCollection, stubScryfall, tempDb } from "./fixtures.js";
 
@@ -51,7 +53,7 @@ describe("parseDecklist", () => {
     assert.equal(boards("Commanders"), "commander");
     assert.equal(boards("COMMANDER:"), "commander");
     assert.equal(boards("Mainboard"), "main");
-    assert.equal(boards("Companion"), "main");
+    assert.equal(boards("Companion"), "side");
     assert.equal(boards("Side"), "side");
     assert.equal(boards("Maybe"), "maybe");
     assert.equal(boards("Considering"), "maybe");
@@ -409,5 +411,216 @@ describe("deck editing", () => {
     assert.equal(deckDetail(ctx.db, id).commander_suggestions, undefined);
     const other = deck("modern", [["main", "Atraxa, Praetors' Voice", ID.atraxa]]);
     assert.equal(deckDetail(ctx.db, other).commander_suggestions, undefined);
+  });
+});
+
+// v0.7.0: stats, bracket, score and the cached combos in deckDetail / listDecks / deckToText,
+// the draft (evaluate) path and the target-bracket verdict. Combos come from the cache only;
+// rows are written straight into spellbook_cache (no network).
+describe("deck power", () => {
+  let ctx;
+  beforeEach(() => {
+    ctx = tempDb();
+    seedCards(ctx.db);
+    seedCollection(ctx.db, [[ID.sol, 1], [ID.atraxa, 1], [ID.counterspell, 1], [ID.serra, 1], [ID.forest, 40], [ID.lightning, 4]]);
+  });
+  afterEach(() => ctx.cleanup());
+
+  const commanderDeck = (extra = [], opts = {}) => saveDeckRows(ctx.db, {
+    name: "Atraxa", format: opts.format === undefined ? "commander" : opts.format, rows: [
+      { name: "Atraxa, Praetors' Voice", scryfall_id: ID.atraxa, quantity: 1, board: opts.noCommander ? "main" : "commander" },
+      { name: "Sol Ring", scryfall_id: ID.sol, quantity: 1, board: "main" },
+      { name: "Counterspell", scryfall_id: ID.counterspell, quantity: 1, board: "main" },
+      { name: "Forest", scryfall_id: ID.forest, quantity: 30, board: "main" },
+      ...extra,
+    ],
+  });
+  /** Cache a trimmed Spellbook result for a request key (what refreshCombos would write). */
+  const cache = (key, result, fetchedAt = new Date().toISOString()) => ctx.db.prepare(
+    `INSERT OR REPLACE INTO spellbook_cache (key, fetched_at, last_used_at, status, error, tag_raw, parser, result)
+     VALUES (?, ?, ?, 'ok', NULL, ?, ?, ?)`,
+  ).run(key, fetchedAt, fetchedAt, result.tag, SPELLBOOK_PARSER, JSON.stringify(result));
+  const FAST_COMBO = {
+    parser: SPELLBOOK_PARSER, tag: "R", gc: [], mld: [], extra_turns: [], banned: [], combos_total: 1, unresolved: [],
+    combos: [{
+      id: "1-2", cards: ["Sol Ring", "Counterspell"], produces: ["Win the game"], manaValueNeeded: 3, speed: 3,
+      definitelyTwoCard: true, arguablyTwoCard: true, relevant: true, borderlineRelevant: false, lock: false, extraTurn: false,
+      massLandDenial: false, skipTurns: false, controlAllOpponents: false, controlSomeOpponents: false,
+    }],
+  };
+
+  test("commander deck: stats, power and a pending combo view; the request is not enumerable", () => {
+    const d = deckDetail(ctx.db, commanderDeck());
+    assert.equal(d.stats.total, 33);
+    assert.equal(d.stats.lands, 30);
+    assert.equal(d.power.commander, true);
+    assert.equal(d.power.bracket.auto, 2);
+    assert.equal(d.power.bracket.partial, true);
+    assert.equal(d.power.bracket.display, "≥2");
+    assert.equal(d.power.score.partial, true);
+    assert.equal(d.power.legality.ok, false, "33 cards, not 100");
+    assert.equal(d.combos.status, "pending");
+    assert.equal(d.combos.needs_fetch, true);
+    assert.deepEqual(d.combos.items, []);
+    assert.ok(d.spellbook_request?.key);
+    assert.ok(!Object.keys(d).includes("spellbook_request"));
+    assert.equal(JSON.parse(JSON.stringify(d)).spellbook_request, undefined);
+  });
+
+  test("cached combos raise the bracket (fast 2-card combo → 4), with Spellbook links; list rows follow", () => {
+    const id = commanderDeck();
+    const key = deckComboRequest(ctx.db, id).key;
+    assert.equal(key, deckDetail(ctx.db, id).spellbook_request.key, "same key from the list and from the detail");
+    assert.equal(key, spellbookRequest(deckPayloadRows(ctx.db, id), { isCommander: true }).key, "same key as lib/spellbook.js builds");
+    cache(key, FAST_COMBO);
+    const d = deckDetail(ctx.db, id);
+    assert.equal(d.combos.status, "ok");
+    assert.equal(d.combos.checked, true);
+    assert.equal(d.combos.tag, "R");
+    assert.equal(d.combos.items[0].url, "https://commanderspellbook.com/combo/1-2/");
+    assert.equal(d.power.bracket.auto, 4);
+    assert.equal(d.power.bracket.display, "4");
+    assert.equal(d.power.score.partial, false);
+    const [row] = listDecks(ctx.db);
+    assert.equal(row.bracket, 4);
+    assert.equal(row.bracket_partial, false);
+    assert.equal(row.bracket_display, "4");
+    assert.equal(row.score, d.power.score.value);
+    assert.equal(row.legal, false);
+    assert.equal(row.combos_status, "ok");
+    // Stale entries are still used ("combos from <date>") and ask for a refresh.
+    cache(key, FAST_COMBO, "2020-01-01T00:00:00.000Z");
+    const stale = deckDetail(ctx.db, id);
+    assert.equal(stale.combos.status, "stale");
+    assert.equal(stale.combos.needs_fetch, true);
+    assert.equal(stale.power.bracket.auto, 4);
+    assert.match(deckToText(stale), /\nBracket: 4 Optimized \(auto; combos from 2020-01-01\)/);
+  });
+
+  test("declared bracket wins the display; the memo follows deck changes", () => {
+    const id = commanderDeck();
+    cache(deckComboRequest(ctx.db, id).key, FAST_COMBO);
+    ctx.db.prepare("UPDATE decks SET bracket_declared = 2 WHERE id = ?").run(id);
+    let d = deckDetail(ctx.db, id);
+    assert.equal(d.power.bracket.value, 2);
+    assert.equal(d.power.bracket.auto, 4);
+    assert.ok(d.power.bracket.reasons.some((r) => r.rule === "declared_below"));
+    assert.match(deckToText(d), /\nBracket: 2 Core \(set by the user; rules: 4; combos checked/);
+    assert.equal(listDecks(ctx.db)[0].bracket, 2);
+    ctx.db.prepare("UPDATE decks SET bracket_declared = NULL WHERE id = ?").run(id);
+    updateDeckCard(ctx.db, id, { name: "Counterspell", board: "main", quantity: 0 });
+    d = deckDetail(ctx.db, id);
+    assert.equal(d.power.bracket.declared, null);
+    assert.equal(d.combos.status, "pending", "another card set: another cache key");
+    assert.equal(d.stats.total, 32);
+  });
+
+  test("non-commander decks: stats only, no request", () => {
+    const id = saveDeckRows(ctx.db, { name: "Burn", format: "modern", rows: [{ name: "Lightning Bolt", scryfall_id: ID.lightning, quantity: 4, board: "main" }] });
+    const d = deckDetail(ctx.db, id);
+    assert.equal(d.stats.total, 4);
+    assert.deepEqual(d.power, { commander: false, bracket: null, score: null, legality: null });
+    assert.equal(d.combos, null);
+    assert.equal(d.spellbook_request, null);
+    assert.equal(deckComboRequest(ctx.db, id), null);
+    const text = deckToText(d);
+    assert.match(text, /\nStats: 4 cards · lands 0 · avg MV 1 · curve 0:0 1:4 /);
+    assert.doesNotMatch(text, /\nBracket:|\nScore /);
+    const row = listDecks(ctx.db)[0];
+    assert.equal(row.bracket, null);
+    assert.equal(row.score, null);
+    assert.equal(row.legal, null);
+  });
+
+  test("a ManaBox deck without format but with a commander board is a commander deck", () => {
+    const id = commanderDeck([], { format: null });
+    assert.equal(deckDetail(ctx.db, id).power.commander, true);
+    const plain = commanderDeck([], { format: null, noCommander: true });
+    assert.equal(deckDetail(ctx.db, plain).power.commander, false, "33 cards, no commander board");
+  });
+
+  test("deckToText: Stats, Bracket, Score and legality lines after Value", () => {
+    const id = commanderDeck([{ name: "Lightning Bolt", scryfall_id: ID.lightning, quantity: 1, board: "main" }]);
+    cache(deckComboRequest(ctx.db, id).key, FAST_COMBO);
+    const lines = deckToText(deckDetail(ctx.db, id)).split("\n");
+    const at = lines.findIndex((l) => l.startsWith("Value:"));
+    assert.match(lines[at + 1], /^Stats: 34 cards · lands 30 · avg MV [\d.]+ · curve 0:0 1:2 2:1 3:0 4:0 5:0 6:0 7\+:0 · pips .* \/ sources /);
+    assert.match(lines[at + 2], /^Bracket: 4 Optimized \(auto; combos checked \d{4}-\d\d-\d\d\) - 2-card combo Sol Ring \+ Counterspell, ≤4 mana \(3 mana\)/);
+    assert.match(lines[at + 2], /Spellbook: Ruthless \(≈4\)/);
+    assert.match(lines[at + 3], /^Score [\d.]+\/10: speed [\d.]+\/1 · fast mana 0\.2\/1\.75 · tutors 0\/1 · combos 1\.5\/2 · interaction [\d.]+\/1 · draw [\d.]+\/1 · ramp [\d.]+\/0\.75 · mana base [\d.]+\/0\.5/);
+    assert.match(lines[at + 4], /^Not Commander-legal: .*Lightning Bolt/);
+  });
+
+  test("powerLines while combos are unchecked: ≥ and the reason once", () => {
+    const d = deckDetail(ctx.db, commanderDeck());
+    const [, bracket, score] = powerLines(d);
+    assert.match(bracket, /^Bracket: ≥2 Core \(auto; combos not checked \(pending\)\) - No rule pushes it higher/);
+    assert.equal(bracket.match(/combos not checked/g).length, 1);
+    assert.match(score, /^Score ≥[\d.]+\/10: /);
+    assert.equal(scoreText(null), null);
+  });
+
+  test("bracketVerdict: OK / OVER with the floor reasons / UNDER with the weakest categories", () => {
+    const id = commanderDeck();
+    cache(deckComboRequest(ctx.db, id).key, FAST_COMBO);
+    const { power } = deckDetail(ctx.db, id);
+    assert.equal(bracketVerdict(power, 4), "Target bracket 4: OK");
+    assert.match(bracketVerdict(power, 3), /^Target bracket 3: OVER - 2-card combo Sol Ring \+ Counterspell/);
+    assert.match(bracketVerdict(power, 2), /^Target bracket 2: OVER - /);
+    assert.match(bracketVerdict(power, 5), /^Target bracket 5: UNDER - not cEDH-like.*weakest: /);
+    // The thresholds in the text are CEDH_HINT's (not a stale copy).
+    assert.ok(bracketVerdict(power, 5).includes(`≥${CEDH_HINT.fast_mana} fast mana`));
+    assert.ok(bracketVerdict(power, 5).includes(`avg MV ≤ ${CEDH_HINT.avg_mv})`));
+    // A deck the user set to 5 fits target 5.
+    assert.match(bracketVerdict({ ...power, bracket: { ...power.bracket, declared: 5, cedh_hint: false } }, 5), /^Target bracket 5: OK \(the user set Bracket 5\)/);
+    assert.equal(bracketVerdict(power, 0), null);
+    assert.equal(bracketVerdict(power, "x"), null);
+
+    const plain = deckDetail(ctx.db, commanderDeck([{ name: "Serra Angel", scryfall_id: ID.serra, quantity: 1, board: "main" }])); // another key, no cache: ≥2
+    assert.match(bracketVerdict(plain.power, 2), /^Target bracket 2: OK \(combos not checked yet: it may still go up\)$/);
+    assert.match(bracketVerdict(plain.power, 1), /^Target bracket 1: OK \(no rule pushes it above 2; Bracket 1 is about intent\)/);
+    assert.match(bracketVerdict(plain.power, 4), /^Target bracket 4: UNDER - the rules give 2 Core, score [\d.]+; weakest: .+\(.+\)/);
+    assert.match(bracketVerdict({ commander: false, bracket: null }, 3), /not a Commander deck/);
+  });
+
+  test("draftDeck + deckPower: a decklist checked without a deck row", async () => {
+    const decks = ctx.db.prepare("SELECT COUNT(*) AS n FROM decks").get().n;
+    const draft = await draftDeck(ctx.db, { text: "1 Sol Ring\n1 Counterspell\n1 Atraxa, Praetors' Voice\n30 Forest", commander: "Atraxa, Praetors' Voice" });
+    assert.deepEqual(draft.rows.map((r) => [r.board, r.name, r.quantity]), [
+      ["main", "Sol Ring", 1], ["main", "Counterspell", 1], ["main", "Forest", 30], ["commander", "Atraxa, Praetors' Voice", 1],
+    ]);
+    assert.equal(draft.commander, true);
+    assert.equal(draft.deck.format, null);
+    const saved = commanderDeck();
+    assert.equal(draft.request.key, deckComboRequest(ctx.db, saved).key, "the draft and the saved deck share a cache entry");
+    const view = { status: "ok", fetched_at: new Date().toISOString(), result: FAST_COMBO };
+    const p = deckPower(ctx.db, draft.deck, draft.rows, { combos: view });
+    assert.equal(p.power.bracket.auto, 4);
+    assert.equal(p.stats.total, 33);
+    assert.equal(p.combos.items.length, 1);
+    assert.equal(ctx.db.prepare("SELECT COUNT(*) AS n FROM decks").get().n, decks + 1, "only the saveDeckRows above");
+
+    // A companion stays out of the request and out of the counted cards.
+    const comp = await draftDeck(ctx.db, { text: "Companion\n1 Lightning Bolt\n\nCommander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n1 Counterspell\n30 Forest" });
+    assert.deepEqual(comp.rows.find((r) => r.name === "Lightning Bolt"), { ...comp.rows.find((r) => r.name === "Lightning Bolt"), board: "side", companion: 1 });
+    assert.equal(comp.request.key, draft.request.key);
+    // Not a commander deck: no request.
+    const modern = await draftDeck(ctx.db, { text: "4 Lightning Bolt", format: "modern" });
+    assert.equal(modern.commander, false);
+    assert.equal(modern.request, null);
+  });
+
+  test("an unresolved front-face name is sent as its full name from the local cards table", () => {
+    const id = commanderDeck([{ name: "Delver of Secrets", scryfall_id: null, quantity: 1, board: "main" }]);
+    const req = deckComboRequest(ctx.db, id);
+    assert.ok(req.names.includes("Delver of Secrets // Insectile Aberration"));
+    assert.equal(req.key, spellbookRequest(deckPayloadRows(ctx.db, id), { isCommander: true }).key);
+  });
+
+  test("canPair is exported (lib/power.js uses it)", () => {
+    const bg = { name: "B", type_line: "Legendary Enchantment — Background", oracle_text: "" };
+    const chooser = { name: "A", type_line: "Legendary Creature", oracle_text: "Choose a Background" };
+    assert.equal(canPair(chooser, bg), true);
+    assert.equal(canPair(chooser, chooser), false);
   });
 });

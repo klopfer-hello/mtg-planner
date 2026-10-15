@@ -1,0 +1,95 @@
+// Indi-elephant Jones - Lorehold Spirit precon upgrade
+// Source: https://archidekt.com/decks/21339969 by cjw217 (Archidekt), author's bracket 3, list updated 2026-10-14, retrieved 2026-10-15
+
+Commander
+1 Quintorius, History Chaser
+
+Deck
+1 Sokenzan, Crucible of Defiance
+1 Lorehold Excavation
+1 Flare of Fortitude
+1 Lion Sash
+1 Anger
+1 Ceaseless Conflict
+1 Clifftop Retreat
+1 Command Tower
+1 Conspiracy Theorist
+1 Furycalm Snarl
+1 Fabled Passage
+1 Mistveil Plains
+1 Sunscorched Divide
+1 Terramorphic Expanse
+1 Flawless Maneuver
+1 Chaos Warp
+1 Ghost Vacuum
+1 Deification
+1 Path to Exile
+1 Generous Gift
+1 Sundering Eruption // Volcanic Fissure
+1 Summoner's Sending
+1 Glittering Massif
+1 Radiant Summit
+3 Mountain
+1 On Wings of Gold
+1 Squee, Goblin Nabob
+1 Hofri Ghostforge
+1 Serra Paragon
+1 Pit of Offerings
+1 Hardened Academic
+1 Enduring Courage
+1 Elegant Parlor
+1 Tragic Arrogance
+1 Containment Construct
+1 Currency Converter
+1 Perpetual Timepiece
+1 Relic Retriever
+1 Sevinne's Reclamation
+1 Sundown Pass
+1 Forgotten Cave
+1 Battlefield Forge
+1 Secluded Steppe
+1 Wayfarer's Bauble
+1 Scrabbling Claws
+1 Sun Titan
+1 Talisman of Conviction
+1 Drogskol Reinforcements
+1 Plargg, Dean of Chaos // Augusta, Dean of Order
+1 Drownyard Temple
+1 Onakke Oathkeeper
+1 Gift of Immortality
+1 Purify the Grave
+1 Magmatic Chasm
+1 Vanguard of the Restless
+1 Anointed Procession
+1 Fellwar Stone
+1 Elspeth's Talent
+1 Quintorius, Loremaster
+1 Exalted Sunborn
+1 Tersa Lightshatter
+1 Rugged Prairie
+1 Banon, the Returners' Leader
+1 Mondrak, Glory Dominus
+1 Teferi's Protection
+1 Faithless Looting
+1 Archaeomancer's Map
+1 Cathartic Reunion
+10 Plains
+1 Selfless Spirit
+1 Ajani Unrelenting
+1 Excava, the Risen Past
+1 Elspeth, Storm Slayer
+1 Mila, Crafty Companion // Lukka, Wayward Bonder
+1 Arcane Signet
+1 Sol Ring
+1 Swords to Plowshares
+1 Turbulent Steppe
+1 Sacred Foundry
+1 Spectator Seating
+1 Sunbillow Verge
+1 Monument to Endurance
+1 Caretaker's Talent
+1 Renewed Solidarity
+1 Ojer Taq, Deepest Foundation // Temple of Civilization
+1 Underworld Breach
+1 Clever Concealment
+1 Enlightened Tutor

@@ -772,8 +772,8 @@ describe("migration v8", () => {
 
     for (let i = 0; i < 2; i++) {
       const db = openDb(ctx.file);
-      assert.equal(SCHEMA_VERSION, 8);
-      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 8);
+      assert.ok(SCHEMA_VERSION >= 8);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
       assert.deepEqual(db.prepare("SELECT * FROM collection ORDER BY id").all().map((r) => ({ ...r })), rows);
       assert.equal(db.prepare("SELECT COUNT(*) AS n FROM decks").get().n, 1);
       assert.deepEqual(listEdits(db), []);

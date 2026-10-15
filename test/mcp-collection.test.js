@@ -8,12 +8,14 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { openIndex, refreshIndex } from "../lib/cardindex.js";
 import { listEdits, undoEdit } from "../lib/edits.js";
+import { setSpellbookSettings } from "../lib/spellbook.js";
 import { ID, seedCards, seedCollection, tempDb } from "./fixtures.js";
 
 const SERVER = fileURLToPath(new URL("../mcp-collection.js", import.meta.url));
@@ -21,9 +23,9 @@ const SERVER = fileURLToPath(new URL("../mcp-collection.js", import.meta.url));
 // Preloaded into the edit server: Scryfall is unreachable.
 const OFFLINE = `--import=data:text/javascript,${encodeURIComponent('globalThis.fetch = async () => { throw new Error("offline (test)"); };')}`;
 
-function startServer(dbFile, { nodeArgs = [] } = {}) {
+function startServer(dbFile, { nodeArgs = [], env = {} } = {}) {
   const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", ...nodeArgs, SERVER], {
-    env: { ...process.env, DB_FILE: dbFile },
+    env: { ...process.env, DB_FILE: dbFile, ...env },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const waiting = new Map();
@@ -84,7 +86,7 @@ describe("mcp-collection.js", () => {
   test("lists exactly the documented, non-destructive tools", async () => {
     const { result } = await mcp.request("tools/list", {});
     const names = result.tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["check_owned", "collection_overview", "edit_copies", "get_card", "get_deck", "list_binders", "list_decks", "save_deck", "search_collection", "shopping_list"]);
+    assert.deepEqual(names, ["check_owned", "collection_overview", "edit_copies", "evaluate_deck", "get_card", "get_deck", "list_binders", "list_decks", "save_deck", "search_collection", "shopping_list"]);
     for (const t of result.tools) {
       assert.equal(typeof t.description, "string");
       assert.equal(t.inputSchema?.type, "object", `${t.name} needs an object inputSchema`);
@@ -412,5 +414,122 @@ describe("mcp-collection.js edit_copies", () => {
     const id = Number(res.text.match(/^Edit #(\d+)/)[1]);
     undoEdit(ctx.db, id);
     assert.deepEqual(rowsOf(ID.lightning), before);
+  });
+});
+
+// Deck power over MCP: evaluate_deck (dry run), save_deck/get_deck target_bracket verdicts, the
+// bracket/score in list_decks. Commander Spellbook is a local stub (its URL in the shared meta
+// settings, like the server's Settings tab writes it); the opt-out in meta or in the env
+// (SPELLBOOK_ENABLED=false from lib/claude.js) means no call from this process.
+describe("mcp-collection.js deck power", () => {
+  let ctx;
+  let mcp;
+  let stub;
+  const calls = [];
+  const LIST = "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n1 Counterspell\n1 Serra Angel\n20 Forest\n";
+  before(async () => {
+    stub = http.createServer((req, res) => {
+      let data = "";
+      req.on("data", (c) => { data += c; });
+      req.on("end", () => {
+        const body = JSON.parse(data || "{}");
+        calls.push({ body, headers: req.headers });
+        const names = [...body.commanders, ...body.main].map((e) => e.card);
+        const card = (name) => ({ id: 1, name, typeLine: "Card" });
+        const combos = names.includes("Sol Ring") && names.includes("Counterspell") ? [{
+          combo: { id: "1-2", uses: [{ card: card("Sol Ring") }, { card: card("Counterspell") }], produces: [{ feature: { name: "Infinite mana" } }], manaValueNeeded: 3 },
+          relevant: true, definitelyTwoCard: true, arguablyTwoCard: true, speed: 3,
+        }] : [];
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ bracketTag: "R", cards: names.map((n) => ({ card: card(n), quantity: 1 })), combos }));
+      });
+    });
+    await new Promise((r) => stub.listen(0, "127.0.0.1", r));
+    ctx = tempDb();
+    seedCards(ctx.db);
+    seedCollection(ctx.db, [[ID.sol, 1], [ID.atraxa, 1], [ID.counterspell, 1], [ID.serra, 1], [ID.forest, 30], [ID.lightning, 4]]);
+    setSpellbookSettings(ctx.db, { url: `http://127.0.0.1:${stub.address().port}/estimate-bracket` });
+    mcp = startServer(ctx.file, { env: { SPELLBOOK_ENABLED: "", APP_VERSION: "0.0.0-mcp" } });
+    await mcp.request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
+  });
+  after(async () => {
+    await mcp?.stop();
+    await new Promise((r) => stub?.close(r));
+    ctx?.cleanup();
+  });
+
+  test("evaluate_deck: stats, bracket, score and an OVER verdict; only names leave the process; nothing saved", async () => {
+    const r = await mcp.call("evaluate_deck", { decklist: LIST, target_bracket: 3 });
+    assert.equal(r.isError, false, r.text);
+    assert.match(r.text, /^Draft \(not saved\): commander 1, main 23/);
+    assert.match(r.text, /\nStats: 24 cards · lands 20 · avg MV [\d.]+ · curve 0:0 1:1 2:1 3:0 4:0 5:1 6:0 7\+:0 · pips /);
+    assert.match(r.text, /\nBracket: 4 Optimized \(auto; combos checked \d{4}-\d\d-\d\d\) - 2-card combo Sol Ring \+ Counterspell, ≤4 mana \(3 mana\): can end games before turn 6 \(heuristic\)/);
+    assert.match(r.text, /\nScore [\d.]+\/10: speed [\d.]+\/1 · fast mana [\d.]+\/1\.75 · tutors 0\/1 · combos 1\.5\/2 · interaction/);
+    assert.match(r.text, /\nNot Commander-legal: .*not 100/);
+    assert.match(r.text, /\nCombos \(Commander Spellbook\): Sol Ring \+ Counterspell \(3 mana\)/);
+    assert.match(r.text, /\nTarget bracket 3: OVER - 2-card combo Sol Ring \+ Counterspell/);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(Object.keys(calls[0].body).sort(), ["commanders", "main"]);
+    assert.deepEqual(calls[0].body.commanders, [{ card: "Atraxa, Praetors' Voice", quantity: 1 }]);
+    assert.match(calls[0].headers["user-agent"], /^mtg-planner\/0\.0\.0-mcp /);
+    assert.equal(ctx.db.prepare("SELECT COUNT(*) AS n FROM decks").get().n, 0);
+
+    const ok = await mcp.call("evaluate_deck", { decklist: LIST, target_bracket: 4 });
+    assert.match(ok.text, /\nTarget bracket 4: OK$/);
+    assert.equal(calls.length, 1, "same list: cache hit");
+    const cards = await mcp.call("evaluate_deck", {
+      cards: [{ name: "Sol Ring" }, { name: "Serra Angel" }], commander: "Atraxa, Praetors' Voice", target_bracket: 2,
+    });
+    assert.match(cards.text, /Target bracket 2: OK/);
+    const modern = await mcp.call("evaluate_deck", { decklist: "4 Lightning Bolt", format: "modern", target_bracket: 3 });
+    assert.match(modern.text, /Not a Commander deck: stats only/);
+    assert.doesNotMatch(modern.text, /\nBracket:/);
+    assert.match(modern.text, /Target bracket 3: not a Commander deck/);
+    assert.equal((await mcp.call("evaluate_deck", { decklist: LIST, target_bracket: 7 })).isError, true);
+    assert.equal((await mcp.call("evaluate_deck", {})).isError, true);
+  });
+
+  test("save_deck target_bracket → verdict (cache hit); list_decks and get_deck show bracket and score", async () => {
+    const before = calls.length;
+    const saved = await mcp.call("save_deck", {
+      name: "Atraxa Combo", format: "commander", target_bracket: 3,
+      cards: [
+        { name: "Atraxa, Praetors' Voice", board: "commander" }, { name: "Sol Ring" }, { name: "Counterspell" }, { name: "Serra Angel" },
+        { name: "Forest", quantity: 20 }, { name: "Lightning Bolt", companion: true },
+      ],
+    });
+    assert.equal(saved.isError, false, saved.text);
+    assert.match(saved.text, /\nBracket: 4 Optimized \(auto; combos checked/);
+    assert.match(saved.text, /\nTarget bracket 3: OVER - 2-card combo Sol Ring \+ Counterspell/);
+    assert.match(saved.text, /companion Lightning Bolt/);
+    assert.equal(calls.length, before, "the companion is not sent: same request as the draft, cache hit");
+    const row = ctx.db.prepare("SELECT board, companion FROM deck_cards WHERE name = 'Lightning Bolt'").get();
+    assert.deepEqual({ ...row }, { board: "side", companion: 1 });
+
+    const list = await mcp.call("list_decks");
+    assert.match(list.text, /Atraxa Combo \[commander\] .* · B4 · [\d.]+\/10 · not Commander-legal$/m);
+    const got = await mcp.call("get_deck", { deck: "Atraxa Combo", target_bracket: 4 });
+    assert.match(got.text, /\nStats: 24 cards/);
+    assert.match(got.text, /\nScore [\d.]+\/10/);
+    assert.match(got.text, /\n\nTarget bracket 4: OK$/);
+  });
+
+  test("opt-out: disabled in meta or by SPELLBOOK_ENABLED=false means no call", async () => {
+    const before = calls.length;
+    const fresh = "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n1 Counterspell\n";
+    const offEnv = startServer(ctx.file, { env: { SPELLBOOK_ENABLED: "false" } });
+    try {
+      await offEnv.request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
+      const r = await offEnv.call("evaluate_deck", { decklist: fresh, target_bracket: 3 });
+      assert.match(r.text, /\nBracket: ≥2 Core \(auto; combos not checked \(combo check is off\)\)/);
+      assert.match(r.text, /Target bracket 3: (OK|UNDER).*combos not checked yet/);
+    } finally {
+      await offEnv.stop();
+    }
+    setSpellbookSettings(ctx.db, { enabled: false });
+    const r2 = await mcp.call("evaluate_deck", { decklist: fresh });
+    assert.match(r2.text, /combos not checked \(combo check is off\)/);
+    assert.equal(calls.length, before, "no Spellbook call while disabled");
+    setSpellbookSettings(ctx.db, { enabled: true });
   });
 });

@@ -58,3 +58,15 @@ substitute for authentication.
 The Claude CLI runs without built-in tools or slash commands, but its two MCP
 servers can reach the internet (Scryfall), write decks and edit owned copies
 (never delete them; every edit can be undone in the app).
+
+**Outbound calls.** Besides Scryfall (card data and prices) the app calls
+[Commander Spellbook](https://commanderspellbook.com/) for the combo check:
+every Commander deck change (also ManaBox import rebuilds and drafts Claude
+checks with `evaluate_deck`) sends the card names and quantities of the
+commander and main deck, plus the server's public IP like any web request.
+Results are cached for 14 days. Turn it off in Settings → Online services
+(restoring a backup keeps it off), or for good with `SPELLBOOK_ENABLED=false`
+in `.env`. The names go to `backend.commanderspellbook.com` unless the server
+admin points `SPELLBOOK_URL` in `.env` elsewhere; the app's API can't change
+that address. Details:
+[decks.md](decks.md#combo-check-commander-spellbook).

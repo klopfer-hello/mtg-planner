@@ -183,6 +183,23 @@ describe("backup API", () => {
     assert.equal(await copies(), 7);
   });
 
+  test("the combo-check opt-out survives restoring a backup without (or with an enabled) Spellbook setting", async () => {
+    let s = (await call("PATCH", "/api/settings", { spellbook_enabled: false })).body;
+    assert.equal(s.spellbook_enabled, false);
+    for (const stored of [null, { enabled: true }]) {
+      const src = path.join(dir, `sb-src-${stored ? "on" : "none"}.db`);
+      const db = openDb(src);
+      seedCards(db);
+      if (stored) db.prepare("INSERT INTO meta (key, value) VALUES ('spellbook_settings', ?)").run(JSON.stringify(stored));
+      db.exec("PRAGMA journal_mode = DELETE");
+      db.close();
+      const r = await upload(gzipSync(readFileSync(src)));
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      s = (await call("GET", "/api/settings")).body;
+      assert.equal(s.spellbook_enabled, false, `stored ${JSON.stringify(stored)}`);
+    }
+  });
+
   test("invalid uploads are refused with 400 and the current data stays", async () => {
     const before = await copies();
     const cases = [

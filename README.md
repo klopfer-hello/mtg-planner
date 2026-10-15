@@ -118,6 +118,7 @@ More: [docs/collection.md](docs/collection.md)
   cards, so you see conflicts between decks.
 - The **shopping list** collects what all your decks still need.
 - **Put into deck box** moves a deck's cards into their own binder.
+- Commander decks show a **bracket** (1-5) and a **power score** (1-10). Combos are checked at [Commander Spellbook](https://commanderspellbook.com/): only card names are sent, and you can turn it off. [Details](docs/decks.md#bracket-and-power-score)
 
 More: [docs/decks.md](docs/decks.md)
 

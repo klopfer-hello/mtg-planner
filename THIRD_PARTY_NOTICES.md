@@ -99,6 +99,35 @@ templates; `public/det/orientw.mjs`: orientation classifier weights) are
 small statistics derived from Scryfall card images. They contain no image,
 and no card image can be reconstructed from them.
 
+## Commander Spellbook (online service, called at runtime)
+
+Combo data for the deck bracket and score comes from
+[Commander Spellbook](https://commanderspellbook.com/) at runtime
+(`POST https://backend.commanderspellbook.com/estimate-bracket`). Nothing of
+it is bundled with mtg-planner; answers are cached in your own database for
+14 days. The app credits it in the deck details ("Combos by Commander
+Spellbook") and links every combo to its page there, as the API asks.
+
+- What is sent: the card names and quantities of a Commander deck's
+  commander and main deck, plus the server's public IP address (as with any
+  web request). Nothing else.
+- How to turn it off: Settings → Online services, or `SPELLBOOK_ENABLED=false`
+  in `.env`.
+- Usage guidance followed: a few calls per user action, at most one call
+  every 1.5 s (the API names 80 per minute as safe), 429 handling, and a
+  User-Agent naming the app (API description:
+  <https://backend.commanderspellbook.com/schema/>).
+- The Commander Spellbook backend is licensed under the MIT License
+  (<https://github.com/SpaceCowMedia/commander-spellbook-backend>). Combo
+  data is maintained by the Commander Spellbook community. mtg-planner is not
+  produced by or endorsed by Commander Spellbook.
+
+The test suite's calibration decklists (`test/fixtures/decks-calibration`,
+not in the image) credit their authors, Scryfall, MTGJSON and Commander
+Spellbook in that folder's `NOTICE.md`. The score bands follow the
+[playgroup.gg bracket calculator](https://playgroup.gg/commander/bracket-calculator)
+(ranges only, no code or data).
+
 ## Magic: The Gathering
 
 Magic: The Gathering, card names, card text, mana symbols and card images are

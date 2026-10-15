@@ -1,0 +1,423 @@
+{
+ "_note": "Recorded live from POST https://backend.commanderspellbook.com/estimate-bracket (Commander Spellbook, MIT, https://commanderspellbook.com) on 2026-10-15, API 7.1.11. Trimmed: image URIs and long text/price/legality fields removed; the nested shape is unchanged.",
+ "request": {
+  "query": "",
+  "body": {
+   "commanders": [
+    {
+     "card": "Kenrith, the Returned King",
+     "quantity": 1
+    }
+   ],
+   "main": [
+    {
+     "card": "Isochron Scepter",
+     "quantity": 1
+    },
+    {
+     "card": "Dramatic Reversal",
+     "quantity": 1
+    },
+    {
+     "card": "Thassa's Oracle",
+     "quantity": 1
+    },
+    {
+     "card": "Demonic Consultation",
+     "quantity": 1
+    },
+    {
+     "card": "Rhystic Study",
+     "quantity": 1
+    },
+    {
+     "card": "Armageddon",
+     "quantity": 1
+    },
+    {
+     "card": "Time Warp",
+     "quantity": 1
+    },
+    {
+     "card": "Lim-Dûl's Vault",
+     "quantity": 1
+    },
+    {
+     "card": "Sol Ring",
+     "quantity": 1
+    },
+    {
+     "card": "Notacard Xyz",
+     "quantity": 1
+    },
+    {
+     "card": "Valakut Awakening",
+     "quantity": 1
+    },
+    {
+     "card": "Fire",
+     "quantity": 1
+    },
+    {
+     "card": "Bonecrusher Giant",
+     "quantity": 1
+    },
+    {
+     "card": "Akki Lavarunner",
+     "quantity": 1
+    }
+   ]
+  }
+ },
+ "response": {
+  "bracketTag": "R",
+  "cards": [
+   {
+    "card": {
+     "id": 5261,
+     "name": "Isochron Scepter",
+     "oracleId": "ddd649f4-dbaf-48ec-8ff7-95581257772d",
+     "spoiler": false,
+     "faces": 1,
+     "typeLine": "Artifact"
+    },
+    "quantity": 1,
+    "banned": false,
+    "gameChanger": false,
+    "massLandDenial": false,
+    "extraTurn": false
+   },
+   {
+    "card": {
+     "id": 4821,
+     "name": "Dramatic Reversal",
+     "oracleId": "da46904c-8fb8-44c2-b2ab-775a1cc12ec3",
+     "spoiler": false,
+     "faces": 1,
+     "typeLine": "Instant"
+    },
+    "quantity": 1,
+    "banned": false,
+    "gameChanger": false,
+    "massLandDenial": false,
+    "extraTurn": false
+   },
+   {
+    "card": {
+     "id": 1295,
+     "name": "Thassa's Oracle",
+     "oracleId": "1de1b591-a73f-4974-b507-8c63e07a0868",
+     "spoiler": false,
+     "faces": 1,
+     "typeLine": "Creature — Merfolk Wizard"
+    },
+    "quantity": 1,
+    "banned": false,
+    "gameChanger": true,
+    "massLandDenial": false,
+    "extraTurn": false
+   },
+   {
+    "card": {
+     "id": 742,
+     "name": "Demonic Consultation",
+     "oracleId": "9a1412db-45ad-46ea-8f12-a85d203113d8",
+     "spoiler": false,
+     "faces": 1,
+     "typeLine": "Instant"
+    },
+    "quantity": 1,
+    "banned": false,
+    "gameChanger": false,
+    "massLandDenial": false,
+    "extraTurn": false
+   },
+   {
+    "card": {
+     "id": 7586,
+     "name": "Rhystic Study",
+     "oracleId": "53236dd7-845a-444c-96d5-f41ed7325d8f",
+     "spoiler": false,
+     "faces": 1,
+     "typeLine": "Enchantment"
+    },
+    "quantity": 1,
+    "banned": false,
+    "gameChanger": true,
+    "massLandDenial": false,
+    "extraTurn": false
+   },
+   {
+    "card": {
+     "id": 2833,
+     "name": "Armageddon",
+     "oracleId": "c9ed8b01-959a-47d6-891e-0abbdccf6e4f",
+     "spoiler": false,
+     "faces": 1,
+     "typeLine": "Sorcery"
+    },
+    "quantity": 1,
+    "banned": false,
+    "gameChanger": false,
+    "massLandDenial": true,
+    "extraTurn": false
+   },
+   {
+    "card": {
+     "id": 4872,
+     "name": "Time Warp",
+     "oracleId": "dbd6a94b-62ff-4a10-9d52-bdd90b26e425",
+     "spoiler": false,
+     "faces": 1,
+     "typeLine": "Sorcery"
+    },
+    "quantity": 1,
+    "banned": false,
+    "gameChanger": false,
+    "massLandDenial": false,
+    "extraTurn": true
+   },
+   {
+    "card": {
+     "id": null,
+     "name": "Lim-Dûl's Vault",
+     "oracleId": "3f8e7a45-4c6e-4ee6-93d0-b7de9715ec97",
+     "spoiler": false,
+     "faces": 1,
+     "typeLine": "Instant"
+    },
+    "quantity": 1,
+    "banned": false,
+    "gameChanger": false,
+    "massLandDenial": false,
+    "extraTurn": false
+   },
+   {
+    "card": {
+     "id": 5034,
+     "name": "Sol Ring",
+     "oracleId": "6ad8011d-3471-4369-9d68-b264cc027487",
+     "spoiler": false,
+     "faces": 1,
+     "typeLine": "Artifact"
+    },
+    "quantity": 1,
+    "banned": false,
+    "gameChanger": false,
+    "massLandDenial": false,
+    "extraTurn": false
+   },
+   {
+    "card": {
+     "id": 5140,
+     "name": "Kenrith, the Returned King",
+     "oracleId": "d209b948-9afb-4fd1-a961-72c87282878c",
+     "spoiler": false,
+     "faces": 1,
+     "typeLine": "Legendary Creature — Human Noble"
+    },
+    "quantity": 1,
+    "banned": false,
+    "gameChanger": false,
+    "massLandDenial": false,
+    "extraTurn": false
+   }
+  ],
+  "combos": [
+   {
+    "combo": {
+     "id": "4821-5261",
+     "status": "OK",
+     "uses": [
+      {
+       "card": {
+        "id": 4821,
+        "name": "Dramatic Reversal",
+        "oracleId": "da46904c-8fb8-44c2-b2ab-775a1cc12ec3",
+        "spoiler": false,
+        "faces": 1,
+        "typeLine": "Instant"
+       },
+       "zoneLocations": [
+        "E"
+       ],
+       "battlefieldCardState": "",
+       "exileCardState": "exiled by Isochron Scepter",
+       "libraryCardState": "",
+       "graveyardCardState": "",
+       "mustBeCommander": false,
+       "quantity": 1,
+       "usedFace": null
+      },
+      {
+       "card": {
+        "id": 5261,
+        "name": "Isochron Scepter",
+        "oracleId": "ddd649f4-dbaf-48ec-8ff7-95581257772d",
+        "spoiler": false,
+        "faces": 1,
+        "typeLine": "Artifact"
+       },
+       "zoneLocations": [
+        "B"
+       ],
+       "battlefieldCardState": "",
+       "exileCardState": "",
+       "libraryCardState": "",
+       "graveyardCardState": "",
+       "mustBeCommander": false,
+       "quantity": 1,
+       "usedFace": null
+      }
+     ],
+     "produces": [
+      {
+       "feature": {
+        "id": 77,
+        "name": "Infinite magecraft triggers",
+        "uncountable": true,
+        "status": "H"
+       },
+       "quantity": 1
+      },
+      {
+       "feature": {
+        "id": 92,
+        "name": "Infinite mana nonland permanents you control can produce",
+        "uncountable": true,
+        "status": "S"
+       },
+       "quantity": 1
+      },
+      {
+       "feature": {
+        "id": 17,
+        "name": "Infinite storm count",
+        "uncountable": true,
+        "status": "H"
+       },
+       "quantity": 1
+      },
+      {
+       "feature": {
+        "id": 93,
+        "name": "Infinite untap of nonland permanents you control",
+        "uncountable": true,
+        "status": "C"
+       },
+       "quantity": 1
+      }
+     ],
+     "identity": "U",
+     "manaNeeded": "",
+     "manaValueNeeded": 0,
+     "popularity": 106477,
+     "salt": 2.46,
+     "saltVoteCount": 13,
+     "spoiler": false,
+     "bracketTag": "S",
+     "variantCount": 1
+    },
+    "relevant": true,
+    "borderlineRelevant": true,
+    "arguablyTwoCard": true,
+    "definitelyTwoCard": false,
+    "speed": 5,
+    "massLandDenial": false,
+    "extraTurn": false,
+    "lock": false,
+    "skipTurns": false,
+    "controlAllOpponents": false,
+    "controlSomeOpponents": false
+   },
+   {
+    "combo": {
+     "id": "742-1295",
+     "status": "OK",
+     "uses": [
+      {
+       "card": {
+        "id": 742,
+        "name": "Demonic Consultation",
+        "oracleId": "9a1412db-45ad-46ea-8f12-a85d203113d8",
+        "spoiler": false,
+        "faces": 1,
+        "typeLine": "Instant"
+       },
+       "zoneLocations": [
+        "H"
+       ],
+       "battlefieldCardState": "",
+       "exileCardState": "",
+       "libraryCardState": "",
+       "graveyardCardState": "",
+       "mustBeCommander": false,
+       "quantity": 1,
+       "usedFace": null
+      },
+      {
+       "card": {
+        "id": 1295,
+        "name": "Thassa's Oracle",
+        "oracleId": "1de1b591-a73f-4974-b507-8c63e07a0868",
+        "spoiler": false,
+        "faces": 1,
+        "typeLine": "Creature — Merfolk Wizard"
+       },
+       "zoneLocations": [
+        "H"
+       ],
+       "battlefieldCardState": "",
+       "exileCardState": "",
+       "libraryCardState": "",
+       "graveyardCardState": "",
+       "mustBeCommander": false,
+       "quantity": 1,
+       "usedFace": null
+      }
+     ],
+     "produces": [
+      {
+       "feature": {
+        "id": 88,
+        "name": "Exile your library",
+        "uncountable": true,
+        "status": "H"
+       },
+       "quantity": 1
+      },
+      {
+       "feature": {
+        "id": 2,
+        "name": "Win the game",
+        "uncountable": true,
+        "status": "S"
+       },
+       "quantity": 1
+      }
+     ],
+     "identity": "UB",
+     "manaNeeded": "{U}{U}{B}",
+     "manaValueNeeded": 3,
+     "popularity": 149216,
+     "salt": 3.32,
+     "saltVoteCount": 25,
+     "spoiler": false,
+     "bracketTag": "R",
+     "variantCount": 1
+    },
+    "relevant": true,
+    "borderlineRelevant": true,
+    "arguablyTwoCard": true,
+    "definitelyTwoCard": true,
+    "speed": 5,
+    "massLandDenial": false,
+    "extraTurn": false,
+    "lock": false,
+    "skipTurns": false,
+    "controlAllOpponents": false,
+    "controlSomeOpponents": false
+   }
+  ]
+ }
+}

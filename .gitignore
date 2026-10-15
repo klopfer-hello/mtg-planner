@@ -10,5 +10,5 @@ node_modules/
 .DS_Store
 
 # Local agent context (may describe the private host setup)
-CLAUDE.md
+/CLAUDE.md
 .claude/

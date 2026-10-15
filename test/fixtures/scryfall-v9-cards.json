@@ -1,0 +1,237 @@
+{
+ "_source": "Scryfall API (api.scryfall.com), recorded 2026-10-15, trimmed to the fields normalizeCard reads",
+ "cards": [
+  {
+   "object": "card",
+   "id": "d74a72a2-d46a-41c2-a400-70571197b020",
+   "name": "Sol Ring // Sol Ring",
+   "lang": "en",
+   "layout": "reversible_card",
+   "set": "sld",
+   "set_name": "Secret Lair Drop",
+   "collector_number": "1512",
+   "rarity": "rare",
+   "color_identity": [],
+   "keywords": [],
+   "produced_mana": [
+    "C"
+   ],
+   "game_changer": false,
+   "legalities": {
+    "commander": "legal"
+   },
+   "prices": {
+    "eur": null,
+    "eur_foil": "45.66"
+   },
+   "scryfall_uri": "https://scryfall.com/card/sld/1512/sol-ring-sol-ring?utm_source=api",
+   "card_faces": [
+    {
+     "object": "card_face",
+     "name": "Sol Ring",
+     "mana_cost": "{1}",
+     "type_line": "Artifact",
+     "oracle_text": "{T}: Add {C}{C}.",
+     "colors": [],
+     "oracle_id": "6ad8011d-3471-4369-9d68-b264cc027487",
+     "cmc": 1,
+     "layout": "normal"
+    },
+    {
+     "object": "card_face",
+     "name": "Sol Ring",
+     "mana_cost": "{1}",
+     "type_line": "Artifact",
+     "oracle_text": "{T}: Add {C}{C}.",
+     "colors": [],
+     "oracle_id": "6ad8011d-3471-4369-9d68-b264cc027487",
+     "cmc": 1,
+     "layout": "normal"
+    }
+   ]
+  },
+  {
+   "object": "card",
+   "id": "c470539a-9cc7-4175-8f7c-c982b6072b6d",
+   "oracle_id": "6ec2a242-9068-4ee2-8ac8-8341cc570f56",
+   "name": "Emeria's Call // Emeria, Shattered Skyclave",
+   "lang": "en",
+   "layout": "modal_dfc",
+   "set": "znr",
+   "set_name": "Zendikar Rising",
+   "collector_number": "12",
+   "rarity": "mythic",
+   "type_line": "Sorcery // Land",
+   "cmc": 7,
+   "color_identity": [
+    "W"
+   ],
+   "keywords": [],
+   "produced_mana": [
+    "W"
+   ],
+   "game_changer": false,
+   "legalities": {
+    "commander": "legal"
+   },
+   "prices": {
+    "eur": "3.31",
+    "eur_foil": "3.95"
+   },
+   "scryfall_uri": "https://scryfall.com/card/znr/12/emerias-call-emeria-shattered-skyclave?utm_source=api",
+   "card_faces": [
+    {
+     "object": "card_face",
+     "name": "Emeria's Call",
+     "mana_cost": "{4}{W}{W}{W}",
+     "type_line": "Sorcery",
+     "oracle_text": "Create two 4/4 white Angel Warrior creature tokens with flying. Non-Angel creatures you control gain indestructible until your next turn.",
+     "colors": [
+      "W"
+     ]
+    },
+    {
+     "object": "card_face",
+     "name": "Emeria, Shattered Skyclave",
+     "mana_cost": "",
+     "type_line": "Land",
+     "oracle_text": "As this land enters, you may pay 3 life. If you don't, it enters tapped.\n{T}: Add {W}.",
+     "colors": []
+    }
+   ]
+  },
+  {
+   "object": "card",
+   "id": "1ac6cb62-45da-4e9a-84c6-09e6eacf0664",
+   "oracle_id": "0895c9b7-ae7d-4bb3-af17-3b75deb50a25",
+   "name": "Command Tower",
+   "lang": "en",
+   "layout": "normal",
+   "set": "frc",
+   "set_name": "Reality Fracture Commander",
+   "collector_number": "22",
+   "rarity": "common",
+   "type_line": "Land",
+   "mana_cost": "",
+   "cmc": 0,
+   "colors": [],
+   "color_identity": [],
+   "oracle_text": "{T}: Add one mana of any color in your commander's color identity.",
+   "keywords": [],
+   "produced_mana": [
+    "B",
+    "G",
+    "R",
+    "U",
+    "W"
+   ],
+   "game_changer": false,
+   "legalities": {
+    "commander": "legal"
+   },
+   "prices": {
+    "eur": "0.20",
+    "eur_foil": null
+   },
+   "scryfall_uri": "https://scryfall.com/card/frc/22/command-tower?utm_source=api"
+  },
+  {
+   "object": "card",
+   "id": "14dc88ee-bba9-4625-af0d-89f3762a0ead",
+   "oracle_id": "8485cfaa-1dbf-432b-b5d0-92a6aa6a329b",
+   "name": "Tergrid, God of Fright // Tergrid's Lantern",
+   "lang": "en",
+   "layout": "modal_dfc",
+   "set": "khm",
+   "set_name": "Kaldheim",
+   "collector_number": "112",
+   "rarity": "rare",
+   "type_line": "Legendary Creature — God // Legendary Artifact",
+   "cmc": 5,
+   "color_identity": [
+    "B"
+   ],
+   "keywords": [
+    "Menace"
+   ],
+   "game_changer": true,
+   "legalities": {
+    "commander": "legal"
+   },
+   "prices": {
+    "eur": "14.92",
+    "eur_foil": "16.95"
+   },
+   "scryfall_uri": "https://scryfall.com/card/khm/112/tergrid-god-of-fright-tergrids-lantern?utm_source=api",
+   "card_faces": [
+    {
+     "object": "card_face",
+     "name": "Tergrid, God of Fright",
+     "mana_cost": "{3}{B}{B}",
+     "type_line": "Legendary Creature — God",
+     "oracle_text": "Menace\nWhenever an opponent sacrifices a nontoken permanent or discards a permanent card, you may put that card from a graveyard onto the battlefield under your control.",
+     "colors": [
+      "B"
+     ]
+    },
+    {
+     "object": "card_face",
+     "name": "Tergrid's Lantern",
+     "mana_cost": "{3}{B}",
+     "type_line": "Legendary Artifact",
+     "oracle_text": "{T}: Target player loses 3 life unless they sacrifice a nonland permanent of their choice or discard a card.\n{3}{B}: Untap Tergrid's Lantern.",
+     "colors": [
+      "B"
+     ]
+    }
+   ]
+  },
+  {
+   "object": "card",
+   "id": "b5b71cd2-de35-451f-b16e-2e3936169407",
+   "oracle_id": "d6d72f5f-8f5d-4180-b514-f22ff5482902",
+   "name": "Bonecrusher Giant // Stomp",
+   "lang": "en",
+   "layout": "adventure",
+   "set": "clb",
+   "set_name": "Commander Legends: Battle for Baldur's Gate",
+   "collector_number": "781",
+   "rarity": "rare",
+   "type_line": "Creature — Giant // Instant — Adventure",
+   "mana_cost": "{2}{R} // {1}{R}",
+   "cmc": 3,
+   "colors": [
+    "R"
+   ],
+   "color_identity": [
+    "R"
+   ],
+   "keywords": [],
+   "game_changer": false,
+   "legalities": {
+    "commander": "legal"
+   },
+   "prices": {
+    "eur": "0.37",
+    "eur_foil": null
+   },
+   "scryfall_uri": "https://scryfall.com/card/clb/781/bonecrusher-giant-stomp?utm_source=api",
+   "card_faces": [
+    {
+     "object": "card_face",
+     "name": "Bonecrusher Giant",
+     "mana_cost": "{2}{R}",
+     "type_line": "Creature — Giant",
+     "oracle_text": "Whenever this creature becomes the target of a spell, this creature deals 2 damage to that spell's controller."
+    },
+    {
+     "object": "card_face",
+     "name": "Stomp",
+     "mana_cost": "{1}{R}",
+     "type_line": "Instant — Adventure",
+     "oracle_text": "Damage can't be prevented this turn. Stomp deals 2 damage to any target."
+    }
+   ]
+  }
+ ]
+}
