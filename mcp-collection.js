@@ -653,31 +653,47 @@ async function saveDeckTool(args) {
 // Making the app the collection master needs the user's OK, not just the model's word: a
 // confirm_master refusal stores a one-time token (app meta), and the token is only accepted
 // by ANOTHER server process, i.e. a later chat turn (the CLI spawns this server per turn),
-// so the user has answered in between. 24 h, single use.
+// so the user has answered in between. A token is bound to the copies it was issued for
+// (oracle card + the matched rows and quantity): it can't flip the master for another edit.
+// The new values (set) may differ, so a retry after a refused finish still works. 1 h, single
+// use, consumed only when the edit succeeds; up to 10 open tokens (one per question).
 const PROCESS_ID = randomBytes(8).toString("hex");
 const MASTER_TOKEN_KEY = "claude_master_token";
-const MASTER_TOKEN_TTL_MS = 24 * 3600 * 1000;
+const MASTER_TOKEN_TTL_MS = 3600 * 1000;
+const MASTER_TOKENS_MAX = 10;
 
-function issueMasterToken(d) {
+function openTokens(d) {
+  let saved = null;
+  try { saved = JSON.parse(getAppMeta(d, MASTER_TOKEN_KEY) || "null"); } catch { saved = null; }
+  const list = Array.isArray(saved?.tokens) ? saved.tokens : [];
+  return list.filter((t) => t && typeof t.token === "string" && Date.now() - t.at < MASTER_TOKEN_TTL_MS);
+}
+
+function issueMasterToken(d, scope) {
   const token = randomBytes(6).toString("hex");
-  setAppMeta(d, MASTER_TOKEN_KEY, JSON.stringify({ token, process: PROCESS_ID, at: Date.now() }));
+  const tokens = [...openTokens(d), { token, process: PROCESS_ID, at: Date.now(), scope }].slice(-MASTER_TOKENS_MAX);
+  setAppMeta(d, MASTER_TOKEN_KEY, JSON.stringify({ tokens }));
   return token;
 }
 
-/** true when `value` is a valid token from an earlier turn (consumed); false when absent; ToolError when wrong. */
-function masterConfirmed(d, value) {
+/**
+ * true when `value` is a valid token from an earlier turn for these copies (`scope`); false when
+ * absent; ToolError when wrong. Does not consume it: consumeMasterToken after the edit worked.
+ */
+function masterConfirmed(d, value, scope) {
   if (value == null || value === false) return false;
-  let saved = null;
-  try { saved = JSON.parse(getAppMeta(d, MASTER_TOKEN_KEY) || "null"); } catch { saved = null; }
-  const ok = typeof value === "string" && saved && value === saved.token
-    && saved.process !== PROCESS_ID && Date.now() - saved.at < MASTER_TOKEN_TTL_MS;
-  if (!ok) {
-    throw new ToolError(saved?.process === PROCESS_ID && value === saved?.token
-      ? "Not changed: the user has not answered yet. Ask them first; the token works only after their reply."
+  const saved = typeof value === "string" ? openTokens(d).find((t) => t.token === value) : null;
+  if (saved && saved.process !== PROCESS_ID && saved.scope === scope) return true;
+  throw new ToolError(saved?.process === PROCESS_ID
+    ? "Not changed: the user has not answered yet. Ask them first; the token works only after their reply."
+    : saved
+      ? "Not changed: that confirm_master token was issued for other copies. Call without it to ask the user about these."
       : "Not changed: confirm_master must be the token from an earlier confirmation request (call without it to get one).");
-  }
-  setAppMeta(d, MASTER_TOKEN_KEY, "");
-  return true;
+}
+
+function consumeMasterToken(d, value) {
+  if (typeof value !== "string") return;
+  setAppMeta(d, MASTER_TOKEN_KEY, JSON.stringify({ tokens: openTokens(d).filter((t) => t.token !== value) }));
 }
 
 const normFinish = (f) => { const v = String(f).trim().toLowerCase(); return v === "nonfoil" ? "normal" : v; };
@@ -801,13 +817,17 @@ async function editCopiesTool(args) {
     scryfall_id: row.scryfall_id, finish: row.finish, language: row.language, condition: row.condition, binder: row.binder,
     quantity: groups.length === 1 ? quantity : q,
   }));
+  // The copies a confirm_master token covers (see masterConfirmed).
+  const scope = JSON.stringify([oracle.oracle_id, items.map((i) => [i.scryfall_id, i.finish, i.language, i.condition, i.binder.toLowerCase(), i.quantity])]);
   let res;
   try {
-    res = await editCopies(d, { items, set: out, confirm_master: masterConfirmed(d, args.confirm_master), actor: "claude" }, { getPrinting: indexPrinting });
+    const confirmed = masterConfirmed(d, args.confirm_master, scope);
+    res = await editCopies(d, { items, set: out, confirm_master: confirmed, actor: "claude" }, { getPrinting: indexPrinting });
+    if (confirmed) consumeMasterToken(d, args.confirm_master);
   } catch (err) {
     if (!(err instanceof BinderError)) throw err;
     if (err.extra?.code === "confirm_master") {
-      const token = issueMasterToken(d);
+      const token = issueMasterToken(d, scope);
       throw new ToolError(`Not changed yet: ${err.extra.manabox_copies} of these copies were imported from ManaBox. Editing them makes ` +
         "mtg-planner the master of the collection (ManaBox imports then add new cards instead of replacing the collection). " +
         "Explain this to the user and ask; end your answer there. Only if they agree in their next message, call edit_copies " +

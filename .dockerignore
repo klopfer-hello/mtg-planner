@@ -1,5 +1,6 @@
 # Only server.js, mcp-collection.js, package.json, lib/ and public/ are needed
-# at runtime (see Dockerfile COPY lines).
+# at runtime, plus native/ (the OCR helper's build stage), LICENSE,
+# THIRD_PARTY_NOTICES.md and scripts/entrypoint.sh (see Dockerfile COPY lines).
 .git
 .github
 .env

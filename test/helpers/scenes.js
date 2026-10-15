@@ -1,10 +1,10 @@
-// Procedural capture scenes for the CaptureController tests (public/capture.js).
+// Procedural capture scenes for the ProbeController tests (public/capture.js).
 //
 // A scene is a background plus a stack of synthetic cards (test/helpers/
 // detscenes.js draws the same cards) and an optional hand blob, evaluated
 // analytically per pixel, so a frame never has to be rendered in full: the
 // rig samples only what the analyzer would hand the controller (24x40 frame
-// thumbnail, 12x16 card-region thumbnail, the rectified hash crop). The rig
+// thumbnail, 12x16 card-region thumbnail). The rig
 // also stands in for detect() + QuadTracker: a card that lies still for a few
 // frames becomes `stable`, a moving one is tracked but unstable, a covered or
 // undetectable one is lost or weak. Everything is seeded; no images, no photos.
@@ -152,36 +152,12 @@ export function cardThumb(scene, quad, r, amp = 1.5, TW = 12, TH = 16) {
   return t;
 }
 
-// 2x2 sample footprint spanning 1.2 crop px: a mild optical blur (camera crops are never razor sharp,
-// and hard synthetic edges would make the hash flip bits on sub-pixel jitter)
-const BL = [-0.6, 0.6].flatMap((dy) => [-0.6, 0.6].map((dx) => [dx, dy]));
-
-/**
- * Rectified RGB crop of `quad` (the hash source), W x H, with sensor noise, as
- * fphash expects ({width, height, channels: 3, data}). 2x2 supersampled.
- */
-export function hashCrop(scene, quad, r, { W = 244, H = 340, amp = 2 } = {}) {
-  const m = mapQuad(quad), data = new Uint8ClampedArray(W * H * 3);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    let R = 0, G = 0, B = 0;
-    for (let s = 0; s < BL.length; s++) {
-      const [px, py] = m((x + 0.5 + BL[s][0]) / W, (y + 0.5 + BL[s][1]) / H);
-      const c = scene.colorAt(px, py);
-      R += c[0]; G += c[1]; B += c[2];
-    }
-    const e = (r() - 0.5) * amp, i = (y * W + x) * 3;
-    data[i] = R / BL.length + e; data[i + 1] = G / BL.length + e; data[i + 2] = B / BL.length + e;
-  }
-  return { width: W, height: H, channels: 3, data };
-}
-
 const jitterQuad = (q, r, px) => q.map(([x, y]) => [x + (r() - 0.5) * 2 * px, y + (r() - 0.5) * 2 * px]);
 const sameQuad = (a, b) => a && b && a.every((p, i) => Math.abs(p[0] - b[i][0]) < 1e-9 && Math.abs(p[1] - b[i][1]) < 1e-9);
 
 /**
  * Stand-in for the analyzer (detect + QuadTracker + thumbnails). frame() returns
- * the per-frame analysis object the controller consumes; o.scene/o.seed let the
- * crop callback (rig.crop) render the hash crop for any quad at that moment.
+ * the per-frame analysis object the controller consumes.
  */
 export class Rig {
   constructor(scene, { fps = 8, seed = 7, stableFrames = 4, jitter = 0.2 } = {}) {
@@ -191,7 +167,6 @@ export class Rig {
     this.n = 0;
     this.lastQuad = null;
     this.still = 0;
-    this.cropSeed = seed * 7 + 1;
   }
 
   /** One analysed frame of the current scene. extra: fields merged in (busy, paused, priorQuad, sharp). */
@@ -215,15 +190,11 @@ export class Rig {
       corners: visible ? jitterQuad(top.quad, r, this.jitter) : null,
       thumb: frameThumb(s, r),
       sharp: visible ? (this.still >= 2 ? 120 + r() * 10 : 30) : 0,
-      scene: s, seed: this.cropSeed + this.n,
       ...extra,
     };
     o.cardThumb = o.corners ? cardThumb(s, o.corners, r) : null;
     return o;
   }
-
-  /** Crop callback for CaptureController({crop}). */
-  crop = (o, quad) => (o.scene && quad ? hashCrop(o.scene, quad, rng(o.seed), this.cropOpts) : null);
 }
 
 /** Card quad for the scan box: centred, axis-aligned, 62% of the frame width, small offset (dx, dy px). */

@@ -1,40 +1,27 @@
 // scanlib.js: browser-side card capture for the scanner (ES module, no deps).
 //
 // Why it exists: the server identifies cards from a rectified photo plus a
-// sharp crop of the collector line, so the phone must find the card, wait for a
-// steady and sharp frame, straighten it and cut out the bottom strip. All pixel
-// work is plain typed-array JS (no opencv.js, CSP stays as is), so everything
-// except the camera/canvas helpers at the bottom also runs in node for tests.
+// sharp crop of the collector line, so the phone must find the card, straighten
+// it and cut out the bottom strip. All pixel work is plain typed-array JS (no
+// opencv.js, CSP stays as is), so everything except the camera/canvas helpers
+// also runs in node for tests.
 //
 // Images: gray = {w, h, d: Float32Array}; RGBA = {w, h, d: Uint8ClampedArray}.
 // Corners are always [TL, TR, BR, BL] as [x, y] in the image's pixel space.
 //
-// Two detector paths (v0.5.x): 'v2' (default) = detector A2 (det/detect.mjs)
-// anywhere in the frame + QuadTracker + a per-device learned box prior
-// (createDetAnalyzer, feeding capture.js ProbeController); 'v1' = the old
-// guide-frame finder (findCard, createAnalyzer, AutoCapture), kept unchanged as
-// the rollback (?det=v1 or localStorage mtg.scan.det = "v1", scanDetVersion()).
-// Also here: the scan sounds (Web Audio, synthesized, no files).
+// The detector is A2 (det/detect.mjs): anywhere in the frame, with a
+// QuadTracker and a per-device learned box prior (createDetAnalyzer, feeding
+// capture.js ProbeController). The classic guide-frame scanner was removed in
+// v0.5.0. Also here: glare advice and the scan sounds (Web Audio, synthesized,
+// no files).
 
 import { detect, refine } from './det/detect.mjs';
 import { QuadTracker, BoxPrior, PRIOR_STORAGE_KEY, frameThumb, align } from './det/track.mjs';
-import { areaResample } from './fphash.js';
 
-/** Capture tuning. Values come from the synthetic-capture research; the UI may override. */
+/** Capture tuning. Values come from the synthetic-capture research. */
 export const CAPTURE_DEFAULTS = Object.freeze({
-  guideFrac: 0.65,        // guide card width as a fraction of the frame's short side
-  workWidth: 360,         // analysis canvas width (findCard)
   fps: 8,                 // analysis rate
-  stableMad: 2.0,         // 64x64 thumbnail mean abs diff between analysed frames
-  stableFrames: 4,        // ... for this many consecutive frames
-  cornerDrift: 0.015,     // corners move less than this fraction of the guide width
-  sharpRel: 0.85,         // strip sharpness >= this x max over the window
-  sharpWindowMs: 1500,
-  sharpFloor: 60,         // absolute Laplacian-variance floor (strip at <= 640 px wide)
-  leaveFrames: 8,         // no card (not even a weak quad) for this many frames (~1 s) ...
-  leaveMad: 10,           // ... and the scene differs this much from the captured frame = card left, re-arm
-  rearmMad: 15,           // or the scene changed this much against the captured frame
-  sameCardBits: 10,       // ... unless the art dHash says it is still the same card
+  defaultFrac: 0.65,      // shutter fallback quad width as a fraction of the frame's short side
   cardSize: [1000, 1400], // rectified card upload
   cardQuality: 0.85,
   stripQuality: 0.92,
@@ -42,8 +29,8 @@ export const CAPTURE_DEFAULTS = Object.freeze({
   // black border can be detected instead of the outer edge.
   stripRegion: Object.freeze({ x0: -0.03, y0: 0.85, x1: 1.03, y1: 1.04 }),
   stripMaxWidth: 2400,
-  workShort: 480,         // v2: analysis canvas short side (detector A2 was tuned at 480)
-  photoLongSide: 1440,    // v2: takePhoto re-detect runs on a copy this long (long side)
+  workShort: 480,         // analysis canvas short side (detector A2 was tuned at 480)
+  photoLongSide: 1440,    // takePhoto re-detect runs on a copy this long (long side)
 });
 
 const CARD_ASPECT = 63 / 88;
@@ -57,42 +44,8 @@ export function toGray(img) {
   return { w, h, d: g };
 }
 
-/** Area-average resample of a gray image (any ratio; upsampling repeats pixels). */
-export function resizeGray(src, W, H) {
-  if (W === src.w && H === src.h) return { w: W, h: H, d: Float32Array.from(src.d) };
-  const out = new Float32Array(W * H), sx = src.w / W, sy = src.h / H;
-  for (let y = 0; y < H; y++) {
-    const y0 = Math.min(src.h - 1, Math.floor(y * sy)), y1 = Math.min(src.h, Math.max(y0 + 1, Math.floor((y + 1) * sy)));
-    for (let x = 0; x < W; x++) {
-      const x0 = Math.min(src.w - 1, Math.floor(x * sx)), x1 = Math.min(src.w, Math.max(x0 + 1, Math.floor((x + 1) * sx)));
-      let s = 0;
-      for (let yy = y0; yy < y1; yy++) { const r = yy * src.w; for (let xx = x0; xx < x1; xx++) s += src.d[r + xx]; }
-      out[y * W + x] = s / ((y1 - y0) * (x1 - x0));
-    }
-  }
-  return { w: W, h: H, d: out };
-}
-
-export function cropGray(g, x, y, w, h) {
-  x = Math.max(0, Math.round(x)); y = Math.max(0, Math.round(y));
-  w = Math.min(g.w - x, Math.round(w)); h = Math.min(g.h - y, Math.round(h));
-  const d = new Float32Array(w * h);
-  for (let r = 0; r < h; r++) d.set(g.d.subarray((y + r) * g.w + x, (y + r) * g.w + x + w), r * w);
-  return { w, h, d };
-}
-
-// 3x3 box blur that keeps the border pixels (zeros there would fake an edge).
-function boxBlur3(g) {
-  const { w, h, d } = g, o = Float32Array.from(d);
-  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
-    const i = y * w + x;
-    o[i] = (d[i - w - 1] + d[i - w] + d[i - w + 1] + d[i - 1] + d[i] + d[i + 1] + d[i + w - 1] + d[i + w] + d[i + w + 1]) / 9;
-  }
-  return { w, h, d: o };
-}
-
 // ---------------------------------------------------------------------------
-// Quality metrics and a tiny hash
+// Quality metric
 
 /** Variance of the 4-neighbour Laplacian (sharpness; higher = sharper). */
 export function laplacianVariance(g) {
@@ -106,32 +59,6 @@ export function laplacianVariance(g) {
   const m = s / n;
   return s2 / n - m * m;
 }
-
-/** Mean absolute difference of two equally sized gray images (0..255). */
-export function meanAbsDiff(a, b) {
-  if (!a || !b || a.d.length !== b.d.length) return 255;
-  let s = 0;
-  for (let i = 0; i < a.d.length; i++) s += Math.abs(a.d[i] - b.d[i]);
-  return s / a.d.length;
-}
-
-/** Difference hash: size*size bits as a Uint8Array of 0/1. */
-export function dHash(g, size = 8) {
-  const r = resizeGray(g, size + 1, size), bits = new Uint8Array(size * size);
-  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-    bits[y * size + x] = r.d[y * (size + 1) + x] < r.d[y * (size + 1) + x + 1] ? 1 : 0;
-  }
-  return bits;
-}
-
-export function hamming(a, b) {
-  let n = 0;
-  for (let i = 0; i < a.length; i++) n += a[i] !== b[i];
-  return n;
-}
-
-/** 64x64 gray thumbnail used for frame-to-frame stability. */
-export const thumb64 = (gray) => resizeGray(gray, 64, 64);
 
 // ---------------------------------------------------------------------------
 // Homography and warping
@@ -226,230 +153,18 @@ export function cornerDrift(a, b) {
 export const scaleQuad = (q, sx, sy = sx, dx = 0, dy = 0) => q.map(([x, y]) => [x * sx + dx, y * sy + dy]);
 
 // ---------------------------------------------------------------------------
-// Guide frame and card localisation
+// Shutter fallback quad
 
-/** Guide rectangle (MTG 63x88) centred in a vw x vh frame, `frac` of the short side wide. */
-export function guideRect(vw, vh, frac = CAPTURE_DEFAULTS.guideFrac) {
+/**
+ * Centred upright 63:88 card quad, `frac` of the frame's short side wide (height
+ * capped at 92 %): what the shutter shoots when neither a tracked card nor a
+ * learned box is available.
+ */
+export function defaultCardQuad(vw, vh, frac = CAPTURE_DEFAULTS.defaultFrac) {
   let w = frac * Math.min(vw, vh), h = w / CARD_ASPECT;
   if (h > 0.92 * vh) { h = 0.92 * vh; w = h * CARD_ASPECT; }
-  return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
-}
-
-export const rectQuad = (r) => [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]];
-
-/**
- * Find the card near the guide rectangle by per-side edge refinement.
- * For each side it casts `rays` scanlines across a band of +-band*cardWidth,
- * collects gradient peaks, RANSAC-fits up to 3 lines and keeps the OUTERMOST
- * well-supported one (the outer card edge rather than the inner black border
- * or background clutter); the four lines are intersected into corners.
- * Returns {corners, aspect, ok, support} in `img` pixels, or null.
- */
-export function findCard(img, guide, { work = CAPTURE_DEFAULTS.workWidth, rays = 48, band = 0.14, minInlier = 0.45, gray = null } = {}) {
-  const src = gray || toGray(img);
-  const s = Math.min(1, work / src.w);
-  const g0 = s === 1 ? src : resizeGray(src, Math.round(src.w * s), Math.round(src.h * s));
-  const g = boxBlur3(g0), { w, h, d } = g;
-  const G = { x: guide.x * s, y: guide.y * s, w: guide.w * s, h: guide.h * s }, B = Math.max(4, Math.round(band * G.w));
-  const sides = [
-    { p: (t) => [G.x + t * G.w, G.y], n: [0, -1] },          // top
-    { p: (t) => [G.x + G.w, G.y + t * G.h], n: [1, 0] },     // right
-    { p: (t) => [G.x + t * G.w, G.y + G.h], n: [0, 1] },     // bottom
-    { p: (t) => [G.x, G.y + t * G.h], n: [-1, 0] },          // left
-  ];
-  const lines = [];
-  const prof = new Float32Array(2 * B + 1);
-  for (const sd of sides) {
-    const pts = [];
-    for (let r = 0; r < rays; r++) {
-      const t = 0.12 + 0.76 * r / (rays - 1), [px, py] = sd.p(t);
-      let mx = 0;
-      for (let k = -B, i = 0; k <= B; k++, i++) {
-        const x = Math.round(px + sd.n[0] * k), y = Math.round(py + sd.n[1] * k);
-        let v = 0;
-        if (x >= 1 && y >= 1 && x < w - 1 && y < h - 1) {
-          const gx = d[y * w + x + 1] - d[y * w + x - 1], gy = d[(y + 1) * w + x] - d[(y - 1) * w + x];
-          v = Math.abs(gx * sd.n[0] + gy * sd.n[1]);
-        }
-        prof[i] = v;
-        if (v > mx) mx = v;
-      }
-      if (mx < 12) continue;
-      for (let i = 1; i < prof.length - 1; i++) {
-        if (prof[i] >= 0.3 * mx && prof[i] >= prof[i - 1] && prof[i] > prof[i + 1]) {
-          const den = prof[i - 1] - 2 * prof[i] + prof[i + 1], sub = den ? 0.5 * (prof[i - 1] - prof[i + 1]) / den : 0;
-          const k = i + sub - B;
-          pts.push([px + sd.n[0] * k, py + sd.n[1] * k]);
-        }
-      }
-    }
-    const cand = [];
-    let rest = pts;
-    for (let j = 0; j < 3; j++) {
-      const L = ransacLine(rest, 1.2);
-      if (!L) break;
-      cand.push(L);
-      rest = rest.filter((p) => Math.abs(L.nx * p[0] + L.ny * p[1] - L.c) >= 2.5);
-    }
-    if (!cand.length) return null;
-    const top = Math.max(...cand.map((c) => c.inliers)), [mx0, my0] = sd.p(0.5);
-    const outward = (L) => {
-      const det = L.nx * sd.n[0] + L.ny * sd.n[1];
-      return Math.abs(det) < 1e-6 ? -Infinity : (L.c - L.nx * mx0 - L.ny * my0) / det;
-    };
-    // Lines must run roughly parallel to the side (|det| large) to count.
-    const good = cand.filter((c) => c.inliers >= 0.7 * top && Math.abs(c.nx * sd.n[0] + c.ny * sd.n[1]) > 0.9)
-      .sort((a, b) => outward(b) - outward(a));
-    const L = good[0];
-    if (!L || L.inliers < minInlier * rays) return null;
-    lines.push(L);
-  }
-  const corners = [[3, 0], [0, 1], [1, 2], [2, 3]].map(([a, b]) => intersect(lines[a], lines[b]).map((v) => v / s));
-  if (corners.some((c) => !Number.isFinite(c[0]) || !Number.isFinite(c[1]))) return null;
-  const { w: wq, h: hq } = quadSize(corners);
-  const aspect = wq / hq;
-  const sizeOk = wq > 0.6 * guide.w && wq < 1.4 * guide.w;
-  return { corners, aspect, ok: Math.abs(aspect - CARD_ASPECT) < 0.06 && sizeOk, support: lines.map((l) => l.inliers / rays) };
-}
-
-// Deterministic PRNG so findCard gives the same answer for the same frame.
-function lcg(seed) {
-  let s = seed >>> 0;
-  return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
-}
-
-function ransacLine(pts, tol) {
-  if (pts.length < 6) return null;
-  const rnd = lcg(pts.length * 2654435761);
-  let best = null;
-  for (let it = 0; it < 200; it++) {
-    const a = pts[(rnd() * pts.length) | 0], b = pts[(rnd() * pts.length) | 0];
-    if (a === b) continue;
-    let nx = b[1] - a[1], ny = a[0] - b[0];
-    const L = Math.hypot(nx, ny);
-    if (!L) continue;
-    nx /= L; ny /= L;
-    const c = nx * a[0] + ny * a[1];
-    let cnt = 0;
-    for (const p of pts) if (Math.abs(nx * p[0] + ny * p[1] - c) < tol) cnt++;
-    if (!best || cnt > best.cnt) best = { nx, ny, c, cnt };
-  }
-  if (!best) return null;
-  const inl = pts.filter((p) => Math.abs(best.nx * p[0] + best.ny * p[1] - best.c) < tol);
-  // total least squares on the inliers
-  const n = inl.length, mx = inl.reduce((s, p) => s + p[0], 0) / n, my = inl.reduce((s, p) => s + p[1], 0) / n;
-  let sxx = 0, syy = 0, sxy = 0;
-  for (const [x, y] of inl) { sxx += (x - mx) ** 2; syy += (y - my) ** 2; sxy += (x - mx) * (y - my); }
-  const th = 0.5 * Math.atan2(2 * sxy, sxx - syy), dx = Math.cos(th), dy = Math.sin(th);
-  return { nx: -dy, ny: dx, c: -dy * mx + dx * my, inliers: n };
-}
-
-function intersect(a, b) {
-  const det = a.nx * b.ny - a.ny * b.nx;
-  return [(a.c * b.ny - a.ny * b.c) / det, (a.nx * b.c - a.c * b.nx) / det];
-}
-
-/** Art-region dHash of a card quad (cheap, from the analysis frame): "is this still the same card?". */
-export function cardArtHash(img, corners) {
-  const q = regionQuad(corners, { x0: 0.12, y0: 0.13, x1: 0.88, y1: 0.52 });
-  return dHash(toGray(warpQuad(img, q, 48, 32)), 8);
-}
-
-// ---------------------------------------------------------------------------
-// Auto-capture state machine (pure; the UI feeds it one observation per frame)
-
-/**
- * SEARCHING -> TRACKING (card found) -> STABLE (MAD and corner drift small for
- * N frames) -> CAPTURE (strip sharpness near its recent max) -> COOLDOWN.
- * COOLDOWN only re-arms when the card leaves the frame or the scene changes,
- * and never while the art hash still matches the captured card.
- */
-export class AutoCapture {
-  constructor(cfg = {}) {
-    this.cfg = { ...CAPTURE_DEFAULTS, ...cfg };
-    this.reset();
-  }
-
-  reset() {
-    this.state = "searching";
-    this.stableN = 0;
-    this.missN = 0;
-    this.prevThumb = null;
-    this.prevCorners = null;
-    this.sharpHist = [];
-    this.last = null; // {thumb, artHash}
-  }
-
-  /** Enter COOLDOWN after a capture (auto or manual). */
-  captured(obs = {}) {
-    this.state = "cooldown";
-    this.missN = 0;
-    this.stableN = 0;
-    this.last = { thumb: obs.thumb || this.prevThumb, artHash: obs.artHash || null };
-  }
-
-  /** Re-arm explicitly (e.g. after "scan again"). */
-  rearm() {
-    this.state = "searching";
-    this.stableN = 0;
-    this.missN = 0;
-    this.last = null;
-  }
-
-  /**
-   * obs = {now, found, corners, thumb, sharp, guideW, artHash?, paused?}
-   * Returns {state, capture, hint, mad, drift}.
-   */
-  step(obs) {
-    const c = this.cfg, now = obs.now ?? Date.now();
-    const mad = this.prevThumb && obs.thumb ? meanAbsDiff(this.prevThumb, obs.thumb) : 255;
-    if (obs.thumb) this.prevThumb = obs.thumb;
-    if (Number.isFinite(obs.sharp)) {
-      this.sharpHist.push([now, obs.sharp]);
-      while (this.sharpHist.length && now - this.sharpHist[0][0] > c.sharpWindowMs) this.sharpHist.shift();
-    }
-    const out = (state, hint, capture = false, drift = null) => {
-      this.state = state;
-      return { state, hint, capture, mad, drift };
-    };
-
-    if (this.state === "cooldown") {
-      // A tilted, glared or half-covered card is reported as weak, not gone:
-      // it still counts as present, so a brief dropout never re-arms.
-      const present = Boolean(obs.found || obs.weak);
-      this.missN = present ? 0 : this.missN + 1;
-      const scene = this.last?.thumb && obs.thumb ? meanAbsDiff(this.last.thumb, obs.thumb) : 255;
-      if (this.missN >= c.leaveFrames && scene > c.leaveMad) { this.rearm(); return out("searching", "Place the next card in the frame"); }
-      // A different card swapped in without leaving the frame: only a found
-      // quad whose art hash differs from the captured card re-arms.
-      if (scene > c.rearmMad && obs.found && obs.artHash && this.last?.artHash
-          && hamming(obs.artHash, this.last.artHash) > c.sameCardBits) {
-        this.rearm();
-        return out("searching", "Hold the next card steady");
-      }
-      return out("cooldown", "Done: next card");
-    }
-
-    if (obs.paused) { this.stableN = 0; return out(this.state === "cooldown" ? "cooldown" : "paused", "Paused"); }
-    if (!obs.found || !obs.corners) {
-      this.stableN = 0;
-      this.prevCorners = null;
-      return out("searching", obs.weak ? "Low contrast: try a lighter background" : "Place a card in the frame");
-    }
-    const drift = this.prevCorners ? cornerDrift(this.prevCorners, obs.corners) / (obs.guideW || 1) : Infinity;
-    this.prevCorners = obs.corners;
-    if (mad < c.stableMad && drift < c.cornerDrift) this.stableN++;
-    else this.stableN = 0;
-    if (this.stableN < c.stableFrames) return out("tracking", "Hold steady", false, drift);
-    const max = this.sharpHist.reduce((m, [, v]) => Math.max(m, v), 0);
-    const sharp = obs.sharp ?? 0;
-    if (sharp >= c.sharpRel * max && sharp >= c.sharpFloor) {
-      const r = out("capture", "Capturing", true, drift);
-      this.captured(obs); // straight into COOLDOWN: one capture per card
-      return r;
-    }
-    return out("stable", sharp < c.sharpFloor ? "Too blurry: more light or move back a little" : "Focusing…", false, drift);
-  }
+  const x = (vw - w) / 2, y = (vh - h) / 2;
+  return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
 }
 
 // ---------------------------------------------------------------------------
@@ -536,47 +251,6 @@ function grabRegion(src, rect, k, mk = makeCanvas) {
   return { w: id.width, h: id.height, d: id.data };
 }
 
-/** Frame analysis: draws the video at work width and runs findCard + metrics. */
-export function createAnalyzer(cfg = {}) {
-  const c = { ...CAPTURE_DEFAULTS, ...cfg };
-  let work = null, strip = null;
-  return function analyze(video) {
-    const vw = video.videoWidth, vh = video.videoHeight;
-    if (!vw || !vh) return null;
-    const W = c.workWidth, H = Math.round(vh * W / vw), s = W / vw;
-    if (!work || work.width !== W || work.height !== H) work = makeCanvas(W, H);
-    const wctx = ctx2d(work);
-    wctx.drawImage(video, 0, 0, W, H);
-    const id = wctx.getImageData(0, 0, W, H), img = { w: W, h: H, d: id.data };
-    const gray = toGray(img);
-    const guide = guideRect(vw, vh, c.guideFrac), g = { x: guide.x * s, y: guide.y * s, w: guide.w * s, h: guide.h * s };
-    let fc = null;
-    try { fc = findCard(img, g, { gray }); } catch { fc = null; }
-    const ok = Boolean(fc && fc.ok);
-    const quad = ok ? fc.corners : null;
-    // Sharpness on the guide's bottom strip, drawn from the full-res frame.
-    const sr = ok ? quadBounds(regionQuad(scaleQuad(quad, 1 / s), { x0: 0, y0: 0.86, x1: 1, y1: 1 }))
-      : { x: guide.x, y: guide.y + guide.h * 0.86, w: guide.w, h: guide.h * 0.14 };
-    const sx = Math.max(0, sr.x), sy = Math.max(0, sr.y), sw = Math.min(vw - sx, sr.w), sh = Math.min(vh - sy, sr.h);
-    let sharp = 0;
-    if (sw > 8 && sh > 4) {
-      const k = Math.min(1, 640 / sw), dw = Math.max(8, Math.round(sw * k)), dh = Math.max(4, Math.round(sh * k));
-      if (!strip || strip.width !== dw || strip.height !== dh) strip = makeCanvas(dw, dh);
-      const sctx = ctx2d(strip);
-      sctx.drawImage(video, sx, sy, sw, sh, 0, 0, dw, dh);
-      const sd = sctx.getImageData(0, 0, dw, dh);
-      sharp = laplacianVariance(toGray({ w: dw, h: dh, d: sd.data }));
-    }
-    return {
-      vw, vh, guide, found: ok, weak: Boolean(fc && !fc.ok),
-      corners: ok ? scaleQuad(quad, 1 / s) : null,  // full-res video pixels
-      thumb: thumb64(gray), sharp,
-      artHash: ok ? cardArtHash(img, quad) : null,
-      guideW: guide.w,
-    };
-  };
-}
-
 function withTimeout(p, ms) {
   return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 }
@@ -597,46 +271,33 @@ export function photoMapping(pw, ph, vw, vh) {
  * Refine the card corners inside a still photo whose framing differs from the
  * video (Android ImageCapture). The video corners are mapped with
  * photoMapping(), then the card is re-detected in a downscaled copy of the
- * photo: v1 = findCard at 720 px wide around the mapped quad, v2 = detector A2
- * on a copy `photoLongSide` (1440) px long with the mapped quad as the temporal
- * hint (corner order kept as the tracker had it). A re-detection more than
+ * photo with detector A2 on a copy `photoLongSide` (1440) px long, the mapped
+ * quad as the temporal hint (corner order kept as the tracker had it). A re-detection more than
  * maxDrift (8 %) of the card width away from the mapped quad is rejected:
  * null = use the video frame instead.
  * @param {{width:number,height:number}} bitmap the still (ImageBitmap, or any drawable for opts.grab)
- * @param {object} [opts] {det 'v1'|'v2', detOpts (detect() options), grab(src, rect, k) → RGBA
+ * @param {object} [opts] {detOpts (detect() options), grab(src, rect, k) → RGBA
  *   (tests), photoLongSide, maxDrift, info (an object that receives {drift, reason, k})}
  * @returns {number[][]|null} corners in photo pixels
  */
 export function mapToPhoto(bitmap, vw, vh, corners, opts = {}) {
-  const { det = "v1", detOpts = {}, grab = grabRegion, photoLongSide = CAPTURE_DEFAULTS.photoLongSide, maxDrift = 0.08, info = {} } = opts;
+  const { detOpts = {}, grab = grabRegion, photoLongSide = CAPTURE_DEFAULTS.photoLongSide, maxDrift = 0.08, info = {} } = opts;
   const pw = bitmap.width, ph = bitmap.height;
   const m = photoMapping(pw, ph, vw, vh);
   if (!m) { info.reason = "orientation"; return null; }
   const mapped = scaleQuad(corners, m.s, m.s, m.ox, m.oy);
   const b = quadBounds(mapped);
-  let refined = null;
-  if (det === "v2") {
-    const k = Math.min(1, photoLongSide / Math.max(pw, ph));
-    const small = grab(bitmap, { x: 0, y: 0, w: pw, h: ph }, k);
-    const kx = small.w / pw, ky = small.h / ph, short = Math.min(small.w, small.h);
-    info.k = k;
-    const prev = scaleQuad(mapped, kx, ky);
-    // gradient resolution like the 480-px work frame (k=2 there): integer box factor
-    const r = detect(small, { ...detOpts, prev, k: Math.max(2, Math.floor(short / 240)) });
-    if (!r.found || !r.corners) { info.reason = "not-found"; return null; }
-    const rf = refine(small, r.corners, { ...detOpts, scale: Math.max(1, short / 480) });
-    const q = rf.corners || r.corners, a = align(q, prev);
-    refined = scaleQuad([0, 1, 2, 3].map((i) => q[(i + a.s) & 3]), 1 / kx, 1 / ky);
-  } else {
-    // Re-detect in a downscaled copy of the photo, using the mapped quad as the guide.
-    const k = Math.min(1, 720 / pw);
-    const small = grab(bitmap, { x: 0, y: 0, w: pw, h: ph }, k);
-    info.k = k;
-    const g = { x: b.x * k, y: b.y * k, w: b.w * k, h: b.h * k };
-    const fc = findCard(small, g, { work: 720 });
-    if (!fc || !fc.ok) { info.reason = "not-found"; return null; }
-    refined = scaleQuad(fc.corners, 1 / k);
-  }
+  const k = Math.min(1, photoLongSide / Math.max(pw, ph));
+  const small = grab(bitmap, { x: 0, y: 0, w: pw, h: ph }, k);
+  const kx = small.w / pw, ky = small.h / ph, short = Math.min(small.w, small.h);
+  info.k = k;
+  const prev = scaleQuad(mapped, kx, ky);
+  // gradient resolution like the 480-px work frame (k=2 there): integer box factor
+  const r = detect(small, { ...detOpts, prev, k: Math.max(2, Math.floor(short / 240)) });
+  if (!r.found || !r.corners) { info.reason = "not-found"; return null; }
+  const rf = refine(small, r.corners, { ...detOpts, scale: Math.max(1, short / 480) });
+  const q = rf.corners || r.corners, a = align(q, prev);
+  const refined = scaleQuad([0, 1, 2, 3].map((i) => q[(i + a.s) & 3]), 1 / kx, 1 / ky);
   info.drift = cornerDrift(refined, mapped) / (b.w || 1);
   if (info.drift > maxDrift) { info.reason = "drift"; return null; }
   info.reason = null;
@@ -650,7 +311,7 @@ export function mapToPhoto(bitmap, vw, vh, corners, opts = {}) {
  * {source, w, h, corners, kind, drift, reject} with corners in the still's
  * pixel space (drift/reject: the photo re-detect, for the capture log).
  */
-export async function grabStill(video, track, corners, { preferPhoto = true, timeoutMs = 3500, det, detOpts } = {}) {
+export async function grabStill(video, track, corners, { preferPhoto = true, timeoutMs = 3500, detOpts } = {}) {
   const vw = video.videoWidth, vh = video.videoHeight;
   let drift = null, reject = null;
   if (preferPhoto && track && typeof globalThis.ImageCapture === "function" && typeof createImageBitmap === "function") {
@@ -659,7 +320,7 @@ export async function grabStill(video, track, corners, { preferPhoto = true, tim
       const blob = await withTimeout(ic.takePhoto(), timeoutMs);
       const bmp = await createImageBitmap(blob);
       const info = {};
-      const q = mapToPhoto(bmp, vw, vh, corners, { det: det || scanDetVersion(), detOpts, info });
+      const q = mapToPhoto(bmp, vw, vh, corners, { detOpts, info });
       drift = Number.isFinite(info.drift) ? Math.round(info.drift * 1e4) / 1e4 : null;
       if (q) return { source: bmp, w: bmp.width, h: bmp.height, corners: q, kind: "photo", drift, reject: null };
       reject = info.reason || "unknown";
@@ -692,10 +353,10 @@ export function encodeJpeg(img, quality) {
 
 /**
  * Full capture: still -> rectified 1000x1400 card (q85) + high-res bottom
- * strip (q92). `corners` are the video-space corners from the analyser (or the
- * guide quad for a manual shot without a detected card; v2: the tracker-smoothed
- * corners). cfg: CAPTURE_DEFAULTS overrides plus grabStill options
- * ({preferPhoto, det, detOpts}; v2 analyzers hand them out via captureOpts()).
+ * strip (q92). `corners` are the tracker-smoothed video-space corners (or the
+ * learned box / defaultCardQuad for a shutter shot without a tracked card).
+ * cfg: CAPTURE_DEFAULTS overrides plus grabStill options ({preferPhoto,
+ * detOpts}; the analyzer hands them out via captureOpts()).
  * Returns {card, strip, cardPreview (data URL), kind, stripSize, drift, reject}.
  */
 export async function captureCard(video, track, corners, cfg = {}) {
@@ -725,38 +386,10 @@ export async function captureCard(video, track, corners, cfg = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// v2: detector A2 + tracker + learned box prior
-
-/** localStorage key that selects the detector path ("v1" | "v2"). */
-export const DET_STORAGE_KEY = "mtg.scan.det";
+// Detector A2 + tracker + learned box prior
 
 function defaultStorage() {
   try { return globalThis.localStorage || null; } catch { return null; }
-}
-
-/**
- * Which detector path the scanner runs: ?det=v1|v2 in the URL (remembered in
- * localStorage, because a home-screen PWA drops query parameters), else
- * localStorage mtg.scan.det, else 'v2'.
- * @param {{search?: string, storage?: Storage|null}} [env] overrides (tests)
- * @returns {'v1'|'v2'}
- */
-export function scanDetVersion(env = {}) {
-  const storage = "storage" in env ? env.storage : defaultStorage();
-  let q = null;
-  try {
-    const search = env.search ?? globalThis.location?.search ?? "";
-    q = new URLSearchParams(search).get("det");
-  } catch { q = null; }
-  if (q === "v1" || q === "v2") {
-    try { storage?.setItem(DET_STORAGE_KEY, q); } catch { /* private mode */ }
-    return q;
-  }
-  try {
-    const v = storage?.getItem(DET_STORAGE_KEY);
-    if (v === "v1" || v === "v2") return v;
-  } catch { /* blocked storage */ }
-  return "v2";
 }
 
 // bilinear luma sample of an RGBA image (continuous coords, edge clamped)
@@ -794,7 +427,7 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
 }
 
 /**
- * Frame analysis for the v2 path. Per analyze(now): the video is drawn at 480 px
+ * Frame analysis. Per analyze(now): the video is drawn at 480 px
  * short side, detect(img, prior.opts(w, h)) → BoxPrior.noteFrame → QuadTracker;
  * the prior observes each new stable outline while it is inactive (as in the
  * research replay). Sharpness is measured on the tracked quad's bottom 14 % at
@@ -946,15 +579,6 @@ export function createDetAnalyzer(video, opts = {}) {
     } catch { return null; }
   }
 
-  /** Hash source for capture.js: full-res crop around `quad` (~488x680 card) area-reduced to 244x340 (RGB, channels 3). */
-  function hashCrop(quad) {
-    if (!quad) return null;
-    const card = rectify(quad, 488, 488, 680);
-    if (!card) return null;
-    const data = areaResample({ width: 488, height: 680, channels: 4, data: card.d }, [0, 0, 1, 1], 244, 340);
-    return { width: 244, height: 340, channels: 3, data };
-  }
-
   function loadPrior() {
     try {
       const raw = storage?.getItem(PRIOR_STORAGE_KEY);
@@ -998,7 +622,7 @@ export function createDetAnalyzer(video, opts = {}) {
 
   /** captureCard/grabStill options: the video frame while the box prior is active (corners exact), else takePhoto + A2 re-detect. */
   function captureOpts() {
-    return { det: "v2", preferPhoto: !prior.active };
+    return { preferPhoto: !prior.active };
   }
 
   /** The last analysed work frame (480 px short side) as base64 JPEG (record session), or null. */
@@ -1009,7 +633,7 @@ export function createDetAnalyzer(video, opts = {}) {
   }
 
   loadPrior();
-  return { analyze, prior, tracker, reset, hashCrop, glareOf, savePrior, loadPrior, forgetPrior, captureOpts, frameJpeg };
+  return { analyze, prior, tracker, reset, glareOf, savePrior, loadPrior, forgetPrior, captureOpts, frameJpeg };
 }
 
 // ---------------------------------------------------------------------------

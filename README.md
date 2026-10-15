@@ -4,13 +4,15 @@ A self-hosted **Magic: The Gathering collection and deck planner** with a
 Claude-powered deck-building assistant. You keep your collection in the
 [ManaBox](https://manabox.app/) app, upload its CSV export from your phone's
 browser, and then browse, search and plan decks against what you actually own.
-You can also **scan cards with your phone's camera**: a ManaBox-style scanner
-identifies each card locally and stages it for review before it goes into a
-binder or a deck. Card data and prices come from [Scryfall](https://scryfall.com/).
+You can also **scan cards with your phone's camera**: lay cards in view one
+after another and the scanner recognises each one locally and stages it for
+review before it goes into a binder or a deck. Card data and prices come from
+[Scryfall](https://scryfall.com/).
 
 One Docker container. The web server and the collection tools are plain
 Node.js with no npm dependencies, and data is stored in SQLite. The scanner
-uses two system tools from Debian inside the image (tesseract OCR and `djpeg`).
+uses Tesseract OCR (through a small C helper built in the image) and `djpeg`
+from Debian packages.
 
 ## Features
 
@@ -27,13 +29,21 @@ uses two system tools from Debian inside the image (tesseract OCR and `djpeg`).
   and **list binders** (wish lists) are skipped. A *replace* upload in which
   nothing can be resolved is refused, so the collection is never wiped by
   accident.
-- **Camera scanner** (see [Scanner](#scanner)). Point the phone at a card
-  and it is captured once it is steady and sharp, then identified on the server
-  from a local Scryfall index. The reads are the collector line (OCR), the
-  title (OCR) and an image fingerprint. Claude vision is an optional fallback
-  for uncertain cards and is capped per hour. Scans land in a **scan list**,
-  where you fix printing, finish, quantity and condition. You then add them to
-  a **binder** or a **deck**, either an existing one or a new one.
+- **Camera scanner** (see [Scanner](#scanner)). Put a card anywhere in view
+  (in a scan box or in your hand): while it lies still the app asks the server
+  about once a second whether it knows the card, and stages it as soon as it is
+  recognised. The server identifies it from a local Scryfall index by the
+  collector line (OCR, including ★/• for foil), the title (OCR) and an image
+  fingerprint, also when the card is upside down. Hard cards can go to Claude
+  vision automatically, capped per hour. The camera shows the card's € value
+  and the session total, with an optional "cash" sound for valuable cards.
+  Scans land in a **scan list**, where you fix printing, finish, quantity and
+  condition, then add them to a **binder** or a **deck**, existing or new.
+- **Edit and delete owned copies** with undo (see
+  [Editing owned copies](#editing-owned-copies)): change language, printing,
+  finish or condition of some copies, or delete them; every change is listed
+  under **Recent changes** and can be undone there. ManaBox imports respect
+  these changes.
 - **Collection browser** with Scryfall-style search syntax (`t:creature c<=bg
   cmc<=3 eur>2 -is:foil`, see [Search syntax](#search-syntax)). You can group by
   card or by printing and sort by name, mana value, price, quantity, set or
@@ -61,15 +71,20 @@ uses two system tools from Debian inside the image (tesseract OCR and `djpeg`).
   of another built deck's box; the box is remembered, also when the deck or
   the binder is renamed, and a ManaBox deck's own binder already counts as
   boxed).
-- **Backup & restore** (Import tab, see [Backups](#backups)): one tap makes a
+- **Settings tab** (formerly *Import*): ManaBox import, the collection
+  master and default import mode, recent changes with undo, backups, and the
+  scanner's card index.
+- **Backup & restore** (Settings tab, see [Backups](#backups)): one tap makes a
   compressed snapshot of all app data, which you can download, restore, or
   restore from a downloaded file. A restore first takes a safety backup.
 - **Claude planner:** a chat that runs the
   [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) headless
   with exactly two MCP servers:
   - **collection**, this repo's own MCP server: it reads your collection and
-    decks and can save new decks (`save_deck`). It cannot delete anything or
-    change the collection.
+    decks, saves decks (`save_deck`) and can correct owned copies
+    (`edit_copies`: language, printing, finish or condition, after stating the
+    exact change). It cannot delete anything; every edit is logged and can be
+    undone in the app.
   - **[bmurdock/scryfall-mcp](https://github.com/bmurdock/scryfall-mcp)** gives
     access to every card ever printed, prices, the comprehensive rules, staple
     and synergy searches, and deck and mana-base analysis.
@@ -138,13 +153,16 @@ Set these in `.env`, which `docker-compose.yml` loads if it exists:
 | `FP_KEEP_IMAGES` | `true` | Keep downloaded reference images under `FP_IMAGE_DIR` (about 1.2 GB) for cheap re-hashing. |
 | `FP_INDEX_SETS` | *(empty)* | Comma-separated set codes that limit the fingerprint job (for testing). Empty means all sets. |
 | `INDEX_BULK_SOURCE` | *(empty)* | Local path (or URL) of a Scryfall `all_cards` .jsonl.gz to build the index from instead of downloading it. Empty means download. |
-| `SCAN_DUPLICATE_WINDOW_MS` | `20000` | The same printing and finish scanned again within this window is offered as +1 instead of being staged. |
+| `SCAN_DUPLICATE_WINDOW_MS` | `20000` | A shutter scan of the same printing and finish within this window is offered as +1 instead of being staged. |
 | `SCAN_MAX_CONCURRENT` | `2` | Scans identified at the same time; further uploads get HTTP 429 ("still identifying") until one finishes. |
 | `SCAN_MATCHER_WAIT_MS` | `30000` | How long a scan waits for the fingerprint matcher to finish loading after a server start; after that the scan goes on without the fingerprint (OCR / Claude only). |
 | `CLAUDE_SCAN_MAX_BUDGET_USD` | `0.25` | Spend cap per Claude vision call (`--max-budget-usd`). |
 | `CLAUDE_SCAN_TIMEOUT_MS` | `90000` | Timeout for one Claude vision call. |
-| `OCR_TIMEOUT_MS` | `20000` | Timeout for one tesseract/djpeg run. |
-| `OCR_MAX_CONCURRENT` | `2` | tesseract processes running at once. |
+| `OCR_TIMEOUT_MS` | `20000` | Timeout for one OCR/djpeg run. |
+| `OCR_MAX_CONCURRENT` | `2` | OCR runs at once (persistent helpers, or tesseract processes without the helper). |
+| `OCR_HELPER` | `/usr/local/bin/mtg-ocr` | Persistent OCR helper on the libtesseract API (built in the image, about 5x faster per read than starting tesseract). `off` starts the tesseract CLI per read instead; a helper that keeps crashing is skipped for a minute the same way. |
+| `MTG_OCR_MAX_LANGS` | `4` | OCR language sets each helper keeps loaded (least recently used are dropped). |
+| `DEBUG_SESSIONS_DIR` | `<database dir>/debug-sessions` | Where **Record session** stores its diagnostic frames (see [Record session](#record-session)). |
 | `SCHEDULER_ENABLED` | `true` | Nightly maintenance (see [Index and price refresh](#index-and-price-refresh)). `false` turns it off. |
 | `INDEX_REFRESH_HOUR` | `4` | Hour of day (0-23, container local time) of the maintenance window. |
 | `INDEX_REFRESH_DAYS` | `7` | Minimum age of the card index before it is refreshed (only when Scryfall has newer bulk data). |
@@ -166,7 +184,7 @@ Volumes:
 
 | Mount | Contents |
 | --- | --- |
-| `/data` | SQLite database (WAL mode), the scanner's card index (`cardindex.db`), reference images (`images/`, ~1.2 GB), stored scan photos, backups (`backups/`), and the CLI's working directory |
+| `/data` | SQLite database (WAL mode), the scanner's card index (`cardindex.db`), reference images (`images/`, ~1.2 GB), stored scan photos, backups (`backups/`), recorded scan sessions (`debug-sessions/`), and the CLI's working directory |
 | `/claude` | Claude Code config and chat sessions, so conversations can resume after a restart, plus the runtime-installed CLI in `/claude/cli` (about 250 MB) |
 
 ## Getting `CLAUDE_CODE_OAUTH_TOKEN`
@@ -212,7 +230,7 @@ own subscription.
 1. In ManaBox, open **Collection** and tap the **⋯** menu, then **Export**,
    then **CSV**. You can also export a single binder.
 2. Save or share the file to your phone.
-3. In mtg-planner, open **Import**, pick the file and choose a mode. The
+3. In mtg-planner, open **Settings** (gear icon), pick the file and choose a mode. The
    default follows the [collection master](#binders-and-the-collection-master):
    *Replace (sync)* while ManaBox is the master, *Only new copies (delta)* once
    mtg-planner is. *Add everything* adds every copy in the file again.
@@ -250,7 +268,7 @@ It runs at most once per night: later checks in the same hour, and restarts
 inside it, skip once the run is done (a failed price refresh is retried within
 the hour). A container started inside that hour checks a minute after start.
 
-The last and next runs are shown in the index panel of the Import tab and in
+The last and next runs are shown in the index panel of the Settings tab and in
 `GET /api/index/status`. `SCHEDULER_ENABLED=false` turns it off.
 
 ## Search syntax
@@ -296,17 +314,52 @@ The **Scan** tab turns a phone into a card scanner, in the style of ManaBox.
 It is built to avoid ManaBox's two usual complaints: the same card being
 scanned over and over, and confident wrong guesses.
 
+### Scanning
+
+- Tap **Start** and put a card in view: on the table, in a scan box or in your
+  hand. There is no guide frame to fill. A detector in the browser finds the
+  card's outline and only supplies the crop; recognising the card is the
+  server's job.
+- While the card lies still, the app sends a quick **recognition probe**
+  about once a second (the card crop from the full-resolution video frame plus
+  its collector line). A card is staged as soon as it is **identified** and
+  **differs from the last card** of this camera session; a probe that
+  recognises nothing stores nothing. Swap in the next card and it is staged in
+  turn. Probes never use Claude.
+- For a **second copy** of the same card, tap **+1**.
+- The **shutter** scans the current card on demand. When a card isn't
+  recognised after a few tries, the hint reads *"Not recognised – tap to
+  capture"*. Other hints: *"Reflection on the name: tilt slightly"* (also for
+  the bottom line, the picture or the middle of the card) and *"Too blurry"*.
+- **Ask Claude automatically for hard cards** (scan settings, on by default):
+  a card that lies still and stays unrecognised gets one scan with Claude
+  allowed, never twice for the same card. It counts towards
+  `SCAN_CLAUDE_PER_HOUR`; at the cap the hint becomes *"Claude limit reached –
+  tap to capture"*.
+- On the camera the **last card** is shown with its status, set, number,
+  language, finish (tap to switch) and € price, and top right the card's value
+  plus the **session total** (Σ € · copies; `+` when some cards have no
+  price).
+- **Scan sounds:** a short sound for every staged card or +1, and a *cash*
+  sound for cards worth at least the threshold (default €5). Both can be
+  changed or turned off in the scan settings.
+- **Discard** (trash) removes a wrong scan or something that is not a card,
+  with a few seconds to undo. Scanning pauses while a sheet such as the
+  printing picker is open.
+- A card photographed **upside down** is retried turned by 180° when the first
+  attempt is unclear.
+
 ### How a card is identified
 
 ```mermaid
 flowchart LR
-  cam["Phone camera<br/>(guide frame, auto-capture)"] -- "rectified card + collector strip (JPEG)" --> id
+  cam["Phone camera<br/>(card anywhere in view,<br/>probe about 1/s while still)"] -- "card crop + collector strip (JPEG)" --> id
   subgraph server["server (no AI on the happy path)"]
     id["1 collector-line OCR<br/>set · number · language · ★/•"] --> idx["2 local Scryfall index<br/>(incl. promos, The List)"]
     idx --> title["3 title OCR<br/>(language-specific)"]
     title --> fp["4 image fingerprint<br/>verifies the art"]
-    fp --> dec{"5 decision"}
-    dec -- "uncertain, under hourly cap" --> cl["6 Claude vision<br/>(re-verified locally)"]
+    fp --> dec{"5 decision<br/>(unclear: retry turned 180°)"}
+    dec -- "hard card, under hourly cap" --> cl["6 Claude vision<br/>(re-verified locally)"]
     dec --> store["7 printing in the<br/>storage language"]
     cl --> store
   end
@@ -314,7 +367,7 @@ flowchart LR
 ```
 
 1. **Collector line.** The phone uploads a high-resolution crop of the
-   bottom edge. tesseract reads it on the server. Cards from M15 (2014) on
+   bottom edge. Tesseract reads it on the server. Cards from M15 (2014) on
    print rarity, number, set code and language (`001/269 R / M15 • EN`, or
    `R 0001 / MOM • DE` from March of the Machine on). Set codes are matched
    with OCR-confusion weighting against the known sets.
@@ -322,9 +375,9 @@ flowchart LR
    `all_cards` bulk data, so there are no per-scan API calls. Promos,
    prerelease stamps and *The List* print their parent set's line, so those
    printings are candidates too and are offered through a "variant?" chip.
-3. **Title.** The card name is OCR'd in the detected language (11 languages,
-   including Japanese, Chinese, Korean and Russian). It is fuzzy-matched
-   against printed names.
+3. **Title.** The card name is OCR'd in the detected language and
+   fuzzy-matched against printed names. Japanese titles are not read reliably;
+   the collector line and the fingerprint still identify those cards.
 4. **Fingerprint.** A perceptual hash of the whole card, the art box and the
    colours is compared against hashes of every Scryfall reference image. This
    confirms the art on modern cards. It is the main signal for cards printed
@@ -333,43 +386,48 @@ flowchart LR
 5. **Decision.** The result is **auto** (green, staged), **suggest** (yellow,
    staged, tap to confirm) or **review** (red, staged with the top candidates
    to pick from, and never committed until you pick). A low-confidence guess
-   is never accepted silently.
-6. **Claude fallback (optional).** Only when the local result is uncertain,
-   the card goes to Claude vision through the same Claude Code CLI and
-   subscription token as the chat. The default model is Sonnet. Calls are
-   capped per hour (`SCAN_CLAUDE_PER_HOUR`, default 60, `0` disables) and
-   share the chat's concurrency limit. Claude's answer is never final: it must
-   exist in the local index and be confirmed by local evidence, or it is
-   dropped. When reference fingerprints exist, the claimed printing's art must
-   match the photo and the fingerprint must not point to a different card;
-   without a reference hash, the app's own collector or title OCR must back
-   it. A verified Claude answer is at most **suggest** by default.
-7. **Storage language.** The detected language is only used to identify the
-   card. Every scan is stored as the same set and collector number in your
-   **storage language**, a session setting that defaults to English. If that
-   printing doesn't exist, the English printing is used. The list shows both,
-   for example `DE → EN`.
+   is never accepted silently. A probe stages only auto and suggest results.
+6. **Claude (optional).** Only for a shutter scan or an automatic ask whose
+   local result is uncertain, the card goes to Claude vision through the same
+   Claude Code CLI and subscription token as the chat. The default model is
+   Sonnet. Calls are capped per hour (`SCAN_CLAUDE_PER_HOUR`, default 60, `0`
+   disables) and share the chat's concurrency limit. Claude's answer is never
+   final: it must exist in the local index and be confirmed by local evidence,
+   or it is dropped. When reference fingerprints exist, the claimed printing's
+   art must match the photo and the fingerprint must not point to a different
+   card; without a reference hash, the app's own collector or title OCR must
+   back it. A verified Claude answer is at most **suggest** by default.
+7. **Storage language.** By default (**Store as scanned**) a card is stored
+   as the printing it is, in its own language: an Italian card stays Italian
+   (names stay English, a small `IT` tag shows the language). You can pick a
+   fixed storage language instead; then every scan is stored as the same set
+   and collector number in that language, or in English when that printing
+   doesn't exist, and the list shows both, for example `DE → EN`.
 
 ### Foil
 
 - From M15 on, the collector line prints **★ for foil** and **• for
   non-foil**. The scanner measures that glyph's shape, because OCR can't read
-  it.
+  it. A later probe with a clear ★/• read corrects a finish that was only
+  guessed.
 - Printings that Scryfall lists with only one finish (for example foil-only
   promos, or etched-only cards) are set to that finish automatically.
-- Older cards carry no foil marker. For those the sticky **foil toggle** in
-  the session settings (auto / foil / non-foil) decides. You can change the
-  finish of each scan in the list.
+- Older cards carry no foil marker. For those the sticky finish setting
+  (Auto / Non-foil / Foil) decides. A guessed finish on a card that exists in
+  both is marked with "?"; tap it on the camera or in the list to change it.
 
 ### Avoiding double scans
 
-- After a capture the camera **does not fire again** until the card has left
-  the frame or the scene has clearly changed.
-- If you scan the same printing and finish again right after itself (within
-  `SCAN_DUPLICATE_WINDOW_MS`, 20 s by default), it is **not** staged again.
-  The app offers **+1** instead, so you can count a playset on purpose.
-  A card that needs review is not staged twice either, and **Rescan**
-  replaces its open review row.
+- Probes stage a card only when it differs from the **last card** of the
+  camera session (same set, number and language; the finish doesn't count,
+  because ★/• reads can vary). A card left in view, or put back, is not staged
+  again, and neither is the card still lying there after a Discard or Undo.
+  After a staged card the app waits until the card in view changes.
+- Copies are counted on purpose with **+1**.
+- A **shutter** scan of the same printing and finish right after itself
+  (within `SCAN_DUPLICATE_WINDOW_MS`, 20 s by default) is not staged again;
+  the app offers **+1** instead. A card that needs review is not staged twice
+  either, and **Rescan** replaces its open review row.
 - The big **Undo** button takes back the last action: the last scan, a +1,
   or an edit in the list (quantity, finish, printing).
 - A ★ on a card that also exists as a foil-only promo with the same collector
@@ -395,6 +453,82 @@ where it came from (`manabox`, `scan` or `app`). A ManaBox *replace* import
 only replaces rows that came from ManaBox, so scanned cards are never wiped by
 a sync.
 
+### Record session
+
+**Record session** in the scan settings (off by default, stops after 15
+minutes) stores a small, low-resolution frame every half second together with
+the scanner's decisions in `DEBUG_SESSIONS_DIR` on the server. It is meant for
+tuning the scanner or reproducing a problem. Recorded sessions are listed in
+the scan settings and can be deleted there; a session is capped at 400 MB and
+all sessions at 2 GB. Nothing is deleted automatically: when the storage is
+full, recording stops with a notice until you delete old sessions. They are
+not part of backups.
+
+### First start: building the index
+
+The scanner needs a local card index, which is built in the background on
+first start (turn this off with `SCAN_AUTO_INDEX=false`):
+
+1. **Card metadata.** The app streams Scryfall's `all_cards` bulk file
+   (about 400 MB gzipped) into `/data/cardindex.db`. This takes minutes and a
+   few hundred MB of disk.
+2. **Fingerprints.** The app downloads one small reference image per unique
+   artwork and frame (about 78,000 images; the number follows Scryfall's
+   catalogue) and hashes it. With at most two polite connections this takes
+   **about two hours**. By default the images are kept under `/data/images`
+   (**about 1.2 GB**) so that a future change to the hash only means
+   re-hashing (with `FP_KEEP_IMAGES=false` they are hashed in memory and not
+   stored). The job resumes on its own: after a restart or redeploy (with
+   `SCAN_AUTO_INDEX` on) it continues where it stopped. While it runs, cards
+   identified by the fingerprint alone are never accepted automatically.
+
+The **Settings** tab (Scanner & data) shows the index status and has **Refresh index** and
+**Build fingerprints** buttons. Refresh the index now and then so new sets are
+recognised. Until fingerprints exist, scanning still works on cards with a
+modern collector line, but older cards need more manual picking.
+
+The fingerprints are loaded in a worker thread right after the server starts
+(a few seconds; once after an upgrade that adds columns to the index, longer).
+`/healthz` shows `scanner.matcher.state` (`loading`, `ready` or `error`) and
+the load time. A scan sent while it is still loading waits for it, at most
+`SCAN_MATCHER_WAIT_MS`, and the Scan tab says "warming up the scanner".
+
+### Phones, HTTPS and capture
+
+- Browsers only allow camera access in a **secure context**, which means
+  HTTPS or `localhost`. Plain `http://<lan-ip>:8080` loads the app, but the
+  camera won't start. Put the app behind a reverse proxy with a certificate
+  that your phones trust.
+- The scanner works on **iOS Safari 17+** and **Android Chrome**. Probes use
+  frames of the video stream (up to 4K). On Android a shutter scan can take a
+  full-resolution still with `ImageCapture.takePhoto()` (a scan setting), and
+  the torch can be toggled; on iPhone the torch only works on some devices.
+- Keep the card flat, without glare, and close enough that the collector line
+  is legible. A dark scan box or table helps the detector; in good light
+  without sleeves the results are best.
+- The camera starts only when you tap, and stops when you leave the tab.
+
+### Calibration mode
+
+The default thresholds are deliberately **conservative**: they were tuned on
+synthetic captures and favour asking you over guessing wrong. To tune them for
+your own phone and cards:
+
+1. Turn on **Calibration mode** in the scan settings. Then scan 30–50 of your
+   own cards, a mix of eras, languages and foils.
+2. After each scan, confirm or correct the true printing and finish. All
+   scores and OCR outputs are recorded along with your answer.
+3. Download **Calibration export** (Settings tab, `GET /api/calibration/export`)
+   and derive new values. Set them as JSON in `SCAN_THRESHOLDS`, for example
+   `SCAN_THRESHOLDS={"fpAuto":0.27}`. Unknown keys are ignored with a warning.
+
+### Limits
+
+Some printings can't be told apart from a photo. Examples are prerelease and
+promo-pack stamps, *The List* reprints, Alpha/Beta/Unlimited, and most
+pre-2014 foils. For these the scanner picks the base printing and shows the
+**variant?** chip so you can switch.
+
 ## Binders and the collection master
 
 A binder is a named group of owned copies; copies without one are *Unsorted*.
@@ -403,7 +537,8 @@ In the **Collection** tab:
 - the binder bar filters the list by binder (or *Unsorted*); **New binder**
   creates an empty binder, **Manage** renames (renaming onto an existing name
   merges the two) and deletes binders. Deleting asks what happens to the
-  cards: move them to *Unsorted* (default) or delete them too.
+  cards: move them to *Unsorted* (default) or delete them too (logged and
+  undoable, see [Editing owned copies](#editing-owned-copies)).
 - a card's details list every owned copy with a **Move…** action: pick how
   many copies and the target binder (or a new one).
 - **Select** turns the grid or list into a selection; **Move to…** moves every
@@ -424,7 +559,7 @@ becomes the master:
 - deleting a binder may delete its ManaBox cards too (while ManaBox is the
   master this is refused, so ManaBox data is never deleted silently).
 
-The **Import** tab shows the current master and can switch it back.
+The **Settings** tab (Collection) shows the current master and can switch it back.
 
 API (JSON; state-changing calls need `Content-Type: application/json` and a
 same-origin request):
@@ -434,7 +569,7 @@ same-origin request):
 | `GET /api/binders` | `{binders: [{name, cards, unique_cards, copies, sources, by_source, created_at, empty}], unsorted, collection_master}` |
 | `POST /api/binders {name}` | create an empty binder: 201, 409 if it exists, 400 if empty or longer than 100 |
 | `PATCH /api/binders/:name {name, confirm_master?}` | rename, merging into an existing binder |
-| `DELETE /api/binders/:name?cards=unsort\|delete&confirm_master=1` | delete; `unsort` (default) moves the cards to Unsorted |
+| `DELETE /api/binders/:name?cards=unsort\|delete&confirm_master=1` | delete; `unsort` (default) moves the cards to Unsorted, `delete` deletes them (logged in the edit log, undoable) |
 | `POST /api/collection/move` | `{items, to_binder, create?, confirm_master?}`; an item is `{scryfall_id, finish, language, condition, binder, source?, quantity}` (copies of one row key), `{oracle_id, from_binder?}` (every copy of a card) or `{printing_id, from_binder?}` (every copy of a printing); `to_binder: ""` is Unsorted |
 | `GET /api/collection?binder=` | the collection list filtered by exact binder (`binder=` = Unsorted) |
 | `GET\|PATCH /api/settings` | `{collection_master: "manabox" \| "app"}` (also in `GET /api/stats`) |
@@ -448,71 +583,36 @@ answers `409 {code: "confirm_master", manabox_copies}`; repeat it with
 `confirm_master` to proceed. A *replace* import while mtg-planner is the master
 answers `409 {code: "confirm_replace"}` unless `confirm_replace=1` is set.
 
-### First start: building the index
+## Editing owned copies
 
-The scanner needs a local card index, which is built in the background on
-first start (turn this off with `SCAN_AUTO_INDEX=false`):
+A card's details list every owned copy with **Move… / Edit… / Delete…**:
 
-1. **Card metadata.** The app streams Scryfall's `all_cards` bulk file
-   (about 400 MB gzipped) into `/data/cardindex.db`. This takes minutes and a
-   few hundred MB of disk.
-2. **Fingerprints.** The app downloads one small reference image per unique
-   artwork and frame (about 78,000 images; the number follows Scryfall's
-   catalogue) and hashes it. With at most two polite connections this takes
-   **about two hours**. By default the images are kept under `/data/images`
-   (**about 1.2 GB**) so that a future change to the hash only means
-   re-hashing (with `FP_KEEP_IMAGES=false` they are hashed in memory and not
-   stored). The job resumes on its own: after a restart or redeploy (with
-   `SCAN_AUTO_INDEX` on) it continues where it stopped. While it runs, cards
-   identified by the fingerprint alone are never accepted automatically.
+- **Edit…** changes the language (to the same set and number in that
+  language, or just the language tag), the printing (same card), the finish
+  (one the printing exists in) or the condition, for some or all copies of
+  that row.
+- **Delete…** removes copies after a second confirmation. **Select** in the
+  Collection tab can delete many cards at once (you type the number of copies
+  to confirm).
+- Every edit and delete shows a toast with **Undo**, and is listed under
+  **Settings → Collection → Recent changes**, where it can be undone later
+  (newest first, as long as the copies weren't changed again since). Undo
+  restores the rows exactly.
+- Editing or deleting ManaBox copies makes mtg-planner the
+  [collection master](#binders-and-the-collection-master), after asking once.
+  Later ManaBox imports respect these changes: an edited or deleted copy is
+  not loaded again while the export still lists it, and once ManaBox shows the
+  same change the edit simply counts as done.
+- Claude's `edit_copies` tool uses the same edits (logged with Claude as the
+  author, undoable the same way); it cannot delete.
 
-The **Import** tab shows the index status and has **Refresh index** and
-**Build fingerprints** buttons. Refresh the index now and then so new sets are
-recognised. Until fingerprints exist, scanning still works on cards with a
-modern collector line, but older cards need more manual picking.
-
-The fingerprints are loaded in a worker thread right after the server starts
-(a few seconds; once after an upgrade that adds columns to the index, longer).
-`/healthz` shows `scanner.matcher.state` (`loading`, `ready` or `error`) and
-the load time. A scan sent while it is still loading waits for it, at most
-`SCAN_MATCHER_WAIT_MS`, and the Scan tab says "warming up the scanner".
-
-### Phones, HTTPS and capture
-
-- Browsers only allow camera access in a **secure context**, which means
-  HTTPS or `localhost`. Plain `http://<lan-ip>:8080` loads the app, but the
-  camera won't start. Put the app behind a reverse proxy with a certificate
-  that your phones trust.
-- The scanner works on **iOS Safari 17+** and **Android Chrome**. On Android
-  the still is taken with `ImageCapture.takePhoto()` at full sensor
-  resolution, and the torch can be toggled. On iPhone the still is a frame of
-  the video stream, and the torch only works on some devices.
-- Hold the card inside the guide frame, flat and without glare. The collector
-  line has to be legible, so fill the frame. In good light without sleeves
-  the results are best.
-- The camera starts only when you tap, and stops when you leave the tab.
-  Sound and vibration feedback can be turned off.
-
-### Calibration mode
-
-The default thresholds are deliberately **conservative**: they were tuned on
-synthetic captures and favour asking you over guessing wrong. To tune them for
-your own phone and cards:
-
-1. Turn on **Calibration mode** in the scan settings. Then scan 30–50 of your
-   own cards, a mix of eras, languages and foils.
-2. After each scan, confirm or correct the true printing and finish. All
-   scores and OCR outputs are recorded along with your answer.
-3. Download **Calibration export** (Import tab, `GET /api/calibration/export`)
-   and derive new values. Set them as JSON in `SCAN_THRESHOLDS`, for example
-   `SCAN_THRESHOLDS={"fpAuto":0.27}`. Unknown keys are ignored with a warning.
-
-### Limits
-
-Some printings can't be told apart from a photo. Examples are prerelease and
-promo-pack stamps, *The List* reprints, Alpha/Beta/Unlimited, and most
-pre-2014 foils. For these the scanner picks the base printing and shows the
-**variant?** chip so you can switch.
+API: `POST /api/collection/edit {items, set: {language?, printing_id?, finish?,
+condition?}, confirm_master?}`, `POST /api/collection/delete {items, confirm:
+true, expected_copies?, confirm_master?}` (items as for `/api/collection/move`;
+`expected_copies` = the number of copies the user confirmed: when the items now
+select another number, nothing is deleted and the answer is
+`409 {code: "changed", copies}`),
+`GET /api/collection/edits` and `POST /api/collection/edits/:id/undo`.
 
 ## Architecture
 
@@ -522,7 +622,7 @@ flowchart LR
   subgraph container["mtg-planner container"]
     server["server.js<br/>JSON API + SSE + static"]
     db[("SQLite<br/>/data/mtg-planner.db")]
-    scan["scanner<br/>OCR (tesseract) · djpeg<br/>fingerprint matcher"]
+    scan["scanner<br/>OCR helper (libtesseract) · djpeg<br/>fingerprint matcher"]
     idx[("card index<br/>/data/cardindex.db")]
     server --- scan
     scan --- idx
@@ -545,13 +645,19 @@ flowchart LR
 - `server.js`: HTTP API, ManaBox import, decks, scanner, and chat over
   Server-Sent Events. It uses the Node standard library only.
 - `lib/db.js`: SQLite schema (`cards`, `collection`, `binders`, `decks`,
-  `deck_cards`, `imports`, `chats`, `messages`, `scans`, `meta`) on `node:sqlite`, with versioned
-  migrations (`PRAGMA user_version`), plus price helpers.
+  `deck_cards`, `imports`, `manabox_snapshot`, `collection_edits`, `chats`,
+  `messages`, `scans`, `meta`) on `node:sqlite`, with versioned migrations
+  (`PRAGMA user_version`), plus price helpers.
 - `lib/scryfall.js`: rate-limited Scryfall client and card normalisation.
+- `lib/prices.js`: copies the English printing's EUR prices to foreign
+  printings that have none, so values never fall back to USD.
 - `lib/query.js`: compiles the search syntax to SQL.
-- `lib/manabox.js`: CSV parser and ManaBox import (replace/add, binders).
+- `lib/manabox.js`: CSV parser and ManaBox import (replace/delta/add,
+  binders, deck binders), aware of edits and deletes made in the app.
 - `lib/binders.js`: binders (list, create, rename/merge, delete), moving
   copies between binders, and the collection master setting.
+- `lib/edits.js`, `lib/editlog.js`: editing and deleting owned copies, the
+  edit log and undo.
 - `lib/decks.js`: decklist parsing, name resolution (owned printings first),
   and ownership and missing-cost math.
 - `lib/scheduler.js`: the nightly index and price refresh.
@@ -561,28 +667,35 @@ flowchart LR
   turns `stream-json` into UI events. It also runs the scanner's one-shot vision call (no tools, no
   session) behind an hourly cap.
 - `lib/cardindex.js`: the local Scryfall index (`/data/cardindex.db`). It
-  streams the bulk import and handles collector-number, legacy `nnn/ttt` and
-  fuzzy title lookups, printings and variants, and storage-language mapping.
-- `lib/ocr.js`: tesseract wrapper, collector-line parser, ★/• classifier,
-  set-code matching, and title OCR.
-- `lib/fingerprint.js`: JPEG decoding via `djpeg`, the 88-byte card hash,
-  the in-memory matcher (`MatcherWorker` runs it in a worker thread), and the
-  background reference-hash job.
+  streams the bulk import (in a worker thread, `lib/index-worker.js`) and
+  handles collector-number, legacy `nnn/ttt` and fuzzy title lookups,
+  printings and variants, and storage-language mapping.
+- `lib/ocr.js`: OCR through the persistent helper `native/mtg-ocr.c` (a small
+  C program on the libtesseract API, built in the image) or the tesseract CLI,
+  collector-line parser, ★/• classifier, set-code matching, and title OCR.
+- `lib/fingerprint.js`: JPEG decoding via `djpeg`, the 88-byte card hash
+  (shared with the browser as `public/fphash.js`), the in-memory matcher
+  (`MatcherWorker` runs it in a worker thread), and the background
+  reference-hash job.
 - `lib/fingerprint-worker.js`: the matcher's worker thread: loads the
   fingerprints at startup, hashes and matches scans, and serves the scanner's
   card-index lookups, so none of that blocks the HTTP server.
-- `lib/scanner.js`: the identification pipeline and the decision thresholds
-  (`SCAN_THRESHOLDS`).
-- `lib/scans.js`: the scan list (staging, duplicate rule, undo, +1), commits
-  to binders and decks, and calibration records.
+- `lib/scanner.js`: the identification pipeline (with the 180° retry) and the
+  decision thresholds (`SCAN_THRESHOLDS`).
+- `lib/scans.js`: the scan list (staging, duplicate rule, undo, +1), the
+  recognition probes, commits to binders and decks, and calibration records.
+- `lib/debugsessions.js`: the store for recorded scan sessions.
 - `mcp-collection.js`: hand-rolled MCP stdio server (JSON-RPC 2.0) with the
   tools `collection_overview`, `search_collection`, `check_owned`, `get_card`,
-  `list_decks`, `get_deck`, `shopping_list`, `save_deck` and `list_binders`
-  (read-only apart from `save_deck`; binder names, each row's source, ManaBox,
-  scan or app, and owned vs. free copies are visible to Claude).
-- `public/`: the single-page web app. `public/scanlib.js` does the in-browser
-  capture work: card detection, steadiness and sharpness checks, perspective
-  correction, and strip cropping. It needs no dependencies.
+  `list_decks`, `get_deck`, `shopping_list`, `list_binders`, `save_deck` and
+  `edit_copies` (read-only apart from `save_deck` and `edit_copies`, no
+  delete; binder names, each row's source, ManaBox, scan or app, and owned
+  vs. free copies are visible to Claude).
+- `public/`: the single-page web app, with no dependencies. The scanner's
+  browser side: `public/det/` (card detector and tracker), `public/scanlib.js`
+  (camera, cropping, glare and sharpness checks, sounds),
+  `public/capture.js` (the probe loop and upload queue) and
+  `public/autoask.js` (when to ask Claude about a hard card).
 
 The card index is kept in a separate SQLite file, so it can be rebuilt or
 deleted without touching your collection. The web server and the MCP server
@@ -591,7 +704,7 @@ WAL mode with a busy timeout.
 
 ## Backups
 
-The **Backup & restore** panel in the Import tab works by hand only: there are
+The **Backup & restore** panel in the Settings tab works by hand only: there are
 no scheduled backups, and Claude's MCP tools have no access to backups.
 
 - **Create backup** writes a consistent snapshot of the app database
@@ -637,7 +750,8 @@ trigger imports, restores, scans or deck changes. This is not a
 substitute for authentication.
 
 The Claude CLI runs without built-in tools or slash commands, but its two MCP
-servers can reach the internet (Scryfall) and write decks.
+servers can reach the internet (Scryfall), write decks and edit owned copies
+(never delete them; every edit can be undone in the app).
 
 ## Development
 
@@ -651,6 +765,8 @@ scripts/deploy.sh      # builds mtg-planner:<semver>-<sha>, runs the tests in it
 # ...or build here and deploy to another Docker host over SSH (image shipped with docker save/load)
 DEPLOY_HOST=user@host DEPLOY_DIR=/path/to/compose/dir scripts/deploy.sh
 scripts/deploy.sh --image mtg-planner:<tag>   # switch back to an image still on the target
+# defaults for DEPLOY_HOST/DEPLOY_DIR can live in scripts/deploy.local.env (gitignored);
+# a dirty tree is refused unless --allow-dirty (version gets a .dirty suffix)
 
 # tests (node:test, offline: Scryfall and the Claude CLI are stubbed; OCR and
 # djpeg tests skip when tesseract/djpeg/cjpeg are not installed)
@@ -684,9 +800,10 @@ CLI itself is not built into the image).
   they are not re-published. Cards in the app are shown with Scryfall's own
   image URLs and are not cropped or altered.
 - OCR by [Tesseract](https://github.com/tesseract-ocr/tesseract)
-  (Apache-2.0). JPEG decoding is done by `djpeg` from
-  [libjpeg-turbo](https://libjpeg-turbo.org/). Both are installed from Debian
-  packages in the image.
+  (Apache-2.0), used through its library by the small `mtg-ocr` helper built
+  in the image (and its CLI as a fallback). JPEG decoding is done by `djpeg`
+  from [libjpeg-turbo](https://libjpeg-turbo.org/). Both are installed from
+  Debian packages in the image.
 - Magic: The Gathering, card names, card text and card images are © Wizards of
   the Coast LLC. mtg-planner is unofficial Fan Content and is **not affiliated
   with, endorsed, sponsored or approved by Wizards of the Coast**.

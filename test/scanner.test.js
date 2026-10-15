@@ -624,13 +624,14 @@ describe("identifyOriented: 180° retry", () => {
   const far = { printing_id: "dmo-107-en", oracle_id: "o-ghostly-prison", name: "Ghostly Prison", score: 0.43 };
 
   function go({ up = {}, rot = {}, claude = null, settings = {}, signal, uprightJpegs, retryMode, hashErr } = {}) {
-    const calls = { hash: [], collector: [], title: [], band: null, upright: 0 };
+    const calls = { hash: [], collector: [], title: [], titleLangs: [], band: null, upright: 0 };
     const pass = (rotated) => (rotated ? rot : up);
     const ocr = {
       rotatedOcrInputs: async (_card, { band }) => { calls.band = band; return { card: ROT_CARD, strip: ROT_STRIP }; },
       readCollectorLine: async (buf) => { calls.collector.push(buf === ROT_STRIP ? 180 : 0); return pass(buf === ROT_STRIP).line ?? null; },
-      readTitle: async (buf) => {
+      readTitle: async (buf, opts) => {
         calls.title.push(buf === ROT_CARD ? 180 : 0);
+        calls.titleLangs.push(opts?.lang ?? null);
         const t = pass(buf === ROT_CARD).title ?? "";
         return { text: t, confidence: t ? 0.85 : 0 };
       },
@@ -763,6 +764,24 @@ describe("identifyOriented: 180° retry", () => {
     assert.equal(r.features.rotation, 180);
     assert.equal(claude.calls.length, 1);
     assert.deepEqual(claude.calls[0].images.map((i) => i.data), [UP_CARD.toString("base64"), UP_STRIP.toString("base64")]);
+  });
+
+  test("a turned REVIEW without upright images skips Claude (it would get the photo upside down)", async () => {
+    const claude = makeClaude({ english_name: "Nope", printed_name: "Nope", set_code: "zzz", collector_number: "1", language: "en" });
+    const { r } = await go({ up: { top: [far] }, rot: { top: [lea(0.3)], scores: { "lea-2-en": 0.3 } }, claude,
+      uprightJpegs: async () => { throw new Error("cjpeg missing"); } });
+    assert.equal(r.status, "review");
+    assert.equal(r.features.rotation, 180);
+    assert.equal(claude.calls.length, 0);
+    assert.equal(r.features.claude?.skipped, "no upright image");
+  });
+
+  test("a losing turned pass's bogus line does not set the session's title language", async () => {
+    const bogus = modernLine({ raw: "JP", lang: "ja", langCode: "JP", confidence: 0.2, setCandidates: [{ code: "zzz", score: 0.3, cost: 2 }] });
+    const first = await go({ up: { top: [far] }, rot: { line: bogus, top: [far] } });
+    assert.equal(first.r.features.rotation, 0, "the upright pass wins");
+    const next = await go({ up: { top: [far] }, retryMode: "never" });
+    assert.deepEqual([...new Set(next.calls.titleLangs)], ["en"], "no speculative Japanese title read");
   });
 
   test("a client that left: no turned pass, no Claude", async () => {

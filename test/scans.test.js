@@ -259,6 +259,19 @@ describe("staging", () => {
     assert.equal(getScan(ctx.db, s.id), null);
     assert.equal(existsSync(path.join(imageDir, `scan-${s.id}.jpg`)), false);
   });
+
+  test("a deferred delete naming created_at never removes a newer scan that reused the id", async () => {
+    stage(result(SOL));
+    const x = stage(result(BOLT)).scan; // discarded in the UI (hidden, delete pending)
+    undoLast(ctx.db, { imageDir }); // removes x: the newest staged row
+    await new Promise((r) => setTimeout(r, 5)); // a later created_at
+    const y = stage(result(SERRA)).scan;
+    assert.equal(y.id, x.id, "INTEGER PRIMARY KEY reuses the id");
+    assert.throws(() => deleteScan(ctx.db, x.id, { imageDir, createdAt: x.created_at }), (e) => e.status === 409);
+    assert.equal(getScan(ctx.db, y.id).name, "Serra Angel");
+    deleteScan(ctx.db, y.id, { imageDir, createdAt: y.created_at });
+    assert.equal(getScan(ctx.db, y.id), null);
+  });
 });
 
 describe("collector-line strip", () => {
@@ -384,6 +397,21 @@ describe("commit", () => {
     assert.notEqual(ctx.db.prepare("SELECT fetched_at FROM cards WHERE scryfall_id = ?").get(BOLT_DE.id).fetched_at, "");
   });
 
+  test("changes made during the Scryfall lookup: a +1 is committed, a deleted scan refuses (no phantom copies)", async () => {
+    const qty = () => ctx.db.prepare("SELECT COALESCE(SUM(quantity), 0) AS n FROM collection WHERE scryfall_id = ?").get(BOLT_DE.id).n;
+    const s = stage(result(BOLT_DE)).scan;
+    const res = await commit([s.id], { type: "binder", name: "DE", create: true }, {
+      fetchCards: async () => { incrementScan(ctx.db, s.id); throw new TypeError("fetch failed"); },
+    });
+    assert.deepEqual([res.copies, qty()], [2, 2], "the +1 made meanwhile is not lost");
+    const s2 = stage(result(BOLT_DE), { force: true }).scan;
+    // (the offline fallback card row is re-fetched, so this commit awaits Scryfall too)
+    await assert.rejects(commit([s2.id], { type: "binder", name: "DE" }, {
+      fetchCards: async () => { deleteScan(ctx.db, s2.id, { imageDir }); throw new TypeError("fetch failed"); },
+    }), (e) => e.status === 409);
+    assert.equal(qty(), 2, "nothing inserted for the deleted scan");
+  });
+
   test("decks synced from ManaBox are not a commit target", async () => {
     ctx.db.prepare("INSERT INTO decks (name, source) VALUES ('Elves', 'manabox')").run();
     const s = stage(result(SOL)).scan;
@@ -392,7 +420,7 @@ describe("commit", () => {
 });
 
 describe("binders and ManaBox replace", () => {
-  test("listBinders / renameBinder (merge) / deleteBinder (scan rows only)", async () => {
+  test("listBinders / renameBinder (merge) / deleteBinder (no legacy delete by source)", async () => {
     seedCollection(ctx.db, [[ID.sol, 2, { binder: "Trade" }], [ID.lightning, 1]]);
     const s = stage(result(SOL)).scan;
     await commit([s.id], { type: "binder", name: "Trade" });
@@ -407,8 +435,8 @@ describe("binders and ManaBox replace", () => {
     assert.throws(() => renameBinder(ctx.db, "Nope", "X"), (e) => e.status === 404);
     assert.throws(() => renameBinder(ctx.db, "Trade", "Tausch"), (e) => e.status === 409 && e.extra?.code === "confirm_master",
       "moving ManaBox rows needs the one-time master confirmation");
-    assert.equal(deleteBinder(ctx.db, "Trade", { source: "scan" }).deleted, 2);
-    assert.deepEqual(flat().map((b) => [b.name, b.copies, b.sources.join("+")]), [["Trade", 2, "manabox"], ["", 1, "manabox"]]);
+    assert.throws(() => deleteBinder(ctx.db, "Trade", { source: "scan" }), (e) => e.status === 400);
+    assert.deepEqual(flat().map((b) => [b.name, b.copies, b.sources.join("+")]), [["Trade", 4, "manabox+scan"], ["", 1, "manabox"]]);
   });
 
   test("a ManaBox replace import leaves scanned rows alone", async () => {

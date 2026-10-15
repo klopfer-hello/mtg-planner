@@ -133,11 +133,15 @@ export class AutoAsk {
   /**
    * Whether this frame's card is due for an ask (o as for step, before step): the UI then starts no
    * new probe, so the ask goes out on the next still frame instead of racing a probe whose answer
-   * could stage the same card next to the Claude scan.
+   * could stage the same card next to the Claude scan. Same gates as step (blocked, still, sharp
+   * floor; still === undefined counts as still): while the ask can't go out anyway (a hand-held
+   * card moving, a blurry strip, a stalled upload queue) the probe loop keeps its own state and
+   * hints ("Hold steady", "Not recognised – tap to capture") instead of a false "Identifying…".
    */
   wants(o = {}) {
     const c = this.cfg, now = o.now ?? Date.now(), t = this.track;
     const thumb = o.found && o.cardThumb ? o.cardThumb : null;
+    if (o.blocked || o.still === false || (Number.isFinite(o.sharp) && o.sharp < c.sharpFloor)) return false;
     if (!t || t.n < c.askAfter || t.asked || this.hushed || this.pending || !thumb || this.capped(now) || !this.enabled()) return false;
     if (mad(thumb, t.ref) > c.changeMad || this.recent.some((r) => mad(thumb, r) <= c.changeMad)) return false;
     return this.asks.filter((a) => now - a < c.budgetMs).length < c.maxAsks;

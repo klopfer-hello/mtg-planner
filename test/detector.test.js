@@ -2,8 +2,8 @@
 // the empty box, 180-degree reading order, the tracker, and the learned,
 // persisted scan-box prior. Scenes are drawn in memory (test/helpers/
 // detscenes.js), no image files. The parity check against the research copy
-// of the detector runs only where that copy exists (DET_RESEARCH_DIR, default
-// ../mtg-research/proto/detA2 next to the repo); CI skips it.
+// of the detector runs only where that copy exists (env DET_RESEARCH_DIR, a
+// private research checkout); without it, as in CI, it is skipped.
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -17,7 +17,7 @@ import { addNoise, background, drawCard, emptyBox, makeCard, placeCard, sceneSet
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DET_DIR = path.join(ROOT, "public", "det");
-const RESEARCH_DIR = path.resolve(process.env.DET_RESEARCH_DIR || path.join(ROOT, "..", "mtg-research", "proto", "detA2"));
+const RESEARCH_DIR = process.env.DET_RESEARCH_DIR ? path.resolve(process.env.DET_RESEARCH_DIR) : null;
 
 const W = 480, H = 853;
 const d2 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -310,7 +310,7 @@ describe("BoxPrior", () => {
   });
 });
 
-describe("parity with the research detector", { skip: !existsSync(path.join(RESEARCH_DIR, "detect.mjs")) && "research copy not present" }, () => {
+describe("parity with the research detector", { skip: !(RESEARCH_DIR && existsSync(path.join(RESEARCH_DIR, "detect.mjs"))) && "research copy not present (DET_RESEARCH_DIR)" }, () => {
   const pick = (r) => ({ found: r.found, weak: r.weak, mode: r.mode, score: r.score, corners: r.corners, orientConf: r.orientConf });
   const PARITY_OPTS = [{}, { mode: "box" }, { mode: "box", prior: { center: [240, 426], angle: 0, scaleRange: [0.5, 0.75], weight: 1 } }];
 

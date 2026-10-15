@@ -397,7 +397,7 @@ async function ocrModule(tag, helperPath) {
 }
 
 // A fake helper speaking the mtg-ocr protocol; the mode comes from its file
-// name (ok|err|crash|hang). "ok" answers one TSV word
+// name (ok|err|crash|hang|hangbig: hangs on images over 100 bytes). "ok" answers one TSV word
 // "<lang>|<psm>|<whitelist>|<image bytes>|<pid>".
 const FAKE_HELPER = String.raw`#!/usr/bin/env node
 const MODE = process.argv[1].match(/fake-(\w+)\.mjs$/)[1];
@@ -411,7 +411,7 @@ process.stdin.on("data", (d) => {
     const lang = buf.toString("utf8", 20, 20 + ll), white = buf.toString("utf8", 20 + ll, 20 + ll + wl);
     buf = buf.subarray(20 + ll + wl + il);
     if (MODE === "crash") process.exit(7);
-    if (MODE === "hang") return;
+    if (MODE === "hang" || (MODE === "hangbig" && il > 100)) return;
     const reply = (status, text) => {
       const body = Buffer.from(text), h = Buffer.alloc(12);
       h.write("MOCR"); h.writeUInt32LE(status, 4); h.writeUInt32LE(body.length, 8);
@@ -472,6 +472,20 @@ describe("persistent OCR helper protocol (fake helper)", { skip: !posix && "need
     assert.equal(M.ocrHelperStatus().running, 0);
     await assert.rejects(M.ocrImage(img, { timeoutMs: 300 }), /timed out/);
     assert.equal(M.ocrHelperStatus().spawned, 2);
+    M.closeOcrHelpers();
+  });
+
+  test("a call queued behind a timeout never gets the dying helper (no false crash)", async () => {
+    const M = await ocrModule("fake-hangbig", fake("hangbig"));
+    const big = encodePgm({ width: 40, height: 20, data: new Uint8Array(800).fill(255) });
+    // Both slots (OCR_MAX_CONCURRENT 2) hang; the third call waits for a slot and runs the moment
+    // the first timeout frees one, before the killed helper's exit event.
+    const hung = [1, 2].map(() => assert.rejects(M.ocrImage(big, { lang: "eng", timeoutMs: 300 }), /timed out after 300 ms/));
+    const r = await M.ocrImage(img, { lang: "eng", timeoutMs: 5000 });
+    await Promise.all(hung);
+    assert.ok(r.words[0].text.startsWith("eng|"));
+    const st = M.ocrHelperStatus();
+    assert.deepEqual([st.timeouts, st.crashes, st.fallbacks, st.spawned], [2, 0, 0, 3]);
     M.closeOcrHelpers();
   });
 

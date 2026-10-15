@@ -351,6 +351,12 @@ describe("mcp-collection.js edit_copies", () => {
     let done;
     try {
       await next.request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
+      // A refused edit keeps the token (the user already agreed): a retry with the right finish works.
+      const etched = await next.call("edit_copies", { ...args, set: { finish: "etched" }, confirm_master: token });
+      assert.match(etched.text, /has no etched finish/);
+      // The token covers these copies only, not another edit.
+      const other = await next.call("edit_copies", { card: "Counterspell", match: { set: "7ed" }, set: { finish: "foil" }, quantity: 2, confirm_master: token });
+      assert.match(other.text, /issued for other copies/);
       done = await next.call("edit_copies", { ...args, confirm_master: token });
       const again = await next.call("edit_copies", { card: "Counterspell", match: { set: "7ed" }, set: { finish: "foil" }, quantity: 2, confirm_master: token });
       assert.match(again.text, /must be the token/);

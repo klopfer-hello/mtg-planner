@@ -1,56 +1,19 @@
-// Browser capture module (public/scanlib.js): the auto-capture state machine
-// is pure, so it runs under node:test without a DOM. The v2 (detector A2)
-// analyzer runs on a tiny canvas shim over procedural frames (no photos).
+// Browser capture module (public/scanlib.js): the pure helpers run under
+// node:test without a DOM; the detector A2 analyzer runs on a tiny canvas shim
+// over procedural frames (no photos).
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  AutoCapture, CAPTURE_DEFAULTS, DET_BLANK_SHARP, DET_STORAGE_KEY, SOUND_DEFAULTS, captureAdvice, chooseScanSound, createDetAnalyzer,
-  createScanSounds, glareMap, mapToPhoto, photoMapping, quadSize, scanDetVersion, warpQuad, workSize,
+  CAPTURE_DEFAULTS, DET_BLANK_SHARP, SOUND_DEFAULTS, captureAdvice, chooseScanSound, createDetAnalyzer,
+  createScanSounds, defaultCardQuad, glareMap, mapToPhoto, photoMapping, quadSize, warpQuad, workSize,
 } from "../public/scanlib.js";
-import { CaptureController, ProbeController } from "../public/capture.js";
-import { hashAt, score } from "../public/fphash.js";
+import { ProbeController } from "../public/capture.js";
 import { PRIOR_STORAGE_KEY } from "../public/det/track.mjs";
 import { addNoise, background, drawCard, makeCard, placeCard } from "./helpers/detscenes.js";
 
-const thumb = (v) => ({ w: 64, h: 64, d: new Uint8Array(64 * 64).fill(v) });
-const corners = [[100, 100], [400, 100], [400, 520], [100, 520]];
-const art = (bit) => Uint8Array.from({ length: 64 }, (_, i) => (i % 2 === bit ? 1 : 0));
-
-function feed(ac, frames, start = 0) {
-  const caps = [];
-  frames.forEach((f, i) => {
-    const r = ac.step({ now: start + i * 125, guideW: 300, sharp: 200, corners: f.found ? corners : null, ...f });
-    if (r.capture) caps.push(i);
-  });
-  return caps;
-}
-
-test("a brief detection dropout (weak quad) never re-captures the same card", () => {
-  const ac = new AutoCapture();
-  const card = { found: true, thumb: thumb(120), artHash: art(0) };
-  const caps = feed(ac, [
-    ...Array(8).fill(card),
-    ...Array(3).fill({ found: false, weak: true, thumb: thumb(118) }),
-    ...Array(4).fill({ found: false, weak: false, thumb: thumb(121) }), // card not detected, scene unchanged
-    ...Array(8).fill(card),
-  ]);
-  assert.equal(caps.length, 1);
-  assert.equal(ac.state, "cooldown");
-});
-
-test("the card leaving the frame (or another card swapped in) re-arms", () => {
-  const ac = new AutoCapture();
-  const card = { found: true, thumb: thumb(120), artHash: art(0) };
-  const empty = { found: false, weak: false, thumb: thumb(30) };
-  const next = { found: true, thumb: thumb(160), artHash: art(1) };
-  assert.equal(feed(ac, [...Array(8).fill(card), ...Array(8).fill(empty), ...Array(8).fill(card)]).length, 2);
-  const swap = new AutoCapture();
-  assert.equal(feed(swap, [...Array(8).fill(card), ...Array(8).fill(next)]).length, 2);
-});
-
 // ---------------------------------------------------------------------------
-// v2 helpers
+// helpers
 
 /** Map-backed Storage stand-in; `fail` makes every call throw (blocked storage). */
 function memStorage(init = {}, fail = false) {
@@ -123,27 +86,6 @@ function frame(key, w, h, kind, cardSeed, quad, noiseSeed = 1) {
   return sceneCache.get(k);
 }
 
-describe("scanDetVersion", () => {
-  test("URL beats storage and is remembered; storage beats the default; v2 by default", () => {
-    const st = memStorage();
-    assert.equal(scanDetVersion({ search: "", storage: st }), "v2");
-    assert.equal(scanDetVersion({ search: "?det=v1", storage: st }), "v1");
-    assert.equal(st.m.get(DET_STORAGE_KEY), "v1");
-    assert.equal(scanDetVersion({ search: "?tab=scan", storage: st }), "v1", "a PWA start without the query keeps v1");
-    assert.equal(scanDetVersion({ search: "?det=v2&x=1", storage: st }), "v2");
-    assert.equal(scanDetVersion({ search: "", storage: st }), "v2");
-    assert.equal(scanDetVersion({ search: "", storage: memStorage({ [DET_STORAGE_KEY]: "v1" }) }), "v1");
-  });
-
-  test("junk values, blocked or missing storage fall back safely", () => {
-    assert.equal(scanDetVersion({ search: "?det=v9", storage: memStorage({ [DET_STORAGE_KEY]: "garbage" }) }), "v2");
-    assert.equal(scanDetVersion({ search: "?det=v1", storage: memStorage({}, true) }), "v1");
-    assert.equal(scanDetVersion({ search: "", storage: memStorage({}, true) }), "v2");
-    assert.equal(scanDetVersion({ search: "", storage: null }), "v2");
-    assert.equal(scanDetVersion({ storage: null }), "v2", "no location in node");
-  });
-});
-
 describe("chooseScanSound", () => {
   const scan = (match_status, price) => ({ scan: { id: 1, match_status, status: "staged" }, duplicate: false, result: { status: match_status, price_eur: price } });
   const cases = [
@@ -215,6 +157,21 @@ describe("createScanSounds", () => {
 });
 
 // ---------------------------------------------------------------------------
+// defaultCardQuad: the shutter's last fallback (no tracked card, no learned box)
+
+test("defaultCardQuad is a centred 63:88 quad, 65 % of the short side, height capped at 92 %", () => {
+  for (const [w, h] of [[720, 1280], [1280, 720], [1000, 1000]]) {
+    const q = defaultCardQuad(w, h), { w: qw, h: qh } = quadSize(q);
+    assert.ok(Math.abs(qw / qh - 63 / 88) < 1e-9);
+    assert.ok(q.every(([x, y]) => x >= 0 && x <= w && y >= 0 && y <= h));
+    assert.ok(Math.abs((q[0][0] + q[2][0]) / 2 - w / 2) < 1e-9 && Math.abs((q[0][1] + q[2][1]) / 2 - h / 2) < 1e-9);
+    assert.ok(qh <= 0.92 * h + 1e-9);
+  }
+  assert.ok(Math.abs(quadSize(defaultCardQuad(720, 1280)).w - 0.65 * 720) < 1e-9);
+  assert.ok(Math.abs(quadSize(defaultCardQuad(1280, 720, 0.7)).h - 0.92 * 720) < 1e-9, "a wider quad in landscape: the height cap wins");
+});
+
+// ---------------------------------------------------------------------------
 // mapToPhoto: still photo (Android takePhoto) with another aspect/FOV than the preview
 
 describe("mapToPhoto", () => {
@@ -239,10 +196,10 @@ describe("mapToPhoto", () => {
     assert.equal(photoMapping(0, 10, VW, VH), null);
   });
 
-  test("v2 re-detects on a 1440 px copy and lands on the card (corners from a 2 % off video quad)", () => {
+  test("re-detects on a 1440 px copy and lands on the card (corners from a 2 % off video quad)", () => {
     grabK = [];
     const info = {};
-    const q = mapToPhoto(photo, VW, VH, toVideo(photoQuad, 4, -3), { det: "v2", grab, info });
+    const q = mapToPhoto(photo, VW, VH, toVideo(photoQuad, 4, -3), { grab, info });
     assert.ok(q, `rejected: ${info.reason}`);
     assert.equal(grabK.length, 1);
     assert.ok(Math.abs(grabK[0] - 1440 / PH) < 1e-12, `k ${grabK[0]}`);
@@ -251,9 +208,9 @@ describe("mapToPhoto", () => {
     assert.ok(info.drift > 0 && info.drift < 0.08);
   });
 
-  test("v2 keeps the caller's corner order (a card the tracker reads upside down)", () => {
+  test("keeps the caller's corner order (a card the tracker reads upside down)", () => {
     const rot = [2, 3, 0, 1].map((i) => photoQuad[i]);
-    const q = mapToPhoto(photo, VW, VH, toVideo(rot), { det: "v2", grab });
+    const q = mapToPhoto(photo, VW, VH, toVideo(rot), { grab });
     assert.ok(q);
     assert.ok(maxErr(q, rot) / cardW(photoQuad) < 0.015);
   });
@@ -268,7 +225,7 @@ describe("mapToPhoto", () => {
       return { w, h, d: resample(src, rect.x, rect.y, rect.w, rect.h, w, h) };
     };
     const mm = photoMapping(1080, 1440, VW, VH);
-    const q = mapToPhoto(small, VW, VH, sq.map(([x, y]) => [(x - mm.ox) / mm.s, (y - mm.oy) / mm.s]), { det: "v2", grab: g });
+    const q = mapToPhoto(small, VW, VH, sq.map(([x, y]) => [(x - mm.ox) / mm.s, (y - mm.oy) / mm.s]), { grab: g });
     assert.deepEqual(ks, [1]);
     assert.ok(q && maxErr(q, sq) / cardW(sq) < 0.015);
   });
@@ -277,7 +234,7 @@ describe("mapToPhoto", () => {
     // the preview really is a 1.25x zoomed crop: the mapped quad misses the card by far more than 8 %
     const info = {};
     const zoomed = photoQuad.map(([x, y]) => [(x - PW / 2) / 1.25 + PW / 2, (y - PH / 2) / 1.25 + PH / 2]);
-    const q = mapToPhoto(photo, VW, VH, toVideo(zoomed), { det: "v2", grab, info });
+    const q = mapToPhoto(photo, VW, VH, toVideo(zoomed), { grab, info });
     assert.equal(q, null);
     assert.equal(info.reason, "drift");
     assert.ok(info.drift > 0.08, `drift ${info.drift}`);
@@ -286,17 +243,11 @@ describe("mapToPhoto", () => {
   test("orientation mismatch is rejected before any re-detect", () => {
     grabK = [];
     const info = {};
-    assert.equal(mapToPhoto({ width: PH, height: PW }, VW, VH, toVideo(photoQuad), { det: "v2", grab, info }), null);
+    assert.equal(mapToPhoto({ width: PH, height: PW }, VW, VH, toVideo(photoQuad), { grab, info }), null);
     assert.equal(info.reason, "orientation");
     assert.equal(grabK.length, 0);
   });
 
-  test("v1 keeps the findCard re-detect at 720 px wide", () => {
-    grabK = [];
-    const q = mapToPhoto(photo, VW, VH, toVideo(photoQuad, 3, 2), { det: "v1", grab });
-    assert.ok(Math.abs(grabK[0] - 720 / PW) < 1e-12);
-    if (q) assert.ok(maxErr(q, photoQuad) / cardW(photoQuad) < 0.03);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -319,6 +270,7 @@ describe("createDetAnalyzer", () => {
   }
 
   test("work frame is 480 px on the short side", () => {
+    assert.equal(CAPTURE_DEFAULTS.workShort, 480);
     assert.deepEqual(workSize(720, 1280), { W: 480, H: 853, s: 480 / 720 });
     assert.deepEqual(workSize(1920, 1080), { W: 853, H: 480, s: 480 / 1080 });
     assert.deepEqual(workSize(320, 240), { W: 320, H: 240, s: 1 });
@@ -346,7 +298,7 @@ describe("createDetAnalyzer", () => {
     assert.deepEqual(Object.keys(o.glare).sort(), ["advice", "code", "regions"]);
     assert.equal(o.glare.advice, null);
     assert.ok(Number.isFinite(o.ms));
-    assert.deepEqual(an.captureOpts(), { det: "v2", preferPhoto: true });
+    assert.deepEqual(an.captureOpts(), { preferPhoto: true });
   });
 
   test("an empty box: nothing found, no card thumbnail, no sharpness", () => {
@@ -375,25 +327,6 @@ describe("createDetAnalyzer", () => {
     assert.equal(c.found, true); assert.ok(c.corners && c.cardThumb);
   });
 
-  test("hashCrop: 244x340 RGB from the full-res frame; same card ≈ 0, another card far", () => {
-    const { an, step } = rig();
-    step(boxCard(31));
-    const a = an.hashCrop(boxQ);
-    assert.equal(a.width, 244); assert.equal(a.height, 340); assert.equal(a.channels, 3);
-    assert.equal(a.data.length, 244 * 340 * 3);
-    const jit = boxQ.map(([x, y], i) => [x + (i % 2 ? 1.5 : -1), y + (i > 1 ? 1 : -1.5)]);
-    step(boxCard(31, 2));
-    const b = an.hashCrop(jit);
-    step(boxCard(32));
-    const c = an.hashCrop(boxQ);
-    const dSame = score(hashAt(a), hashAt(b)), dOther = score(hashAt(a), hashAt(c));
-    // the flat synthetic card flips dHash bits on sensor noise (real cards: ~0.015); the gap is what matters
-    assert.ok(dSame < 0.1, `same ${dSame}`);
-    assert.ok(dOther > 0.25 && dOther > 3 * dSame, `other ${dOther} vs same ${dSame}`);
-    assert.equal(an.hashCrop(null), null);
-    assert.equal(an.hashCrop([[-50, -50], [-10, -50], [-10, -10], [-50, -10]]), null, "outside the frame");
-  });
-
   test("the box prior learns from captures, persists, restores in a new session and becomes the video source", () => {
     const storage = memStorage();
     const { an, step } = rig({ storage });
@@ -420,7 +353,7 @@ describe("createDetAnalyzer", () => {
     const o = next.step(boxCard(50));
     assert.equal(o.priorLearned, true);
     assert.equal(o.mode, "box");
-    assert.deepEqual(next.an.captureOpts(), { det: "v2", preferPhoto: false });
+    assert.deepEqual(next.an.captureOpts(), { preferPhoto: false });
     next.an.forgetPrior();
     assert.equal(storage.m.has(PRIOR_STORAGE_KEY), false);
   });
@@ -492,33 +425,6 @@ describe("createDetAnalyzer", () => {
     assert.equal(clean.code, "ok");
     assert.equal(clean.advice, null);
     assert.equal(an.glareOf(null), null);
-  });
-
-  test("end to end with CaptureController: an empty box, then two different cards = two uploads", () => {
-    const { an, step } = rig();
-    const ctl = new CaptureController({ crop: (o, quad) => an.hashCrop(quad) });
-    const caps = [];
-    const run = (img, n) => {
-      for (let i = 0; i < n; i++) {
-        const o = step(img);
-        const out = ctl.step(o);
-        if (out.capture) {
-          caps.push(out.capture);
-          const item = ctl.captured(out.capture, { n: caps.length });
-          if (item) ctl.uploaded(item.id, 100 + caps.length);
-          an.savePrior();
-        }
-      }
-    };
-    run(empty(), 6);
-    run(boxCard(80), 14);
-    run(empty(), 6);
-    run(boxCard(81), 14);
-    assert.equal(caps.length, 2, JSON.stringify(caps.map((c) => [c.kind, c.rec && c.rec.d])));
-    assert.ok(caps.every((c) => !c.fallback));
-    assert.ok(caps.every((c) => maxErr(c.quad, boxQ) / cardW(boxQ) < 0.03));
-    assert.ok(quadSize(caps[0].quad).w > 0);
-    assert.equal(CAPTURE_DEFAULTS.workShort, 480);
   });
 
   test("end to end with ProbeController: an empty box sends no probes; each card still in the box is probed and staged once", () => {

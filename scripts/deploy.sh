@@ -28,7 +28,7 @@
 #   scripts/deploy.sh                  build, test, ship, switch
 #   scripts/deploy.sh --image <tag>    switch to an image already on the target (rollback)
 #   options: --skip-tests  --allow-dirty
-# Backups stay a manual step (Import tab), on purpose: a deploy takes none.
+# Backups stay a manual step (Settings tab), on purpose: a deploy takes none.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

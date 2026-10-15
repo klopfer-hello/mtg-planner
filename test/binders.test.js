@@ -192,10 +192,11 @@ describe("rename / delete", () => {
     // With the app as master, ManaBox rows may be deleted with their binder.
     seed([[ID.atraxa, 1, { binder: "M" }]]);
     assert.equal(deleteBinder(ctx.db, "M", { cards: "delete" }).deleted_copies, 1);
-    // Legacy: delete only the scanned rows of a binder.
+    // The legacy unlogged delete by source is gone: 400, nothing deleted.
     seed([[ID.forest, 1, { binder: "L", source: "scan" }], [ID.forest, 1, { binder: "L" }]]);
-    assert.equal(deleteBinder(ctx.db, "L", { source: "scan" }).deleted, 1);
+    assert.throws(() => deleteBinder(ctx.db, "L", { source: "scan" }), (e) => e.status === 400);
     assert.throws(() => deleteBinder(ctx.db, "L", { source: "manabox" }), (e) => e.status === 400);
+    assert.equal(ctx.db.prepare("SELECT SUM(quantity) AS n FROM collection WHERE binder = 'L'").get().n, 2);
   });
 
   test("delete cards with confirm_master flips the master to the app (like POST /api/collection/delete)", () => {

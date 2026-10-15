@@ -239,6 +239,18 @@ describe("deleteCopies", () => {
     assert.equal(deleteBinder(ctx.db, "Empty", { cards: "delete" }).edit_id, null);
   });
 
+  test("undoing a binder's 'Delete cards' restores the deck box (decks.box_binder)", () => {
+    seed([[ID.sol, 2, { binder: "Red box", source: "app" }]]);
+    ctx.db.prepare("INSERT INTO binders (name, origin, created_at) VALUES ('Red box', 'app', '2026-01-01')").run();
+    const deck = Number(ctx.db.prepare("INSERT INTO decks (name, box_binder) VALUES ('X', 'Red box')").run().lastInsertRowid);
+    const box = () => ctx.db.prepare("SELECT box_binder FROM decks WHERE id = ?").get(deck).box_binder;
+    const r = deleteBinder(ctx.db, "Red box", { cards: "delete" });
+    assert.equal(box(), null);
+    undoEdit(ctx.db, r.edit_id);
+    assert.equal(box(), "Red box");
+    assert.equal(all()[0].binder, "Red box");
+  });
+
   test("scan rows can be deleted while ManaBox is the master", () => {
     seed([[ID.lightning, 1]]);
     assert.equal(deleteCopies(ctx.db, { items: [item(ID.lightning, 1)], confirm: true }).deleted_copies, 1);
@@ -490,6 +502,35 @@ describe("ManaBox imports after edits / deletes", () => {
     assert.equal(r.matched_edit_copies, 1);
     assert.equal(r.deleted_in_app_copies, 1);
     assert.deepEqual(keys(), ["01/normal/en/near_mint/Box/manabox=2"]);
+  });
+
+  // An app row holding one edited copy (origin en) and one moved ManaBox de copy: each copy keeps
+  // its own origin, so neither the edit nor the delete charges both copies to the en line.
+  const mixedRow = async () => {
+    await importManaBoxCsv(ctx.db, fileOf(solEn(2), solDe(1)), { mode: "replace" });
+    await editCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", source: "manabox" })], set: { language: "de" }, confirm_master: true });
+    moveCopies(ctx.db, { items: [item(ID.sol, 2, { binder: "Box", language: "de" })], to_binder: "Shelf", create: true });
+    assert.deepEqual(keys(), ["01/normal/de/near_mint/Shelf/app=2", "01/normal/en/near_mint/Box/manabox=1"]);
+  };
+
+  test("mixed-origin app row edited: replace keeps the real en copy", async () => {
+    await mixedRow();
+    const e = await editCopies(ctx.db, { items: [item(ID.sol, 2, { binder: "Shelf", source: "app", language: "de" })], set: { condition: "played" } });
+    const moves = loggedMoves(e.edit_id).map((m) => `${m.origin.split("|").slice(2).join("|")}>${m.n}`).sort();
+    assert.deepEqual(moves, ["de|near_mint>1", "en|near_mint>1"]);
+    await importManaBoxCsv(ctx.db, fileOf(solEn(2), solDe(1)), { mode: "replace", confirm_replace: true });
+    assert.deepEqual(keys(), ["01/normal/de/played/Shelf/app=2", "01/normal/en/near_mint/Box/manabox=1"]);
+    await importManaBoxCsv(ctx.db, fileOf(solEn(2), solDe(1)));
+    assert.equal(total(), 3);
+  });
+
+  test("mixed-origin app row deleted: replace neither resurrects it nor drops the en copy", async () => {
+    await mixedRow();
+    const d = deleteCopies(ctx.db, { items: [item(ID.sol, 2, { binder: "Shelf", source: "app", language: "de" })], confirm: true });
+    const moves = loggedMoves(d.edit_id).map((m) => `${m.origin.split("|").slice(2).join("|")}>${m.n}`).sort();
+    assert.deepEqual(moves, ["de|near_mint>1", "en|near_mint>1"]);
+    await importManaBoxCsv(ctx.db, fileOf(solEn(2), solDe(1)), { mode: "replace", confirm_replace: true });
+    assert.deepEqual(keys(), ["01/normal/en/near_mint/Box/manabox=1"]);
   });
 
   test("edit to a key ManaBox already lists: replace keeps the edit (no key swap)", async () => {

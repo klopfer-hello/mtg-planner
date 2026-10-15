@@ -130,13 +130,16 @@ function sendEmpty(res, status = 204) {
   res.end();
 }
 
+/** "16 KB" / "12 MB" for a byte limit (413 messages). */
+const sizeLabel = (n) => (n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${Math.round(n / 1024 / 1024)} MB`);
+
 /** Read the request body as a Buffer, rejecting with 413 above `limit` bytes. */
 function readBody(req, limit) {
   return new Promise((resolve, reject) => {
     const declared = Number(req.headers["content-length"]);
     if (declared > limit) {
       req.resume();
-      reject(new HttpError(413, `Request body too large (max ${Math.round(limit / 1024 / 1024)} MB)`));
+      reject(new HttpError(413, `Request body too large (max ${sizeLabel(limit)})`));
       return;
     }
     const chunks = [];
@@ -147,7 +150,7 @@ function readBody(req, limit) {
       size += chunk.length;
       if (size > limit) {
         failed = true;
-        reject(new HttpError(413, `Request body too large (max ${Math.round(limit / 1024 / 1024)} MB)`));
+        reject(new HttpError(413, `Request body too large (max ${sizeLabel(limit)})`));
         return;
       }
       chunks.push(chunk);
@@ -916,7 +919,7 @@ async function handleScanApi(req, res, url) {
       return sendJson(res, 200, scanCall(() => updateScan(db, id, patch, { idx })));
     }
     if (method === "DELETE") {
-      scanCall(() => deleteScan(db, id));
+      scanCall(() => deleteScan(db, id, { createdAt: query.get("created_at") || null }));
       return sendEmpty(res);
     }
     throw new HttpError(405, "Method not allowed");
@@ -952,7 +955,7 @@ async function handleScanApi(req, res, url) {
       return sendJson(res, 200, await exclusive(async () => scanCall(() => renameBinder(db, name, body.name, { confirm_master: body.confirm_master === true }))));
     }
     if (method === "DELETE") {
-      // ?source=scan (older clients): delete only the scanned rows. Otherwise ?cards=unsort|delete.
+      // ?cards=unsort|delete. The legacy ?source=scan (unlogged delete of the scanned rows) answers 400.
       const opts = query.has("source")
         ? { source: query.get("source") }
         : { cards: query.get("cards") || "unsort", confirm_master: query.get("confirm_master") === "1" };
@@ -1058,7 +1061,7 @@ const debugSessions = new DebugSessions();
 async function handleDebugApi(req, res, url) {
   const { pathname } = url;
   const method = req.method;
-  const call = (fn) => { try { return fn(); } catch (err) { throw err instanceof DebugError ? new HttpError(err.status, err.message) : err; } };
+  const call = async (fn) => { try { return await fn(); } catch (err) { throw err instanceof DebugError ? new HttpError(err.status, err.message) : err; } };
   if (pathname === "/api/debug/frames" && method === "POST") {
     const body = await readJson(req, DEBUG_FRAME_LIMIT);
     let frame = null;
@@ -1066,15 +1069,15 @@ async function handleDebugApi(req, res, url) {
       if (typeof body.jpeg !== "string") throw new HttpError(400, "jpeg must be a base64 string");
       frame = Buffer.from(body.jpeg.replace(/^data:image\/jpeg;base64,/, ""), "base64");
     }
-    call(() => debugSessions.add({ session: body.session, seq: body.seq, frame, record: body.record ?? undefined }));
+    await call(() => debugSessions.add({ session: body.session, seq: body.seq, frame, record: body.record ?? undefined }));
     return sendEmpty(res);
   }
-  if (pathname === "/api/debug/sessions" && method === "GET") return sendJson(res, 200, { sessions: call(() => debugSessions.list()) });
+  if (pathname === "/api/debug/sessions" && method === "GET") return sendJson(res, 200, { sessions: await call(() => debugSessions.list()) });
   const m = /^\/api\/debug\/sessions\/([^/]+)$/.exec(pathname);
   if (m && method === "DELETE") {
     let id;
     try { id = decodeURIComponent(m[1]); } catch { throw new HttpError(400, "Invalid session id"); }
-    if (!call(() => debugSessions.delete(id))) throw new HttpError(404, "Session not found");
+    if (!(await call(() => debugSessions.delete(id)))) throw new HttpError(404, "Session not found");
     return sendEmpty(res);
   }
   throw new HttpError(404, "Not found");

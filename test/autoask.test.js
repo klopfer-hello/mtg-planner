@@ -257,6 +257,11 @@ test('wants: a card due for an ask holds new probes; not before askAfter, after 
   assert.equal(aa.wants(o(CARD_A)), false, 'not yet');
   aa.answer('unidentified', CARD_A);
   assert.equal(aa.wants(o(CARD_A)), true);
+  // Not while the ask could not go out anyway: the probe loop keeps its own hints then.
+  assert.equal(aa.wants({ ...o(CARD_A), still: false }), false, 'moving');
+  assert.equal(aa.wants({ ...o(CARD_A), sharp: 40 }), false, 'blurry strip');
+  assert.equal(aa.wants({ ...o(CARD_A), blocked: true }), false, 'queue stalled / scan running');
+  assert.equal(aa.wants({ ...o(CARD_A), still: true, sharp: 200 }), true);
   assert.equal(aa.wants(o(CARD_B)), false, 'another card in view');
   assert.equal(aa.wants({ found: false }), false);
   assert.equal(asks(frames(aa, CARD_A, 1)), 1);

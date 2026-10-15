@@ -2,8 +2,8 @@
 //
 // Why it exists: the scanner must find a card anywhere in the camera frame, at
 // any angle, on a table or inside a scan box where a black-bordered card lies
-// on a black stack. The old guide-frame finder (scanlib.js findCard) needs the
-// card centred in the guide and loses dark-framed cards in a box. This is
+// on a black stack. The removed v1 guide-frame finder needed the card centred
+// in the guide and lost dark-framed cards in a box. This is
 // detector "A2" from the scanner research (synthetic scenes, then replayed and
 // tuned on real phone captures). Debug output and an unused background model
 // hook were removed. One deliberate change (outerEdge, priorInnerSlack): on a
