@@ -772,9 +772,11 @@ class ProbeSession {
 
 test('probe: defaults are frozen and overrides are validated', () => {
   assert.ok(Object.isFrozen(PROBE_DEFAULTS));
-  assert.equal(PROBE_DEFAULTS.stillMad, 8);
+  assert.equal(PROBE_DEFAULTS.stillMad, 14); // beta.5 sweep (was 8)
+  assert.equal(PROBE_DEFAULTS.holdMad, 10);
   assert.equal(PROBE_DEFAULTS.intervalMs, 1000);
-  assert.ok(PROBE_DEFAULTS.holdMad > PROBE_DEFAULTS.stillMad);
+  // holdMad compares with the held card (not a 400 ms older frame), so it may be below stillMad:
+  // the beta.5 sweep kept 10 (16+ missed cards sliding over each other in the box)
   const { cfg, ignored } = probeConfig({ stillMad: 10, nope: 1, holdMs: 'x' });
   assert.equal(cfg.stillMad, 10);
   assert.equal(cfg.holdMs, PROBE_DEFAULTS.holdMs);
@@ -831,11 +833,13 @@ test('probe: no probes while the card moves; hand-held shake still probes (card-
   const s = new ProbeSession(new Scene('table', 7));
   const c = s.scene.add('a', makeCard(81), boxQuad(s.scene));
   // slid around by hand: the tracked quad lags a frame behind the card (corners = the last frame's
-  // position), so with an uneven motion the card region keeps changing → never still
+  // position), so with an uneven motion the card region keeps changing → never still. Amplitude
+  // 60/45 px since stillMad 14 (beta.5): the old 40/30 px slide had two frames at cmad 13.5-13.8
+  // (min 15.0 now); the real recordings, not this rig, set the threshold (0 false stages at 14)
   const base = boxQuad(s.scene);
   let prev = base;
   for (let i = 0; i < 32; i++) {
-    const q = base.map(([x, y]) => [x + 40 * Math.sin(i * 0.9) * Math.sin(i * 0.37), y + 30 * Math.cos(i * 1.7)]);
+    const q = base.map(([x, y]) => [x + 60 * Math.sin(i * 0.9) * Math.sin(i * 0.37), y + 45 * Math.cos(i * 1.7)]);
     s.scene.move(c, q);
     const r = s.step({ sharp: 120, corners: prev });
     if (r.cmad !== null) assert.equal(r.still, false, `frame ${i}: cmad ${r.cmad}`);
@@ -914,6 +918,83 @@ test('probe: busy → next interval; warming up → waits longer; a failed probe
   for (t += 125; t < 10000 && next === null; t += 125) if (c.step({ ...base, cardThumb: th, now: t }).probe) next = t;
   assert.ok(next >= p.rec.t + PROBE_DEFAULTS.errorMs, `next probe at ${next}`);
   assert.equal(c.answer(999, { outcome: 'staged' }), null, 'unknown id ignored');
+});
+
+test('probe: a failed probe with a reflection shows the glare hint until a probe comes back clean', () => {
+  const c = new ProbeController();
+  const base = { found: true, corners: [[0, 0], [1, 0], [1, 1], [0, 1]], accepted: true, sharp: 100 };
+  const th = new Float32Array(192).fill(100);
+  const art = { code: 'glare-art', advice: 'Reflection on the picture: tilt slightly' };
+  let t = 0;
+  const next = () => { for (; t < 60000; t += 125) { const r = c.step({ ...base, cardThumb: th, now: t }); if (r.probe) return r.probe; } return null; };
+  const hintAt = (dt = 125) => { t += dt; return c.step({ ...base, cardThumb: th, now: t }); };
+  // an auto stage with glare: no hint (the reflection didn't hurt)
+  let p = next();
+  c.answer(p.id, { outcome: 'staged', result: { status: 'auto' } }, t, { glare: art });
+  assert.equal(c.glare, null);
+  c.rearm();
+  // unidentified with glare → hint while waiting for the next probe
+  p = next();
+  c.answer(p.id, { outcome: 'unidentified' }, t, { glare: art });
+  let r = hintAt();
+  assert.equal(r.state, PROBE_STATES.WAITING);
+  assert.equal(r.hint, art.advice);
+  // unmeasured glare keeps it; after hintAfterMs the shutter hint carries it
+  p = next();
+  c.answer(p.id, { outcome: 'unidentified' }, t, { glare: null });
+  assert.ok(c.glare);
+  const unrec = [];
+  for (let i = 0; i < 40; i++) {
+    r = hintAt();
+    if (r.probe) c.answer(r.probe.id, { outcome: 'unidentified' }, t, { glare: null });
+    else if (r.state === PROBE_STATES.UNRECOGNISED) unrec.push(r.hint);
+  }
+  assert.ok(unrec.length > 0);
+  assert.ok(unrec.every((h) => h === `${art.advice} – or tap to capture`), JSON.stringify(unrec));
+  // a clean unidentified probe clears it
+  p = next();
+  c.answer(p.id, { outcome: 'unidentified' }, t, { glare: { code: 'ok', advice: null } });
+  assert.equal(c.glare, null);
+  // a staged card is done: a suggest stage with glare sets no hint (it would land on the next card)
+  c.unk = null;
+  p = next();
+  c.answer(p.id, { outcome: 'staged', result: { status: 'suggest' } }, t, { glare: art });
+  assert.equal(c.glare, null);
+  c.rearm();
+  // set again by an unidentified answer; not forever: glareHintMs without a new answer
+  p = next();
+  c.answer(p.id, { outcome: 'unidentified' }, t, { glare: art });
+  assert.equal(c.glare?.advice, art.advice);
+  t += PROBE_DEFAULTS.glareHintMs + 1;
+  c.flight = null;
+  c.step({ ...base, cardThumb: th, now: t });
+  assert.equal(c.glare, null);
+  // too-blurry is no reflection
+  p = next();
+  c.answer(p.id, { outcome: 'unidentified' }, t, { glare: { code: 'too-blurry', advice: 'x' } });
+  assert.equal(c.glare, null);
+});
+
+test('probe: the reflection hint belongs to its card: it ends when the card leaves or changes', () => {
+  const art = { code: 'glare-art', advice: 'Reflection on the picture: tilt slightly' };
+  const base = { corners: [[0, 0], [1, 0], [1, 1], [0, 1]], accepted: true, sharp: 100 };
+  const A = new Float32Array(192).fill(100);
+  for (const how of ['leaves', 'changes']) {
+    const c = new ProbeController();
+    let t = 0, p = null;
+    for (; t < 5000 && !p; t += 125) p = c.step({ ...base, found: true, cardThumb: A, now: t }).probe;
+    c.answer(p.id, { outcome: 'unidentified' }, t, { glare: art });
+    t += 125;
+    assert.equal(c.step({ ...base, found: true, cardThumb: A, now: t }).hint, art.advice);
+    // drift of the same card within glareMad keeps it
+    t += 125;
+    assert.equal(c.step({ ...base, found: true, cardThumb: new Float32Array(192).fill(118), now: t }).hint, art.advice);
+    if (how === 'leaves') for (let i = 0; i < PROBE_DEFAULTS.lostFrames; i++) { t += 125; c.step({ ...base, found: false, cardThumb: null, now: t }); }
+    const hints = [];
+    for (let i = 0; i < 8; i++) { t += 125; hints.push(c.step({ ...base, found: true, cardThumb: new Float32Array(192).fill(160 + (i % 2) * 30), now: t }).hint); }
+    assert.equal(c.glare, null, how);
+    assert.ok(!hints.includes(art.advice), `${how}: ${JSON.stringify(hints)}`);
+  }
 });
 
 test('probe: paused (sheet open / auto off) or busy (shutter scan running) → no probes', () => {

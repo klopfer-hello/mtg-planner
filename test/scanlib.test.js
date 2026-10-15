@@ -464,6 +464,36 @@ describe("createDetAnalyzer", () => {
     assert.equal(seen[seen.length - 1][1], "glare-collector");
   });
 
+  test("glare: the type line counts for probes (limit 0.1), not for the stable-track hint", () => {
+    const regions = { collector: 0, title: 0, art: 0.01, typeLine: 0.2, textBox: 0 };
+    assert.equal(captureAdvice({ regions }, null), "glare-type");
+    assert.equal(captureAdvice({ regions: { ...regions, typeLine: 0.09 } }, null), "ok");
+    assert.equal(captureAdvice({ regions }, null, { typeLine: Infinity }), "ok");
+    assert.equal(captureAdvice({ regions: { ...regions, art: 0.06 } }, null), "glare-art", "art first");
+  });
+
+  test("glareOf(quad) measures a probe crop at once (no stability wait); null without a quad", () => {
+    const base = boxCard(72);
+    const img = { w: base.w, h: base.h, d: new Uint8ClampedArray(base.d) };
+    const at = (u, v) => [0, 1].map((k) => (1 - v) * ((1 - u) * boxQ[0][k] + u * boxQ[1][k]) + v * ((1 - u) * boxQ[3][k] + u * boxQ[2][k]));
+    for (let v = 0.94; v <= 0.97; v += 0.0005) for (let u = 0.38; u <= 0.62; u += 0.0005) {
+      if (((u - 0.5) / 0.12) ** 2 + ((v - 0.955) / 0.015) ** 2 >= 1) continue;
+      const [x, y] = at(u, v), i = ((y | 0) * img.w + (x | 0)) * 4;
+      img.d[i] = img.d[i + 1] = img.d[i + 2] = 255;
+    }
+    const { an, step } = rig();
+    step(img);
+    const g = an.glareOf(boxQ);
+    assert.equal(g.code, "glare-collector", JSON.stringify(g));
+    assert.match(g.advice, /Reflection on the bottom line/);
+    assert.ok(g.regions.collector > 0.004 && Number.isFinite(g.fraction));
+    step(boxCard(72));
+    const clean = an.glareOf(boxQ);
+    assert.equal(clean.code, "ok");
+    assert.equal(clean.advice, null);
+    assert.equal(an.glareOf(null), null);
+  });
+
   test("end to end with CaptureController: an empty box, then two different cards = two uploads", () => {
     const { an, step } = rig();
     const ctl = new CaptureController({ crop: (o, quad) => an.hashCrop(quad) });

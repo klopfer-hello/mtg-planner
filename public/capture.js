@@ -675,17 +675,29 @@ export class CaptureController {
 // - probe only on a tracked quad (accepted or weak): no-quad crops never
 //   identified anything (0 of ~690), so an empty box sends no requests;
 // - card-relative stillness: the 12x16 card thumbnail vs a frame >= 400 ms
-//   older, MAD <= 8 (hand-held p50 5; 4 missed hand-held cards, no gate
-//   staged wrong cards on motion frames);
+//   older, MAD <= 14 (beta.5 sweep: was 8; the recorded free-hand session's
+//   card MAD p50 was 10.2, so 'Hold steady' blocked still-enough cards. 14 kept
+//   0 false/extra stages in the box and free hand, 12-17 all passed, 18 is
+//   the first failure (a printing flip on moving frames); box time-to-stage
+//   p50 1.57 → 1.27 s, free hand mean 5.0 → 3.9 s, 'Hold steady' frames
+//   -34 %. One value for box and free hand: a prior-keyed pair gained nothing
+//   and the prior flips during free hand);
 // - one probe in flight, at most one per second;
 // - after 'staged' or 'same' hold until the card region changes (MAD > 10),
 //   the quad is lost or 8 s pass (halves the load, changes no result);
 // - N=1: a second agreeing answer never prevented a wrong card and cost
-//   misses; the sharpness gate had no effect (kept as a floor guard only).
+//   misses; the sharpness gate had no effect (kept as a floor guard only);
+// - glare (beta.5): the UI measures the probe crop's glare and passes it to
+//   answer(); an unidentified answer with a reflection shows the reflection
+//   hint until a probe comes back clean (free hand: glare on 23 of 35 non-auto
+//   probes vs 2 of 26 auto ones; the stable-track hint fired on only 43 of 367
+//   found frames). Tied to failed answers: the region limits also fire on 29
+//   of 101 auto box probes. The hint belongs to that card: it ends when the
+//   card leaves or changes (a staged card is done, so no hint for it).
 
 /** Probe policy (tests/field overrides through probeConfig()). */
 export const PROBE_DEFAULTS = Object.freeze({
-  stillMad: 8,             // card-thumb MAD vs a frame >= stillAgeMs older: the card lies still
+  stillMad: 14,            // card-thumb MAD vs a frame >= stillAgeMs older: the card lies still
   stillAgeMs: 400,
   historyMs: 2000,         // card thumbnails kept for the stillness check
   sharpFloor: 60,          // strip sharpness guard (Laplacian variance; null = not measured = ok)
@@ -698,6 +710,9 @@ export const PROBE_DEFAULTS = Object.freeze({
   hintAfterMs: 3000,       // unidentified for this long on a still card: "Not recognised – tap to capture"
   errorMs: 3000,           // after a network/server error
   warmingMs: 2500,         // after 'busy' with reason warming_up
+  glareHintMs: 20000,      // a reflection hint from a failed probe is shown at most this long without a new probe
+  glareMad: 24,            // card-thumb MAD vs the failed probe's card that ends its reflection hint (another card;
+                           // free-hand drift of the same card is 15-35 between probes, so not holdMad)
 });
 
 /** Probe controller states (step().state). */
@@ -715,8 +730,13 @@ export const probeConfig = (over = {}) => captureConfig(over, PROBE_DEFAULTS);
  *   paused?, busy?}) → {state, hint, probe, still, cmad, hold}. `probe` = {id, quad, rec} means: crop
  *   `quad` now, POST it as mode 'probe', then answer(probe.id, response) or failed(probe.id).
  *   paused (a sheet is open, auto-scan off) or busy (a shutter scan is being identified): no probes.
- * - answer(id, res) with the server's {outcome, reason?, scan?, result?}; failed(id) on a crop or
- *   network error; manual(o) after a shutter scan of the card in view (holds like 'staged'); reset().
+ * - answer(id, res, now?, {glare?}) with the server's {outcome, reason?, scan?, result?} and the probe
+ *   crop's glare {code, advice} (null = not measured); failed(id) on a crop or network error; manual(o)
+ *   after a shutter scan of the card in view (holds like 'staged'); reset().
+ * - glare: an 'unidentified' answer whose crop had a reflection (code not 'ok') sets `glareHint`
+ *   (the advice text); it replaces 'Hold steady'/waiting hints (and prefixes the 'Not recognised'
+ *   one) until an answer with a clean crop, a staged/same answer, glareHintMs, or the card leaves
+ *   (lostFrames) or changes (card thumb MAD > glareMad vs the probed one).
  * - rearm({rescan:true}) (the UI's Rescan of a review row) also starts a rescan track: `rescan` =
  *   {id, thumb} follows the card in view and ends when the quad is lost for lostFrames, the card region
  *   changes by more than holdMad, a probe answers 'staged'/'same', or endRescan()/reset(). Probes carry
@@ -747,6 +767,7 @@ export class ProbeController {
     this.warming = false;
     this.cmad = null;
     this.rescan = null;      // {id, thumb}: the card a Rescan was asked for (see the class comment)
+    this.glare = null;       // {advice, at, thumb}: reflection hint from a failed probe of the card `thumb`
     this.stats = { sent: 0, staged: 0, same: 0, unidentified: 0, busy: 0, error: 0 };
   }
 
@@ -780,6 +801,8 @@ export class ProbeController {
     }
     // unidentified streak: forgotten when the card leaves or changes
     if (this.unk && (this.lost >= c.lostFrames || (thumb && thumbMad(thumb, this.unk.thumb) > c.holdMad))) this.unk = null;
+    // reflection hint: that card's; another card (or none) has its own glare
+    if (this.glare && (this.lost >= c.lostFrames || (thumb && this.glare.thumb && thumbMad(thumb, this.glare.thumb) > c.glareMad))) this.glare = null;
     // rescan track: the card in view at Rescan (or the first one after it); gone when it leaves or changes
     if (this.rescan) {
       if (this.lost >= c.lostFrames) this.rescan = null;
@@ -796,14 +819,17 @@ export class ProbeController {
     if (this.hold) return done(PROBE_STATES.HOLD, this.hold.outcome === 'same' ? 'Same card: tap +1 for another copy' : 'Done: next card');
     if (o.busy) return done(PROBE_STATES.WAITING, 'Identifying…');
     const unrecognised = this.unk && now - this.unk.since >= c.hintAfterMs;
+    if (this.glare && now - this.glare.at > c.glareHintMs) this.glare = null;
+    const glareHint = this.glare ? this.glare.advice : null;
+    const unrecHint = glareHint ? `${glareHint} – or tap to capture` : 'Not recognised – tap to capture';
     if (!still || !sharpOk) {
-      if (unrecognised) return done(PROBE_STATES.UNRECOGNISED, 'Not recognised – tap to capture');
-      return done(PROBE_STATES.TRACKING, !still ? 'Hold steady' : 'Too blurry: more light or move back a little');
+      if (unrecognised) return done(PROBE_STATES.UNRECOGNISED, unrecHint);
+      return done(PROBE_STATES.TRACKING, !still ? glareHint || 'Hold steady' : 'Too blurry: more light or move back a little');
     }
     const gap = this.unk && this.unk.n >= c.slowAfter ? c.slowMs : c.intervalMs;
     if (now - this.lastAt < gap || now < this.notBefore) {
-      if (unrecognised) return done(PROBE_STATES.UNRECOGNISED, 'Not recognised – tap to capture');
-      return done(PROBE_STATES.WAITING, this.warming ? 'Warming up the scanner…' : 'Hold steady');
+      if (unrecognised) return done(PROBE_STATES.UNRECOGNISED, unrecHint);
+      return done(PROBE_STATES.WAITING, this.warming ? 'Warming up the scanner…' : glareHint || 'Hold steady');
     }
     const id = this.nextId++;
     this.flight = { id, at: now, thumb };
@@ -816,18 +842,19 @@ export class ProbeController {
         sharp: Number.isFinite(o.sharp) ? Math.round(o.sharp) : null, t: Math.round(now),
       },
     };
-    return done(PROBE_STATES.PROBING, unrecognised ? 'Not recognised – tap to capture' : 'Identifying…');
+    return done(PROBE_STATES.PROBING, unrecognised ? unrecHint : 'Identifying…');
   }
 
   /**
    * The server's answer to probe `id` ({outcome, reason?}). Unknown ids (a
    * reset in between) are ignored. Returns the outcome, or null.
    */
-  answer(id, res, now = Date.now()) {
+  answer(id, res, now = Date.now(), { glare = null } = {}) {
     const f = this.flight;
     if (!f || f.id !== id) return null;
     this.flight = null;
     const outcome = res?.outcome;
+    this.noteGlare(outcome, glare, now, f.thumb);
     this.last = { outcome: outcome ?? null, reason: res?.reason ?? null, at: now, ms: Math.round(now - f.at) };
     this.warming = false;
     if (outcome === 'staged' || outcome === 'same') {
@@ -848,6 +875,19 @@ export class ProbeController {
       this.notBefore = now + this.cfg.errorMs;
     }
     return outcome ?? null;
+  }
+
+  /**
+   * @private glare of an answered probe of the card `thumb`: an unidentified answer with a
+   * reflection sets the hint, a clean or identified answer clears it (a staged card is done: the
+   * hold follows, and the hint would only land on the next card).
+   */
+  noteGlare(outcome, glare, now, thumb) {
+    if (outcome !== 'staged' && outcome !== 'same' && outcome !== 'unidentified') return; // busy/error: no information
+    const failed = outcome === 'unidentified';
+    const reflect = glare && glare.code && glare.code !== 'ok' && glare.code !== 'too-blurry' && glare.advice;
+    if (failed && reflect) this.glare = { advice: glare.advice, at: now, thumb: thumb || null };
+    else if (!failed || (glare && glare.code === 'ok')) this.glare = null;
   }
 
   /** Probe `id` could not be cropped or sent (or the server failed): back off a little. */

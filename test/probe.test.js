@@ -373,5 +373,10 @@ describe("POST /api/scan mode probe", () => {
     assert.equal(probes.totals.staged, 0);
     assert.ok(probes.per_minute.length >= 1);
     assert.equal(probes.in_flight, 0);
+    // the UI's auto-ask for hard cards reads the vision cap here
+    const vision = h.body.scanner.vision;
+    assert.equal(vision.configured, true);
+    assert.equal(vision.per_hour, 60);
+    assert.ok(vision.remaining <= 59, JSON.stringify(vision));
   });
 });

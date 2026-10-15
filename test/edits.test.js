@@ -393,18 +393,214 @@ describe("ManaBox imports after edits / deletes", () => {
     assert.equal(total(), 3);
   });
 
-  test("deleted ManaBox copy: delta does not bring it back, replace does", async () => {
+  const fileOf = (...rows) => [HEADER, ...rows].join("\n") + "\n";
+  const solEn = (q) => csvRow("Box", "Sol Ring", "c21", "263", String(q), ID.sol);
+  const solDe = (q) => csvRowX("Box", "Sol Ring", "c21", "263", String(q), ID.sol, { language: "de" });
+
+  test("deleted ManaBox copy: neither delta nor replace brings it back; undo still works", async () => {
     await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
     const d = deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box" })], confirm: true, confirm_master: true });
     assert.equal(total(), 2);
     await importManaBoxCsv(ctx.db, FILE);
     assert.equal(total(), 2);
     assert.equal(listEdits(ctx.db)[0].undoable, true, "delta changed nothing");
-    await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
+    const r = await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
+    assert.equal(r.deleted_in_app_copies, 1);
+    assert.equal(r.matched_edit_copies, 0);
+    assert.deepEqual(keys(), ["01/normal/en/near_mint/Box/manabox=2"]);
+    // Again: still 2 (the delete stays outstanding until ManaBox drops the copy too).
+    assert.equal((await importManaBoxCsv(ctx.db, FILE, { mode: "replace" })).deleted_in_app_copies, 1);
+    assert.equal(total(), 2);
+    // The rows look as the delete left them: undo brings the copy back, and replace keeps it.
+    assert.equal(listEdits(ctx.db)[0].undoable, true);
+    undoEdit(ctx.db, d.edit_id);
     assert.equal(total(), 3);
-    // Same quantity as after the delete? No: the replace changed the row, so the undo conflicts.
-    assert.equal(listEdits(ctx.db)[0].undoable, false);
+    assert.equal((await importManaBoxCsv(ctx.db, FILE, { mode: "replace" })).deleted_in_app_copies, 0);
+    assert.equal(total(), 3);
+  });
+
+  test("deleting the only copy of a line: replace does not resurrect it", async () => {
+    await importManaBoxCsv(ctx.db, fileOf(solEn(3), solDe(1)), { mode: "replace" });
+    deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", language: "de" })], confirm: true, confirm_master: true });
+    await importManaBoxCsv(ctx.db, fileOf(solEn(3), solDe(1)), { mode: "replace" });
+    assert.deepEqual(keys(), ["01/normal/en/near_mint/Box/manabox=3"]);
+  });
+
+  test("ManaBox deletes it too: replace counts the delete once (netted, no longer undoable)", async () => {
+    await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
+    const d = deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box" })], confirm: true, confirm_master: true });
+    const r = await importManaBoxCsv(ctx.db, fileOf(solEn(2)), { mode: "replace" });
+    assert.equal(r.matched_edit_copies, 1);
+    assert.equal(r.deleted_in_app_copies, 0);
+    assert.match(r.matched_edits[0].message, /Already deleted in the app: Sol Ring \(1\)/);
+    assert.equal(total(), 2);
+    assert.equal((await importManaBoxCsv(ctx.db, fileOf(solEn(2)), { mode: "replace" })).deleted_in_app_copies, 0);
+    assert.equal(total(), 2, "not subtracted a second time");
     assert.throws(() => undoEdit(ctx.db, d.edit_id), err(409, "conflict"));
+    assert.match(listEdits(ctx.db)[0].reason, /ManaBox import already counted/);
+    // A new purchase in ManaBox afterwards is loaded normally.
+    await importManaBoxCsv(ctx.db, fileOf(solEn(3)), { mode: "replace" });
+    assert.equal(total(), 3);
+  });
+
+  test("ManaBox deletes it too: delta does not report it as a decrease", async () => {
+    await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
+    deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box" })], confirm: true, confirm_master: true });
+    const r = await importManaBoxCsv(ctx.db, fileOf(solEn(2)));
+    assert.equal(r.mode, "delta");
+    assert.equal(r.decreased_copies, 0);
+    assert.equal(r.matched_edit_copies, 1);
+    assert.match(r.matched_edits[0].message, /Already deleted in the app/);
+    assert.equal(total(), 2);
+    // ManaBox drops one more: that one is reported.
+    const r2 = await importManaBoxCsv(ctx.db, fileOf(solEn(1)));
+    assert.equal(r2.decreased_copies, 1);
+    assert.equal(r2.matched_edit_copies, 0);
+    await importManaBoxCsv(ctx.db, fileOf(solEn(1)), { mode: "replace" });
+    assert.equal(total(), 1);
+  });
+
+  test("edit then delete of the same ManaBox copy: replace leaves it out", async () => {
+    await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
+    await editCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", source: "manabox" })], set: { language: "de" }, confirm_master: true });
+    deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", source: "app", language: "de" })], confirm: true });
+    assert.equal(total(), 2);
+    await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
+    assert.deepEqual(keys(), ["01/normal/en/near_mint/Box/manabox=2"]);
+  });
+
+  test("edit then delete; ManaBox makes only the edit: neither delta nor replace brings it back", async () => {
+    await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
+    await editCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", source: "manabox" })], set: { language: "de" }, confirm_master: true });
+    deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", source: "app", language: "de" })], confirm: true });
+    const fixed = fileOf(solEn(2), solDe(1));
+    const d = await importManaBoxCsv(ctx.db, fixed);
+    assert.equal(d.added_copies, 0);
+    assert.equal(d.matched_edit_copies, 1);
+    assert.equal(total(), 2);
+    await importManaBoxCsv(ctx.db, fixed, { mode: "replace" });
+    assert.deepEqual(keys(), ["01/normal/en/near_mint/Box/manabox=2"], "the de line is the deleted copy");
+  });
+
+  test("edit then delete; ManaBox makes only the edit, straight into a replace", async () => {
+    await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
+    await editCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", source: "manabox" })], set: { language: "de" }, confirm_master: true });
+    deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", source: "app", language: "de" })], confirm: true });
+    const r = await importManaBoxCsv(ctx.db, fileOf(solEn(2), solDe(1)), { mode: "replace" });
+    assert.equal(r.matched_edit_copies, 1);
+    assert.equal(r.deleted_in_app_copies, 1);
+    assert.deepEqual(keys(), ["01/normal/en/near_mint/Box/manabox=2"]);
+  });
+
+  test("edit to a key ManaBox already lists: replace keeps the edit (no key swap)", async () => {
+    await importManaBoxCsv(ctx.db, fileOf(solEn(2), solDe(1)), { mode: "replace" });
+    await editCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", source: "manabox" })], set: { language: "de" }, confirm_master: true });
+    const r = await importManaBoxCsv(ctx.db, fileOf(solEn(2), solDe(1)), { mode: "replace" });
+    assert.equal(r.kept_app_copies, 1);
+    assert.deepEqual(keys(), ["01/normal/de/near_mint/Box/app=1", "01/normal/de/near_mint/Box/manabox=1", "01/normal/en/near_mint/Box/manabox=1"]);
+  });
+
+  test("the same fix made in ManaBox, counted by a replace: no longer undoable", async () => {
+    await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
+    const e = await editCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", source: "manabox" })], set: { language: "de" }, confirm_master: true });
+    const fixed = fileOf(solEn(2), solDe(1));
+    const r = await importManaBoxCsv(ctx.db, fixed, { mode: "replace" });
+    assert.equal(r.matched_edit_copies, 1);
+    assert.deepEqual(keys(), ["01/normal/de/near_mint/Box/app=1", "01/normal/en/near_mint/Box/manabox=2"]);
+    assert.throws(() => undoEdit(ctx.db, e.edit_id), err(409, "conflict"));
+    await importManaBoxCsv(ctx.db, fixed, { mode: "replace" });
+    assert.equal(total(), 3);
+  });
+
+  test("a binder's 'Delete cards' is not resurrected by replace or delta", async () => {
+    await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
+    const r = deleteBinder(ctx.db, "Box", { cards: "delete", confirm_master: true });
+    assert.equal(r.deleted_copies, 3);
+    const rep = await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
+    assert.equal(rep.deleted_in_app_copies, 3);
+    assert.equal(total(), 0);
+    assert.equal((await importManaBoxCsv(ctx.db, FILE)).added_copies, 0);
+    assert.equal(total(), 0);
+    assert.ok(!listBinders(ctx.db).binders.some((b) => b.name === "Box"), "the binder is not recreated");
+    // ManaBox gains a copy: only that one is new.
+    await importManaBoxCsv(ctx.db, fileOf(solEn(4)), { mode: "replace" });
+    assert.equal(total(), 1);
+  });
+
+  const solIn = (binder, q) => csvRow(binder, "Sol Ring", "c21", "263", String(q), ID.sol);
+  const loggedMoves = (editId) => JSON.parse(ctx.db.prepare("SELECT changes FROM collection_edits WHERE id = ?").get(editId).changes).moves;
+
+  test("deleting a surplus copy (add-import duplicate) logs nothing: replace keeps the genuine one", async () => {
+    await importManaBoxCsv(ctx.db, fileOf(solEn(1)), { mode: "replace" });
+    await importManaBoxCsv(ctx.db, fileOf(solEn(1)), { mode: "add" });
+    assert.equal(total(), 2);
+    const d = deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box" })], confirm: true, confirm_master: true });
+    assert.equal(loggedMoves(d.edit_id), undefined, "ManaBox lists 1 and 1 is left: nothing backed");
+    const r = await importManaBoxCsv(ctx.db, fileOf(solEn(1)), { mode: "replace", confirm_replace: true });
+    assert.equal(r.deleted_in_app_copies, 0);
+    assert.deepEqual(keys(), ["01/normal/en/near_mint/Box/manabox=1"]);
+    // Deleting the genuine one too is logged (1 of 1) and stays out.
+    const d2 = deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box" })], confirm: true });
+    assert.equal(loggedMoves(d2.edit_id)[0].n, 1);
+    assert.equal((await importManaBoxCsv(ctx.db, fileOf(solEn(1)), { mode: "replace" })).deleted_in_app_copies, 1);
+    assert.equal(total(), 0);
+  });
+
+  test("deleting a surplus app copy, then a ManaBox purchase: delta and replace agree", async () => {
+    await importManaBoxCsv(ctx.db, fileOf(solEn(2)), { mode: "replace" });
+    moveCopies(ctx.db, { items: [{ printing_id: ID.sol }], to_binder: "Shelf", create: true, confirm_master: true });
+    const sold = await importManaBoxCsv(ctx.db, fileOf(solEn(1)), { mode: "replace", confirm_replace: true });
+    assert.equal(sold.decreased_copies, 1);
+    assert.deepEqual(keys(), ["01/normal/en/near_mint/Shelf/app=2"]);
+    const d = deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Shelf", source: "app" })], confirm: true });
+    assert.equal(loggedMoves(d.edit_id), undefined, "ManaBox no longer lists that copy");
+    const delta = await importManaBoxCsv(ctx.db, fileOf(solEn(2)));
+    assert.equal(delta.added_copies, 1);
+    assert.equal(total(), 2);
+    const rep = await importManaBoxCsv(ctx.db, fileOf(solEn(2)), { mode: "replace", confirm_replace: true });
+    assert.equal(rep.deleted_in_app_copies, 0);
+    assert.deepEqual(keys(), ["01/normal/en/near_mint/Box/manabox=1", "01/normal/en/near_mint/Shelf/app=1"]);
+    // Straight into a replace (no delta in between): the same.
+    await importManaBoxCsv(ctx.db, fileOf(solEn(2)), { mode: "replace", confirm_replace: true });
+    assert.equal(total(), 2);
+  });
+
+  test("a sale in another ManaBox binder is not the app delete (replace and delta)", async () => {
+    for (const mode of ["replace", "delta"]) {
+      ctx.db.exec("DELETE FROM collection; DELETE FROM collection_edits; DELETE FROM manabox_snapshot");
+      setCollectionMaster(ctx.db, "manabox");
+      await importManaBoxCsv(ctx.db, fileOf(solIn("Box", 2), solIn("Trade", 1)), { mode: "replace" });
+      const d = deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box" })], confirm: true, confirm_master: true });
+      assert.equal(total(), 2);
+      const r = await importManaBoxCsv(ctx.db, fileOf(solIn("Box", 2)), { mode, confirm_replace: true });
+      assert.equal(r.matched_edit_copies, 0, `${mode}: the Trade sale is not the Box delete`);
+      if (mode === "replace") {
+        assert.equal(r.deleted_in_app_copies, 1);
+        assert.deepEqual(keys(), ["01/normal/en/near_mint/Box/manabox=1"], "the deleted copy stays deleted");
+      } else {
+        assert.equal(r.decreased_copies, 1, "the Trade sale is reported");
+      }
+      assert.equal(listEdits(ctx.db).find((e) => e.id === d.edit_id).undoable, true);
+      // Now ManaBox drops the Box copy too: that is the delete.
+      const r2 = await importManaBoxCsv(ctx.db, fileOf(solIn("Box", 1)), { mode, confirm_replace: true });
+      assert.equal(r2.matched_edit_copies, 1, mode);
+      if (mode === "replace") assert.deepEqual(keys(), ["01/normal/en/near_mint/Box/manabox=1"]);
+    }
+  });
+
+  test("a delete still nets a drop in another binder when ManaBox moved the line away", async () => {
+    await importManaBoxCsv(ctx.db, fileOf(solIn("Box", 2)), { mode: "replace" });
+    deleteCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box" })], confirm: true, confirm_master: true });
+    const r = await importManaBoxCsv(ctx.db, fileOf(solIn("Trade", 1)), { mode: "replace", confirm_replace: true });
+    assert.equal(r.matched_edit_copies, 1);
+    assert.deepEqual(keys(), ["01/normal/en/near_mint/Trade/manabox=1"]);
+  });
+
+  test("deleting scan copies logs no ManaBox moves", () => {
+    seed([[ID.lightning, 2]]);
+    const d = deleteCopies(ctx.db, { items: [item(ID.lightning, 1)], confirm: true });
+    const ch = JSON.parse(ctx.db.prepare("SELECT changes FROM collection_edits WHERE id = ?").get(d.edit_id).changes);
+    assert.equal(ch.moves, undefined);
   });
 });
 

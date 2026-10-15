@@ -909,7 +909,8 @@ export function createDetAnalyzer(video, opts = {}) {
       try {
         const card = rectify(corners, 500, 500, 700);
         if (card) {
-          const g = glareMap(card), code = captureAdvice(g, null);
+          // the stable-track hint keeps the beta.2 limits (typeLine only for failed probes, see glareOf)
+          const g = glareMap(card), code = captureAdvice(g, null, { typeLine: Infinity });
           glare = { advice: code === "ok" ? null : ADVICE_HINTS[code], code, regions: g.regions };
         }
       } catch { /* glare is advisory only */ }
@@ -926,6 +927,23 @@ export function createDetAnalyzer(video, opts = {}) {
       sharp, blank, glare, priorQuad: pq ? toVideo(pq, s) : null, priorLearned: Boolean(prior.active),
       now, ms: clock() - t0,
     };
+  }
+
+  /**
+   * Glare of the card at `quad` (video px) in the current video frame, for a probe crop: {code,
+   * advice (hint text | null), regions (rounded fractions), fraction}, or null when it can't be measured.
+   * ~45 ms on a desktop CPU: the UI runs it while the probe request is in flight.
+   */
+  function glareOf(quad) {
+    if (!quad) return null;
+    try {
+      const card = rectify(quad, 500, 500, 700);
+      if (!card) return null;
+      const g = glareMap(card), code = captureAdvice(g, null);
+      const r3 = (v) => Math.round(v * 1000) / 1000, regions = {};
+      for (const [k, v] of Object.entries(g.regions)) regions[k] = r3(v);
+      return { code, advice: code === "ok" ? null : ADVICE_HINTS[code], regions, fraction: r3(g.fraction) };
+    } catch { return null; }
   }
 
   /** Hash source for capture.js: full-res crop around `quad` (~488x680 card) area-reduced to 244x340 (RGB, channels 3). */
@@ -991,7 +1009,7 @@ export function createDetAnalyzer(video, opts = {}) {
   }
 
   loadPrior();
-  return { analyze, prior, tracker, reset, hashCrop, savePrior, loadPrior, forgetPrior, captureOpts, frameJpeg };
+  return { analyze, prior, tracker, reset, hashCrop, glareOf, savePrior, loadPrior, forgetPrior, captureOpts, frameJpeg };
 }
 
 // ---------------------------------------------------------------------------
@@ -1014,14 +1032,18 @@ export const GLARE_DEFAULTS = Object.freeze({
   minContrast: 22, peakMin: 240, minFill: 0.2,
 });
 
-/** Per-region glare fraction that blocks a capture (research values; G3 validates them). */
-export const ADVICE_LIMITS = Object.freeze({ collector: 0.004, title: 0.02, art: 0.05, sharpFloor: 60 });
+/**
+ * Per-region glare fraction that blocks a capture (research values; G3 validates them). typeLine
+ * (beta.5): the free-hand recording's lamp reflections on foils sat on the art or the type line.
+ */
+export const ADVICE_LIMITS = Object.freeze({ collector: 0.004, title: 0.02, art: 0.05, typeLine: 0.1, sharpFloor: 60 });
 
 export const ADVICE_HINTS = Object.freeze({
   ok: "",
   "glare-collector": "Reflection on the bottom line: tilt slightly",
   "glare-title": "Reflection on the name: tilt slightly",
   "glare-art": "Reflection on the picture: tilt slightly",
+  "glare-type": "Reflection in the middle of the card: tilt slightly",
   "too-blurry": "Too blurry: hold still or more light",
 });
 
@@ -1148,7 +1170,7 @@ export function glareMap(rgba, opts = {}) {
 
 /**
  * Capture advice from a glareMap and (optionally) the strip sharpness.
- * @returns {'ok'|'glare-collector'|'glare-title'|'glare-art'|'too-blurry'} (hint: ADVICE_HINTS[code])
+ * @returns {'ok'|'glare-collector'|'glare-title'|'glare-art'|'glare-type'|'too-blurry'} (hint: ADVICE_HINTS[code])
  */
 export function captureAdvice(glare, sharpness, limits = {}) {
   const L = { ...ADVICE_LIMITS, ...limits };
@@ -1157,6 +1179,7 @@ export function captureAdvice(glare, sharpness, limits = {}) {
   if ((r.collector ?? 0) > L.collector) return "glare-collector";
   if ((r.title ?? 0) > L.title) return "glare-title";
   if ((r.art ?? 0) > L.art) return "glare-art";
+  if ((r.typeLine ?? 0) > L.typeLine) return "glare-type";
   return "ok";
 }
 

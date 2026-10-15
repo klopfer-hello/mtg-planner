@@ -450,6 +450,25 @@ describe("identify: Claude fallback", () => {
     assert.equal(opt.calls.length, 0);
   });
 
+  test("Claude busy (concurrency gate): call given back, skipped 'busy' (the UI's auto-ask retries once)", async () => {
+    const cap = createHourlyCap(5);
+    const calls = [];
+    const claude = { cap, runVision: async (opts) => { calls.push(opts); return { error: "Claude is busy", busy: true, json: null }; } };
+    const { r } = await run({ line: null, title: "", matcher: boltMatcher(0.2), claude });
+    assert.equal(calls.length, 1);
+    assert.equal(r.claude_used, false);
+    assert.equal(r.features.claude.skipped, "busy");
+    assert.equal(cap.remaining(), 5, "the cap slot is released");
+  });
+
+  test("hourly cap reached: features.claude carries resets_at (the UI pauses auto-asks until then)", async () => {
+    const claude = makeClaude(boltAnswer, { limit: 1 });
+    await run({ line: null, title: "", matcher: boltMatcher(0.2), claude });
+    const { r } = await run({ line: null, title: "", matcher: boltMatcher(0.2), claude });
+    assert.equal(r.features.claude.skipped, "hourly cap reached");
+    assert.ok(Date.parse(r.features.claude.resets_at) > Date.now());
+  });
+
   test("certain local results never call Claude", async () => {
     const claude = makeClaude(boltAnswer);
     await run({ line: modernLine(), title: "Shivan Devastator", claude });

@@ -713,7 +713,7 @@ function resultSummary(r) {
     candidates: r.candidates,
     variants: r.variants,
     claude_used: r.claude_used,
-    claude: r.features?.claude ? { skipped: r.features.claude.skipped ?? null, verdict: r.features.claude.verdict ?? null } : null,
+    claude: r.features?.claude ? { skipped: r.features.claude.skipped ?? null, resets_at: r.features.claude.resets_at ?? null, verdict: r.features.claude.verdict ?? null } : null,
     reasons: r.features?.local?.reasons ?? [],
     errors: r.features?.errors ?? [],
     timings: r.timings,
@@ -1035,7 +1035,11 @@ async function scannerHealth() {
     }
   }
   const value = healthCache?.value ?? { index_ready: indexReadyCache || null, fingerprints: null, tesseract: null, djpeg: null, pending: true };
-  return { ...value, ocr_helper: ocrHelperStatus(), matcher: matcherHealth(), probes: prober.stats() };
+  return {
+    ...value, ocr_helper: ocrHelperStatus(), matcher: matcherHealth(), probes: prober.stats(),
+    // the UI's auto-ask for hard cards is off when the cap is 0 or Claude is not configured
+    vision: { configured: claudeConfigured(), per_hour: visionCap.limit, remaining: visionCap.remaining(), resets_at: visionCap.resetsAt() },
+  };
 }
 
 /** scanner.matcher for /healthz: loading | ready | error (+ size, load time), never cached. */

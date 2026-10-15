@@ -3444,6 +3444,7 @@ function ImportSummary({ s }) {
     s.printings_added != null && s.mode !== "delta" ? [`+${fmtInt(s.printings_added)}`, "Printings added"] : null,
     s.kept_app_copies ? [fmtInt(s.kept_app_copies), "Already sorted here"] : null,
     s.matched_edit_copies ? [fmtInt(s.matched_edit_copies), "Already edited here"] : null,
+    s.deleted_in_app_copies ? [fmtInt(s.deleted_in_app_copies), "Deleted here"] : null,
     s.printings_removed != null && s.mode !== "delta" ? [`−${fmtInt(s.printings_removed)}`, "Printings removed"] : null,
     s.printings_changed != null && s.mode !== "delta" ? [fmtInt(s.printings_changed), "Qty changed"] : null,
     (s.decreased_copies ?? s.copies_decreased) ? [`−${fmtInt(s.decreased_copies ?? s.copies_decreased)}`, "Fewer in ManaBox"] : null,
@@ -3505,7 +3506,7 @@ function MasterPanel({ master, busy, error, onSwitch }) {
         </div>
       )}
       {master === "app" && (
-        <span className="small muted">Switching back only changes the default import mode to Replace. Cards organised or edited here stay where they are and are not counted twice; copies you deleted here come back if ManaBox still lists them.</span>
+        <span className="small muted">Switching back only changes the default import mode to Replace. Cards organised or edited here stay where they are and are not counted twice; copies you deleted here stay deleted.</span>
       )}
     </section>
   );
@@ -3674,7 +3675,7 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
   }, []);
   useEffect(loadMaster, [loadMaster, dataVersion]);
   const switchMaster = async (to) => {
-    if (to === "manabox" && !window.confirm("Make ManaBox the master again? The import mode defaults to Replace again, which replaces every card that came from ManaBox. Cards you organised or edited here stay where they are; a replace counts them against the file instead of adding them again. Copies you deleted here come back if ManaBox still lists them.")) return;
+    if (to === "manabox" && !window.confirm("Make ManaBox the master again? The import mode defaults to Replace again, which replaces every card that came from ManaBox. Cards you organised or edited here stay where they are; a replace counts them against the file instead of adding them again. Copies you deleted here stay deleted.")) return;
     setMasterState({ busy: true, error: null });
     try {
       const d = await api("/api/settings", { method: "PATCH", json: { collection_master: to } });
@@ -3913,7 +3914,8 @@ const STATUS_LABEL = { auto: "✓ matched", suggest: "? confirm", review: "✗ p
 const STATUS_COLOR = { auto: "#62d18d", suggest: "#f0c062", duplicate: "#f0c062", review: "#ff8274", failed: "#ff8274", error: "#ff8274" };
 // (Sound settings moved to mtg.scan.sound, see loadSoundSettings.)
 // storageLang "scanned" (beta.4 default): the collection keeps the detected printing and its language.
-const SCAN_DEFAULTS = { storageLang: "scanned", foil: "auto", condition: "near_mint", setHint: "", auto: true, photo: true, calibration: false };
+// autoClaude (beta.5): ask Claude once for a card that repeated probes can't recognise (public/autoask.js).
+const SCAN_DEFAULTS = { storageLang: "scanned", foil: "auto", condition: "near_mint", setHint: "", auto: true, photo: true, calibration: false, autoClaude: true };
 
 /** Array from an API answer that may be a bare array or wrap it in a key. */
 const asList = (d, ...keys) => (Array.isArray(d) ? d : keys.map((k) => d?.[k]).find(Array.isArray) || []);
@@ -4344,7 +4346,7 @@ const FOIL_SHORT = { auto: "Auto", nonfoil: "Non-foil", foil: "✦ Foil" };
  * faintly. Also uploads the record-session frames while `record` is set,
  * each with a per-frame state record.
  */
-function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, flash, queued, record, sendProbe, onManual, onFoil, onRecorded, onError, onUnlock, onStart, overlay = null, valuePill = null }) {
+function CameraViewV2({ lib, probeRef, detRef, autoAskRef = null, active, settings, paused, busy, flash, queued, record, sendProbe, onManual, onAutoAsk = null, onFoil, onRecorded, onError, onUnlock, onStart, overlay = null, valuePill = null }) {
   const videoRef = useRef(null);
   const overlayRef = useRef(null);
   const streamRef = useRef(null);
@@ -4353,7 +4355,7 @@ function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, f
   const capturingRef = useRef(false);
   const recRef = useRef({ session: null, seq: 0, last: 0, busy: false, events: [], frames: 0, bytes: 0, errors: 0 });
   const live = useRef({});
-  live.current = { paused, busy, auto: settings.auto, photo: settings.photo, flash, record, queued, sendProbe, onManual, onRecorded, onError };
+  live.current = { paused, busy, auto: settings.auto, photo: settings.photo, flash, record, queued, sendProbe, onManual, onAutoAsk, onRecorded, onError };
   const [cam, setCam] = useState({ state: "off", error: null, vw: 0, vh: 0 });
   const [status, setStatus] = useState({ phase: "searching", hint: "", state: "searching" });
   const [torch, setTorchState] = useState({ supported: null, on: false });
@@ -4404,6 +4406,7 @@ function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, f
       lib.preferContinuousFocus(track);
       setTorchState({ supported: lib.torchCapability(track), on: false });
       probeRef.current?.reset();
+      autoAskRef?.current?.reset();
       onStart?.();
       setCam({ state: "on", error: null, vw: v.videoWidth, vh: v.videoHeight });
     } catch (e) {
@@ -4450,17 +4453,24 @@ function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, f
     // precise: an accepted, stable track (the server may take its faster clean-crop path)
     const precise = Boolean(o?.accepted && o?.stable);
     const t0 = Date.now();
+    // the probe's quad geometry for the record session (video px, rounded)
+    const geo = { corners: p.quad.map(([x, y]) => [Math.round(x), Math.round(y)]), drift: Number.isFinite(o?.drift) ? Math.round(o.drift * 1e4) / 1e4 : null, jitter: Number.isFinite(o?.jitter) ? Math.round(o.jitter * 1e4) / 1e4 : null };
     try {
-      const res = await live.current.sendProbe({ shot, rec, precise, rescan: p.rescan ?? null });
-      const outcome = pc.answer(p.id, res);
-      recEvent({ kind: "probe", id: p.id, outcome: res?.outcome ?? null, reason: res?.reason ?? null, ms: Date.now() - t0, status: res?.result?.status ?? null, store_printing_id: res?.result?.store_printing_id ?? null, finish: res?.result?.finish ?? null, scan_id: res?.scan?.id ?? null });
+      const pending = live.current.sendProbe({ shot, rec, precise, rescan: p.rescan ?? null });
+      // glare of the probed card, measured while the request is in flight (no added latency):
+      // a failed answer with a reflection makes the controller show the reflection hint
+      let glare = null;
+      try { glare = detRef.current?.glareOf?.(p.quad) ?? null; } catch { glare = null; }
+      const res = await pending;
+      const outcome = pc.answer(p.id, res, Date.now(), { glare });
+      recEvent({ kind: "probe", id: p.id, outcome: res?.outcome ?? null, reason: res?.reason ?? null, ms: Date.now() - t0, status: res?.result?.status ?? null, store_printing_id: res?.result?.store_printing_id ?? null, finish: res?.result?.finish ?? null, scan_id: res?.scan?.id ?? null, ...geo, glare: glare ? { code: glare.code, fraction: glare.fraction, regions: glare.regions } : null });
       // A card staged from an accepted track teaches the box prior (savePrior adds it, then persists).
       if (outcome === "staged" && o?.accepted && gen === genRef.current) {
         try { detRef.current?.savePrior?.(p.quad); } catch { /* storage may be blocked */ }
       }
     } catch (e) {
       pc.failed(p.id);
-      recEvent({ kind: "probe", id: p.id, outcome: "error", status_code: e?.status ?? null, ms: Date.now() - t0 });
+      recEvent({ kind: "probe", id: p.id, outcome: "error", status_code: e?.status ?? null, ms: Date.now() - t0, ...geo });
     }
   }, [lib, probeRef, detRef]);
 
@@ -4486,6 +4496,30 @@ function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, f
       live.current.onManual(shot, rec, { precise: Boolean(quadSource === "track" && o.accepted && o.stable) });
     } catch (e) {
       live.current.onError?.(`Capture failed: ${e.message}`);
+    } finally {
+      capturingRef.current = false;
+    }
+  };
+
+  // Auto-ask (beta.5, public/autoask.js): the still card that repeated probes could not recognise,
+  // cropped from the video frame like a probe and sent ONCE as a normal scan with Claude allowed.
+  const autoShot = async (o) => {
+    const v = videoRef.current, pc = probeRef.current, aa = autoAskRef?.current;
+    if (!lib || !v || !v.videoWidth || capturingRef.current || !o?.found || !o.corners || !live.current.onAutoAsk) { aa?.cancel(); return; }
+    capturingRef.current = true;
+    // Hold the probe loop on this card right away: a probe started while the shot is taken could
+    // stage the card next to the Claude scan.
+    pc?.manual({ ...o, now: Date.now() });
+    try {
+      const shot = await lib.captureCard(v, trackRef.current, o.corners, { det: "v2", preferPhoto: false });
+      const rec = {
+        kind: "auto_claude", det: "v2", quad_source: o.accepted ? "track" : "weak", fallback: false, allow_claude: true, shot: shot.kind,
+        strip_w: shot.stripSize?.[0] ?? null, sharp: Number.isFinite(o.sharp) ? Math.round(o.sharp) : null, prior_learned: Boolean(o.priorLearned), t: Date.now(),
+      };
+      recEvent({ kind: "auto_claude", shot: shot.kind });
+      live.current.onAutoAsk(shot, rec, { precise: Boolean(o.accepted && o.stable) });
+    } catch {
+      aa?.cancel();
     } finally {
       capturingRef.current = false;
     }
@@ -4537,6 +4571,7 @@ function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, f
     detRef.current = det;
     const gap = 1000 / (lib.CAPTURE_DEFAULTS?.fps || 8);
     let alive = true, timer = null, last = 0, shown = { phase: "", hint: "", state: "" }, dims = [cam.vw, cam.vh];
+    let seenLast = null, probeThumb = null; // auto-ask: the probe answer (pc.last) seen, the last probe's card thumbnail
     const msHist = [];
     let dbgAt = 0;
     const pct = (a, q) => { const b = [...a].sort((x, y) => x - y); return b.length ? b[Math.min(b.length - 1, Math.floor(q * b.length))] : null; };
@@ -4594,7 +4629,17 @@ function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, f
           const L = live.current;
           let r = null;
           const t0 = performance.now();
-          try { r = pc.step({ ...o, now: Date.now(), paused: L.paused || !L.auto, busy: L.busy }); } catch { r = null; }
+          // Auto-ask (public/autoask.js) first learns the latest probe answer; a card due for an ask
+          // starts no new probe (busy), so the ask never races a probe of the same card.
+          const aa = autoAskRef?.current;
+          let wants = false;
+          if (aa) {
+            try {
+              if (pc.last && pc.last !== seenLast) { seenLast = pc.last; aa.answer(pc.last.outcome, probeThumb, Date.now()); }
+              wants = Boolean(L.auto && !L.paused && aa.wants({ found: o.found, cardThumb: o.cardThumb, now: Date.now() }));
+            } catch { wants = false; }
+          }
+          try { r = pc.step({ ...o, now: Date.now(), paused: L.paused || !L.auto, busy: L.busy || wants }); } catch { r = null; }
           if (debugOn) {
             msHist.push([o.ms, performance.now() - t0]);
             if (msHist.length > 60) msHist.shift();
@@ -4606,6 +4651,17 @@ function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, f
           }
           if (r) {
             draw(o, r);
+            // Auto-ask Claude (public/autoask.js): fed every probe answer (pc.last changes, with the
+            // probed frame's card thumbnail) and every frame. Never while a probe is in flight (its
+            // answer may still stage the card) or a shot is being taken, nor on a frame that starts one.
+            let ask = null;
+            if (aa) {
+              try {
+                ask = aa.step({ found: o.found, cardThumb: o.cardThumb, still: r.still, sharp: o.sharp, now: Date.now(),
+                  blocked: Boolean(L.paused || !L.auto || L.busy || L.queued > 0 || r.probe || pc.flight || capturingRef.current || r.state === "hold") });
+              } catch { ask = null; }
+              if (r.probe) probeThumb = o.cardThumb || null;
+            }
             let hint = r.hint, phase = V2_PHASE[r.state] || "searching";
             if (o.weak && !o.accepted && phase === "tracking") phase = "weak";
             const workW = o.corners && o.found ? lib.quadSize(o.corners).w * (480 / Math.min(o.vw, o.vh)) : null;
@@ -4614,10 +4670,12 @@ function CameraViewV2({ lib, probeRef, detRef, active, settings, paused, busy, f
             else if (!L.auto) hint = o.found ? "Card found: tap the shutter" : "Place a card in view";
             else if (o.glare?.advice && looking && o.found) hint = o.glare.advice;
             else if (workW !== null && workW < 100 && looking) hint = "Move closer";
+            else if (ask?.hint && r.state === "unrecognised") hint = ask.hint;
             if (L.queued > 1) hint = `${hint} · ${L.queued - 1} waiting`;
             if (hint !== shown.hint || phase !== shown.phase || r.state !== shown.state) { shown = { hint, phase, state: r.state }; setStatus(shown); }
             recordTick(r, o);
             if (r.probe) runProbe(r.probe, o);
+            else if (ask?.ask) autoShot(o);
           } else recordTick(null, o);
         }
       }
@@ -5242,6 +5300,11 @@ function ScanTab({ active, health, onCommitted }) {
   const discardsRef = useRef(new Map());
   const [discarding, setDiscarding] = useState(() => new Set());
   const [, tick] = useReducer((x) => x + 1, 0);
+  // Auto-ask Claude for hard cards (public/autoask.js): per-device setting autoClaude; off when the
+  // server has no Claude or SCAN_CLAUDE_PER_HOUR is 0 (/healthz scanner.vision).
+  const autoAskRef = useRef(null);
+  const visionOkRef = useRef(true);
+  visionOkRef.current = health?.claude_configured !== false && health?.scanner?.vision?.configured !== false && health?.scanner?.vision?.per_hour !== 0;
 
   useEffect(() => {
     if (!active || lib) return;
@@ -5255,6 +5318,13 @@ function ScanTab({ active, health, onCommitted }) {
         setLib(m);
       })
       .catch((e) => { if (alive) setLibError(`Could not load the scanner: ${e.message}`); });
+    // The auto-ask module is optional: without it the scanner works as before (shutter only).
+    import("./autoask.js")
+      .then((a) => {
+        if (autoAskRef.current) return;
+        autoAskRef.current = new a.AutoAsk({ enabled: () => settingsRef.current.autoClaude !== false && visionOkRef.current });
+      })
+      .catch(() => {});
     return () => { alive = false; };
   }, [active, lib]);
 
@@ -5516,6 +5586,12 @@ function ScanTab({ active, health, onCommitted }) {
   const onCapture = (cap) => postScan(scanBody(cap), cap.cardPreview);
 
   // v2 shutter: a normal scan (Claude allowed) through the upload queue.
+  // v2 auto-ask (autoask.js): one normal scan, Claude allowed, staged like a shutter scan; the answer
+  // goes back to the AutoAsk (an hourly-cap answer pauses it and changes the hint).
+  const onAutoAsk = (shot, capture, { precise = false } = {}) => {
+    pushItem({ id: null, payload: { body: scanBody(shot, true, precise), preview: shot.cardPreview }, capture, allowClaude: true, dup_of: null, force: false, autoAsk: true });
+  };
+
   const onManual = (shot, capture, { precise = false } = {}) => {
     pushItem({ id: null, payload: { body: scanBody(shot, true, precise), preview: shot.cardPreview }, capture, allowClaude: true, dup_of: null, force: false });
   };
@@ -5587,10 +5663,14 @@ function ScanTab({ active, health, onCommitted }) {
     },
     onResult: (item, res) => {
       setQueued(queueRef.current?.length ?? 0);
+      if (item.autoAsk && autoAskRef.current?.scanned(res?.result ?? null) === "hourly cap reached") {
+        setToast({ text: "Claude limit for this hour reached: tap the shutter for hard cards.", ms: 6000 });
+      }
       handleResult(res, item.sent, item.payload?.preview);
     },
     onError: (item, err) => {
       setQueued(queueRef.current?.length ?? 0);
+      if (item.autoAsk) autoAskRef.current?.scanned(null);
       setLast({ kind: "error", error: err?.message || "Scan failed", timeout: Boolean(err?.timeout), payload: item.sent, preview: item.payload?.preview });
       feedback("error");
     },
@@ -5721,6 +5801,7 @@ function ScanTab({ active, health, onCommitted }) {
         <CameraView key={v2 ? "v2" : "v1"} v2={v2} lib={lib} active={active} settings={settings} busy={busy} paused={sheetOpen} flash={flash} rearmKey={rearmKey}
           onCapture={onCapture} onError={showError} onUnlock={unlockSounds}
           probeRef={probeRef} detRef={detRef} queued={queued} record={rec} sendProbe={sendProbe} onManual={onManual}
+          autoAskRef={autoAskRef} onAutoAsk={onAutoAsk}
           onFoil={(f) => setSetting("foil", f)} onStart={() => { probeSessionRef.current = newProbeSession(); }}
           onRecorded={(p) => setRec((r) => (r && r.session === p.session ? { ...r, frames: p.frames, bytes: p.bytes, errors: p.errors } : r))}
           overlay={(busy || last) && !sheetOpen ? <ResultCard {...resultProps} compact /> : null}
@@ -5774,6 +5855,16 @@ function ScanTab({ active, health, onCommitted }) {
                 defaultValue={sound.threshold} onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v) && v >= 0) setSound("threshold", v); }} />
             </div>
             <label className="switch"><input type="checkbox" checked={settings.photo} onChange={(e) => setSetting("photo", e.target.checked)} /> Full-resolution photo for the shutter (Android)</label>
+            {v2 && (
+              <div className="field" style={{ gridColumn: "1 / -1" }}>
+                <label className="switch"><input type="checkbox" checked={settings.autoClaude !== false} onChange={(e) => setSetting("autoClaude", e.target.checked)} /> Ask Claude automatically for hard cards</label>
+                <span className="small muted">
+                  {health?.claude_configured === false ? "Claude is not set up on the server, so this does nothing."
+                    : health?.scanner?.vision?.per_hour === 0 ? "Claude scans are turned off on the server (SCAN_CLAUDE_PER_HOUR=0)."
+                      : `When a card lies still and isn't recognised after a few tries, Claude is asked once.${health?.scanner?.vision?.per_hour ? ` Counts towards the ${health.scanner.vision.per_hour} Claude scans per hour.` : ""}`}
+                </span>
+              </div>
+            )}
             <label className="switch" style={{ gridColumn: "1 / -1" }}><input type="checkbox" checked={settings.calibration} onChange={(e) => setSetting("calibration", e.target.checked)} /> Calibration mode: confirm the true printing after each scan</label>
             <div className="field" style={{ gridColumn: "1 / -1" }}>
               <span className="small" style={{ fontWeight: 600 }} id="scan-det-label">Scanner</span>
@@ -6066,7 +6157,7 @@ function useBinderList(dataVersion = 0) {
  * that 409, then calls run(true); it resolves null when the user cancels.
  * Deletes answer 409 {code:'manabox_rows'} while ManaBox is the master: the same
  * question; the retry's confirm_master flips the master to the app on the server
- * (otherwise a replace import would bring the deleted copies back).
+ * (imports then leave the deleted copies out, see lib/editlog.js deleteMoves).
  */
 function useMasterConfirm() {
   const [ask, setAsk] = useState(null); // {copies, resolve}
@@ -6164,7 +6255,11 @@ function NewBinderSheet({ onClose, onCreated }) {
   );
 }
 
-/** Rename and delete binders. Delete asks what happens to the cards (Unsorted or delete). */
+/**
+ * Rename and delete binders. Delete asks what happens to the cards (Unsorted or delete).
+ * Deleting ManaBox copies while ManaBox is the master asks once (useMasterConfirm on the
+ * 409 manabox_rows) and retries with confirm_master=1: mtg-planner becomes the master.
+ */
 function ManageBindersSheet({ data, onClose, onChanged }) {
   const [guarded, masterDialog] = useMasterConfirm();
   const [toast, toastEl] = useEditToast(onChanged, { portal: true });
@@ -6205,7 +6300,7 @@ function ManageBindersSheet({ data, onClose, onChanged }) {
           {list.map((b) => {
             const mb = b.by_source?.manabox?.copies ?? 0;
             if (deleting && sameName(deleting.binder.name, b.name)) {
-              const canDelete = !mb || master === "app";
+              const asksMaster = mb > 0 && master !== "app";
               return (
                 <div key={b.name} className="binder-row" style={{ display: "grid" }}>
                   <b>Delete “{b.name}”?</b>
@@ -6215,10 +6310,11 @@ function ManageBindersSheet({ data, onClose, onChanged }) {
                         <input type="radio" name="del-cards" checked={deleting.cards === "unsort"} onChange={() => setDeleting({ ...deleting, cards: "unsort" })} />
                         <span><b>Keep the cards</b><br /><span className="small muted">Its {plural(b.copies, "copy", "copies")} move to {UNSORTED}.</span></span>
                       </label>
-                      <label className="radio-card" style={canDelete ? undefined : { opacity: .6 }}>
-                        <input type="radio" name="del-cards" disabled={!canDelete} checked={deleting.cards === "delete"} onChange={() => setDeleting({ ...deleting, cards: "delete" })} />
+                      <label className="radio-card">
+                        <input type="radio" name="del-cards" checked={deleting.cards === "delete"} onChange={() => setDeleting({ ...deleting, cards: "delete" })} />
                         <span><b>Delete the cards too</b><br /><span className="small muted">
-                          {canDelete ? `Removes ${plural(b.copies, "copy", "copies")} from your collection (undo in Settings → Collection → Recent changes).` : `Not possible: ${plural(mb, "copy", "copies")} came from ManaBox and ManaBox is the master. Delete them in ManaBox or keep them here.`}
+                          Removes {plural(b.copies, "copy", "copies")} from your collection (undo in Settings → Collection → Recent changes).
+                          {asksMaster && ` ${plural(mb, "copy is", "copies are")} from ManaBox: mtg-planner becomes the master of your collection (you'll be asked first).`}
                         </span></span>
                       </label>
                     </div>
@@ -6558,7 +6654,7 @@ function DeleteCopySheet({ card, row, onClose, onDone }) {
         {step === 1 ? (
           <>
             {row.quantity > 1 && <QtyStepper label="Copies to delete" value={qty} max={row.quantity} onChange={setQty} />}
-            {row.source === "manabox" && <span className="small muted">These copies came from ManaBox. If ManaBox is still the master you'll be asked to make mtg-planner the master first, so an import doesn't bring them back.</span>}
+            {row.source === "manabox" && <span className="small muted">These copies came from ManaBox. If ManaBox is still the master you'll be asked to make mtg-planner the master first; later imports leave them deleted.</span>}
             <div key="step1" className="row">
               <button type="button" className="btn danger grow" onClick={() => setStep(2)}><Icon.trash /> Delete {what}…</button>
               <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
