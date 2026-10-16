@@ -11,8 +11,10 @@
 // their inner frame or by the platform ring around them (real box frames:
 // 0/12 corners within 5%, identify AUTO on 4/27 cards of a box session); it
 // now places the edge from the inner frame + border model when the surround is
-// dark (11/12, 22/27). With the options {outerEdge:false,
-// priorInnerSlack:1} the results equal the research version
+// dark (11/12, 22/27). A second one (fullResRetry, 0.7.0-beta.5): a free-mode
+// outline below 0.9 confidence on a > 200,000 px frame is re-checked with a
+// full-resolution gradient (see DEFAULTS). With the options {outerEdge:false,
+// priorInnerSlack:1, fullResRetry:0} the results equal the research version
 // (test/detector.test.js checks both when the research copy is available).
 //
 // API: detect(rgba, opts) -> {found, weak, corners (TL,TR,BR,BL), score, mode,
@@ -134,6 +136,17 @@ export const DEFAULTS = Object.freeze({
   boxAccept: 0.33,      // box mode: confidence bar (the prior + frame anchor already constrain the quad)
   boxOrientConf: 0.6,   // box mode: the classifier overrides the prior's up direction only above this |score| (median 1)
   orientModel: 'v2',    // 'v2' trained classifier | 'template' (v1 layout correlation)
+  // free mode, half-resolution gradient (k = 2, frames > 200,000 px such as the 480x853 work frame): when the
+  // result's confidence is below fullResRetry, detect again at full resolution (k = 1) and take that outline when
+  // it is found and encloses the half-resolution one (area > fullResGrow x, containing its centre), or when the
+  // half-resolution pass found nothing (0.7.0-beta.5). Why: at k = 2 the outer edge of a card on a light, unevenly
+  // lit table breaks into short lines and an inner line (inner frame, type-line edge) wins; at k = 1 the card edge
+  // is found. k = 1 alone is no fix: it lands on the inner frame of black-bordered cards on a stack, where k = 2
+  // finds the edge (recordings: every k=1-larger disagreement was the card, every k=1-smaller one an inner box),
+  // and on textured cloth. All k=1-larger disagreements had confidence < 0.9 at k = 2; the retry runs on ~30-55 %
+  // of frames with an outline (k = 1 costs ~2.3x a k = 2 pass). 0 = off.
+  fullResRetry: 0.9,
+  fullResGrow: 1.04,
 });
 
 // ---------------------------------------------------------------------------
@@ -1437,10 +1450,25 @@ export function detect(img, opts = {}) {
     res.support = best.sup;
     res.info = { score: best.score, sup: best.sup, ext: best.ext, extPen: best.extPen, inner: best.inner, dev: best.dev, orientConf: o.orientConf, tcorr: o.tcorr, snapped: res.snapped };
   }
+  if (!pr && k === 2 && !P.k && P.fullResRetry > 0 && res.corners && !(res.found && res.score >= P.fullResRetry)) {
+    const r1 = detect(img, { ...opts, k: 1 });
+    if (r1.found && r1.corners && (!res.found || encloses(r1.corners, res.corners, P.fullResGrow))) {
+      r1.fullRes = true;
+      r1.ms = now() - t0;
+      return r1;
+    }
+    res.fullResTried = true;
+  }
   res.ms = now() - t0;
   if (P.debug) { res.dbg = { segs, lines, top, k, hyp }; res.dbgT = tm; }
   if (P.timing) { tm.post = now() - tt; res.tm = tm; }
   return res;
+}
+
+/** Quad a (continuous coords) is larger than grow x quad b and contains b's centre. */
+function encloses(a, b, grow) {
+  const c = [(b[0][0] + b[1][0] + b[2][0] + b[3][0]) / 4, (b[0][1] + b[1][1] + b[2][1] + b[3][1]) / 4];
+  return Math.abs(quadArea(a)) > grow * Math.abs(quadArea(b)) && pointInQuad(c, a);
 }
 
 function maxShift(a, b) { let m = 0; for (let i = 0; i < 4; i++) m = Math.max(m, hyp2(a[i][0] - b[i][0], a[i][1] - b[i][1])); return m; }

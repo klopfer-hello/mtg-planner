@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { detect, refine } from "../public/det/detect.mjs";
 import { BoxPrior, PRIOR_STORAGE_KEY, QuadTracker, UNLEARN_AFTER, align, cardAngle, frameThumb, thumbDiff } from "../public/det/track.mjs";
-import { addNoise, background, drawCard, emptyBox, makeCard, placeCard, sceneSet } from "./helpers/detscenes.js";
+import { addNoise, background, drawCard, emptyBox, makeCard, placeCard, sceneSet, tableScene } from "./helpers/detscenes.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DET_DIR = path.join(ROOT, "public", "det");
@@ -29,7 +29,7 @@ const errExact = (q, truth) => Math.max(...[0, 1, 2, 3].map((i) => d2(q[i], trut
 
 const scenes = sceneSet(8, W, H);
 /** Options that turn off the port's deliberate changes (research behaviour). */
-const LEGACY = Object.freeze({ outerEdge: false, priorInnerSlack: 1 });
+const LEGACY = Object.freeze({ outerEdge: false, priorInnerSlack: 1, fullResRetry: 0 });
 
 describe("module hygiene", () => {
   test("the browser modules import only each other (no node: modules, no Node-only globals)", () => {
@@ -122,6 +122,34 @@ describe("detect", () => {
     assert.ok(checked >= 3, `only ${checked} detected`);
   });
 
+  test("free mode: a low-confidence half-resolution outline is re-checked at full resolution (light table, reflection)", () => {
+    for (const seed of [48, 67, 170]) {
+      const { img, corners } = tableScene(seed);
+      const half = detect(img, { fullResRetry: 0 }), r = detect(img);
+      assert.ok(!half.found || errAny(half.corners, corners) > 0.05, `seed ${seed}: half resolution misses the edge`);
+      assert.equal(r.found, true);
+      assert.equal(r.fullRes, true, `seed ${seed}: full-resolution outline taken`);
+      assert.ok(errAny(r.corners, corners) <= 0.03, `seed ${seed}: card edge`);
+      assert.deepEqual(r.corners, detect(img, { k: 1 }).corners);
+    }
+  });
+
+  test("the full-resolution retry keeps confident and enclosing outlines; never in box mode or on small frames", () => {
+    for (const s of scenes) {
+      const r = detect(s.img), half = detect(s.img, { fullResRetry: 0 });
+      assert.ok(!r.fullRes, `scene ${s.seed}: half-resolution result kept`);
+      assert.deepEqual(r.corners, half.corners);
+      if (half.found && half.score >= 0.9) assert.ok(!r.fullResTried, `scene ${s.seed}: confident, no retry`);
+      const b = detect(s.img, { mode: "box" });
+      assert.ok(!b.fullRes && !b.fullResTried, "box mode keeps half resolution");
+    }
+    // a frame <= 200,000 px is analysed at full resolution anyway
+    const small = background("cloth", 320, 560, 9);
+    drawCard(small, makeCard(9), placeCard(160, 280, 150, 10));
+    const r = detect(small);
+    assert.ok(!r.fullRes && !r.fullResTried);
+  });
+
   test("refine keeps a free-mode detection in place and is a no-op in box mode", () => {
     const s = scenes.find((x) => x.kind === "cloth");
     const r = detect(s.img);
@@ -158,6 +186,38 @@ describe("QuadTracker", () => {
     const st = t.update({ found: true, corners: placeCard(120, 200, 150, 30) });
     assert.ok(errExact(st.corners, before) < 0.01);
     assert.equal(st.rejected, true);
+    assert.equal(st.accepted, false, "a rejected frame is not an accepted detection");
+    assert.equal(st.fresh, false, "the kept corners are not this frame's");
+    const back = t.update({ found: true, corners: jittered(r, 1) });
+    assert.equal(back.fresh, true);
+    assert.equal(back.accepted, true);
+  });
+
+  test("jumps in a row re-base the track on the newest detection (a moving card never freezes it)", () => {
+    const t = new QuadTracker(), r = prng(13);
+    for (let i = 0; i < 8; i++) t.update({ found: true, corners: jittered(r, 1) });
+    // a card moving > gate per frame: every detection is a jump from the last one
+    const moving = [0, 1, 2].map((i) => placeCard(240 + 40 * (i + 1), 420 + 30 * (i + 1), 280, 2));
+    let st;
+    for (const [i, q] of moving.entries()) {
+      st = t.update({ found: true, corners: q });
+      if (i < 2) assert.equal(st.fresh, false, `jump ${i + 1} keeps the old corners`);
+    }
+    assert.equal(st.fresh, true);
+    assert.equal(st.accepted, true);
+    assert.ok(errAny(st.corners, moving[2]) < 0.01, "re-based on the newest detection");
+  });
+
+  test("flicker between two outlines: the track stays, only agreeing frames are fresh", () => {
+    const t = new QuadTracker(), r = prng(17), inner = placeCard(240, 430, 240, 2);
+    for (let i = 0; i < 6; i++) t.update({ found: true, corners: jittered(r, 1) });
+    for (let i = 0; i < 10; i++) {
+      const a = t.update({ found: true, corners: inner });
+      assert.equal(a.fresh, false);
+      assert.ok(errAny(a.corners, truth) < 0.02);
+      const b = t.update({ found: true, corners: jittered(r, 1) });
+      assert.equal(b.fresh, true);
+    }
   });
 
   test("keeps the reading order when the detections' corner order rotates", () => {
