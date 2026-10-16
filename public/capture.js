@@ -58,6 +58,10 @@ const round = (v) => (Number.isFinite(v) ? Math.round(v * 10000) / 10000 : null)
 //   -34 %. One value for box and free hand: a prior-keyed pair gained nothing
 //   and the prior flips during free hand);
 // - one probe in flight, at most one per second;
+// - only on a fresh quad (0.7.0-beta.5): never on a frame whose detection
+//   the tracker rejected as a jump (it then still reports the old corners);
+//   the free-hand recordings probed such stale quads 0.9-2.4 s old, and the
+//   card-region stillness passed on the frozen region;
 // - after 'staged' or 'same' hold until the card region changes (MAD > 10),
 //   the quad is lost or 8 s pass (halves the load, changes no result);
 // - N=1: a second agreeing answer never prevented a wrong card and cost
@@ -101,8 +105,9 @@ export const probeConfig = (over = {}) => mergeConfig(over, PROBE_DEFAULTS);
 
 /**
  * The probe loop's decision state. Contract with the UI:
- * - step(o) once per analysed frame (o: {found, weak, accepted, stable, corners, cardThumb, sharp, now,
- *   paused?, busy?, plusOne?}) → {state, hint, probe, still, cmad, hold}. `probe` = {id, quad, rec} means:
+ * - step(o) once per analysed frame (o: {found, weak, accepted, stable, fresh?, corners, cardThumb, sharp, now,
+ *   paused?, busy?, plusOne?}) → {state, hint, probe, still, cmad, hold}. fresh false (the tracker kept
+ *   the old corners on a jump frame): no probe this frame. `probe` = {id, quad, rec} means:
  *   crop `quad` now, POST it as mode 'probe', then answer(probe.id, response) or failed(probe.id).
  *   paused (a sheet is open, auto-scan off) or busy (a shutter scan is being identified): no probes.
  *   plusOne false (the UI has no staged row to +1, e.g. right after a commit): a 'same' hold says to
@@ -202,9 +207,9 @@ export class ProbeController {
     if (this.glare && now - this.glare.at > c.glareHintMs) this.glare = null;
     const glareHint = this.glare ? this.glare.advice : null;
     const unrecHint = glareHint ? `${glareHint} – or tap to capture` : 'Not recognised – tap to capture';
-    if (!still || !sharpOk) {
+    if (!still || !sharpOk || o.fresh === false) {
       if (unrecognised) return done(PROBE_STATES.UNRECOGNISED, unrecHint);
-      return done(PROBE_STATES.TRACKING, !still ? glareHint || 'Hold steady' : 'Too blurry: more light or move back a little');
+      return done(PROBE_STATES.TRACKING, !still || o.fresh === false ? glareHint || 'Hold steady' : 'Too blurry: more light or move back a little');
     }
     const gap = this.unk && this.unk.n >= c.slowAfter ? c.slowMs : c.intervalMs;
     if (now - this.lastAt < gap || now < this.notBefore) {
