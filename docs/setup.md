@@ -160,6 +160,7 @@ Set these in `.env`, which `docker-compose.yml` loads if it exists:
 | `TZ` | *(UTC)* | Container time zone (IANA name, e.g. `Europe/Berlin`), used for `INDEX_REFRESH_HOUR`. |
 | `BACKUP_DIR` | `<database dir>/backups` (`/data/backups`) | Where manual backups and pre-restore safety backups are stored (see [Backups](backups-and-security.md#backups)). |
 | `BACKUP_KEEP` | `20` | Manual backups kept; older ones are deleted when a new one is made. Pre-restore safety backups are kept separately (the last 5). |
+| `DOWNLOAD_DIR` | `<database dir>/downloads` (`/data/downloads`) | Android app files (`*.apk`) offered under **Settings → Phone app**. Copy an APK there (optional `<name>.apk.json` with `title`, `version`, `notes`); the section is hidden while the folder is empty. Nothing can be uploaded through the app. |
 | `SCAN_IMAGE_DIR` | `<database dir>/scans` | Where uploaded scan photos are kept until they are committed (calibration scans keep them). |
 
 These are set in the image and rarely need changing: `PORT=8080`,

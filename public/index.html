@@ -4276,6 +4276,39 @@ function BackupPanel({ dataVersion, onRestored }) {
   );
 }
 
+function PhoneAppPanel({ dataVersion }) {
+  const [list, setList] = useState(null);
+  useEffect(() => {
+    api("/api/downloads").then((d) => setList(d.downloads)).catch(() => setList([]));
+  }, [dataVersion]);
+  if (!list || list.length === 0) return null;
+  return (
+    <>
+      <h2 className="settings-h" id="settings-phone">Phone app</h2>
+      <section className="card stack" aria-labelledby="phone-app-title">
+        <h2 id="phone-app-title">Android app</h2>
+        <p className="small muted" style={{ margin: 0 }}>
+          Open this page on the phone and tap Download. Then open the file and allow installing from this browser once.
+          A newer version installs over the old one.
+        </p>
+        {list.map((f) => (
+          <div key={f.name} className="history-item stack" style={{ gap: 4 }}>
+            <div className="row between">
+              <b>{f.title || f.name}{f.version ? ` ${f.version}` : ""}</b>
+              <span className="muted small nowrap">{fmtBytes(f.size)}</span>
+            </div>
+            <span className="small muted">{fmtDate(f.modified_at)}{f.notes ? ` · ${f.notes}` : ""}</span>
+            <div className="row">
+              <a className="btn sm primary" href={`/api/downloads/${encodeURIComponent(f.name)}`} download={f.name}><Icon.download /> Download</a>
+            </div>
+            <span className="small muted" style={{ overflowWrap: "anywhere" }}>SHA-256 {f.sha256}</span>
+          </div>
+        ))}
+      </section>
+    </>
+  );
+}
+
 const IMPORT_MODE_HELP = {
   delta: "Compares the file with your last ManaBox export and adds only the copies that are new (into their ManaBox binder). Fewer copies in ManaBox are listed, never deleted. Importing the same file twice changes nothing.",
   add: "Adds every copy in the file on top of what's already here.",
@@ -4526,6 +4559,8 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
 
       <h2 className="settings-h" id="settings-online">Online services</h2>
       <SpellbookPanel health={health} dataVersion={dataVersion} />
+
+      <PhoneAppPanel dataVersion={dataVersion} />
 
       <h2 className="settings-h" id="settings-data">Scanner &amp; data</h2>
       <ScannerIndexPanel health={health} />

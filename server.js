@@ -35,6 +35,7 @@ import { ocrHelperStatus, ocrTools } from "./lib/ocr.js";
 import { decideFinish, identifyOriented, printingSummary, scanPriceEur } from "./lib/scanner.js";
 import { DebugError, DebugSessions } from "./lib/debugsessions.js";
 import { DebugPerf, PerfError } from "./lib/debugperf.js";
+import { APK_TYPE, DownloadError, defaultDownloadDir, downloadPath, listDownloads } from "./lib/downloads.js";
 import {
   BackupError, backupConfig, backupPath, createBackup, dbCounts, deleteBackup, gunzipToFile, listBackups, swapDatabase, validateBackupDb,
 } from "./lib/backups.js";
@@ -78,6 +79,7 @@ const SCAN_MATCHER_WAIT_MS = Number(process.env.SCAN_MATCHER_WAIT_MS) >= 0 && pr
 const DB_FILE = path.resolve(process.env.DB_FILE || "/data/mtg-planner.db");
 const BACKUP = backupConfig();
 const BACKUP_UPLOAD_LIMIT = 50 * 1024 * 1024;
+const DOWNLOAD_DIR = defaultDownloadDir();
 
 // `let`: a restore (lib/backups.js swapDatabase) closes and reopens it; every
 // user below reads the binding at call time.
@@ -1445,6 +1447,25 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/backups" || pathname.startsWith("/api/backups/")) {
     const handled = await handleBackupApi(req, res, url);
     if (handled !== null) return handled;
+  }
+
+  if (pathname === "/api/downloads" && method === "GET") return sendJson(res, 200, { downloads: await listDownloads(DOWNLOAD_DIR) });
+  if ((m = /^\/api\/downloads\/([^/]+)$/.exec(pathname)) && (method === "GET" || method === "HEAD")) {
+    let name;
+    try { name = decodeURIComponent(m[1]); } catch { throw new HttpError(400, "Not a download name"); }
+    let file;
+    try { file = await downloadPath(DOWNLOAD_DIR, name); } catch (err) { throw err instanceof DownloadError ? new HttpError(err.status, err.message) : err; }
+    const info = await stat(file);
+    res.writeHead(200, {
+      "Content-Type": APK_TYPE,
+      "Content-Length": info.size,
+      "Content-Disposition": `attachment; filename="${name}"`,
+      "Cache-Control": "no-store",
+    });
+    if (method === "HEAD") return res.end();
+    const stream = createReadStream(file);
+    stream.on("error", () => res.destroy());
+    return stream.pipe(res);
   }
 
   if (pathname === "/api/stats" && method === "GET") {
