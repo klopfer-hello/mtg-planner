@@ -90,6 +90,16 @@ describe("parseCollectorText: modern block", () => {
     assert.equal(r.setCandidates[0].code, "ltr");
   });
 
+  test("a power/toughness box next to the line is never the collector number", () => {
+    const r = parseCollectorText("6/6\nBLB • DE Artist Name", { setCodes: [...SETS, "blb"] });
+    assert.equal(r.setCandidates[0].code, "blb");
+    assert.equal(r.number, null);
+    const x = parseCollectorText("Flavour text */2\nC 0089\nBLB • DE", { setCodes: [...SETS, "blb"] });
+    assert.equal(x.number, "89");
+    const m15 = parseCollectorText("001/269 M\nM15 • EN", { setCodes: SETS });
+    assert.equal(m15.number, "1");
+  });
+
   test("artist names and copyright prose are never a set line", () => {
     const r = parseCollectorText("—<aAlan Pollack\nChristopher Moeller\n™ & © 1993-2003 Wizards of the Coast, Inc.", { setCodes: ["aa1", "chr", "ala"] });
     assert.equal(r.format, null);

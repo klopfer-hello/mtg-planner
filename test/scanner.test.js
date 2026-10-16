@@ -561,6 +561,62 @@ describe("identify: fingerprint-only uniqueness and Claude re-verification", () 
 
 // ---------------------------------------------------------------------------
 
+describe("identify: a misread collector number vs title + fingerprint", () => {
+  // a soft foil strip read "0089" as "0oss" (→ 55, another card of the set); the German title and the art name
+  // the right card
+  const BX = [
+    P({ id: "bx-89-de", name: "Daggerfang Pair", printed_name: "Dolchzahn-Paar", set_code: "bx", collector_number: "89", lang: "de" }),
+    P({ id: "bx-89-en", name: "Daggerfang Pair", set_code: "bx", collector_number: "89", lang: "en" }),
+    P({ id: "bx-55-de", name: "Knight Angler", printed_name: "Ritterangler", set_code: "bx", collector_number: "55", lang: "de" }),
+    P({ id: "bx-55-en", name: "Knight Angler", set_code: "bx", collector_number: "55", lang: "en" }),
+    P({ id: "zz-3-en", name: "Other Pair", set_code: "zz", collector_number: "3", lang: "en" }),
+    P({ id: "yy-7-en", name: "Other Pair", set_code: "yy", collector_number: "7", lang: "en" }),
+  ];
+  const index = makeIndex(BX);
+  const misread = (o = {}) => modernLine({ raw: "c 0oss\nBX • DE", number: "55", numberCandidates: ["55"], setCandidates: [{ code: "bx", score: 1, cost: 0 }],
+    langCode: "DE", lang: "de", confidence: 0.18, ...o });
+  const top = (id, name, score) => ({ printing_id: id, oracle_id: `o-${name.toLowerCase().replace(/\W+/g, "-")}`, name, score });
+  const go = (line, title, matcher) => identify(
+    { db: null, idx: {}, matcher, claude: null, ocr: makeOcr({ line, title }), fp: fpStub, index, thresholds: DEFAULT_THRESHOLDS },
+    { card: CARD, strip: STRIP, settings: { storageLang: "scanned", foil: "auto", langHint: "de" } });
+
+  test("uncertain line: the title's card in the line's set, backed by the art, wins as SUGGEST", async () => {
+    const m = makeMatcher({ scores: { "bx-89-de": 0.249, "bx-89-en": 0.249, "bx-55-de": 0.37 }, top: [top("bx-89-de", "Daggerfang Pair", 0.249)], gap: 0.046 });
+    const r = await go(misread(), "Dolchzahn-Paar x", m);
+    assert.equal(r.status, "suggest");
+    assert.equal(r.printing.id, "bx-89-de");
+    assert.ok(r.features.local.reasons.includes("collector line names another card"));
+  });
+
+  test("a confident (but wrong) number: the title card still competes when its art matches", async () => {
+    const m = makeMatcher({ scores: { "bx-89-de": 0.25, "bx-55-de": 0.39 }, top: [top("bx-89-de", "Daggerfang Pair", 0.25)], gap: 0.03 });
+    const r = await go(misread({ confidence: 0.8 }), "Dolchzahn-Paar", m);
+    assert.equal(r.status, "suggest");
+    assert.equal(r.printing.id, "bx-89-de");
+  });
+
+  test("title and art agree but the line names another card: never AUTO", async () => {
+    const m = makeMatcher({ scores: { "bx-89-de": 0.12, "bx-89-en": 0.2, "bx-55-de": 0.45 }, top: [top("bx-89-de", "Daggerfang Pair", 0.12)], gap: 0.2 });
+    const r = await go(misread(), "Dolchzahn-Paar", m);
+    assert.equal(r.printing.id, "bx-89-de");
+    assert.equal(r.status, "suggest");
+  });
+
+  test("a title without art support never unsettles the line's card", async () => {
+    const m = makeMatcher({ scores: { "bx-55-de": 0.15, "bx-89-de": 0.36 }, top: [top("bx-55-de", "Knight Angler", 0.15)], gap: 0.2 });
+    const r = await go(misread({ confidence: 0.8 }), "Dolchzahn-Paar", m);
+    assert.equal(r.status, "auto");
+    assert.equal(r.printing.id, "bx-55-de");
+    assert.ok(!r.features.local.reasons.some((x) => /names another card|competing/.test(x)));
+  });
+
+  test("title + art of a card outside the line's set: review, not suggest", async () => {
+    const m = makeMatcher({ scores: { "zz-3-en": 0.22, "bx-55-de": 0.38 }, top: [top("zz-3-en", "Other Pair", 0.22)], gap: 0.03 });
+    const r = await go(misread(), "Other Pair", m);
+    assert.equal(r.status, "review");
+  });
+});
+
 describe("identify: overlapped stages (speed step 1)", () => {
   const defer = () => { let resolve; const p = new Promise((r) => { resolve = r; }); return { p, resolve }; };
 
