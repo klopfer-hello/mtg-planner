@@ -62,30 +62,6 @@ export class FramePacer {
   }
 }
 
-/**
- * Main-thread frame reads above this cost (median ms of the work-frame read) make a 4K stream drop to
- * 1080p. 120 ms: the Pixel 9 read 235 ms (+ 220 ms for the full-res strip sharpness, gone since
- * 0.6.2-beta.3; 0.6.2-beta.1 beacon); headless Chromium reads a 4K frame in 20-65 ms (1x-6x CPU
- * throttling), so a phone that is merely busy keeps its 4K probe strip.
- */
-export const RES_DROP = Object.freeze({ frames: 8, mainMs: 120, minShort: 1200 });
-
-/**
- * Whether the scanner should ask the camera for 1080p: only while the page itself reads or scales the
- * 4K video (path 'main' or 'bitmap'; on 'track' the worker reads it, and on 'clone' the analysis reads
- * the small clone, while Chrome would only rescale the original track instead of re-opening the
- * camera, as a source with two tracks keeps its format), the stream's short side is above minShort,
- * and the median of the last `frames` main-thread read costs (ms) is above mainMs. On a 4K stream the
- * 1080p read is ~4x fewer pixels; the probe strip shrinks to about half its width, so this is the
- * slow-phone fallback, not the default.
- */
-export function shouldDropResolution({ path, vw, vh, costs }, cfg = {}) {
-  const c = { ...RES_DROP, ...cfg };
-  if ((path !== "main" && path !== "bitmap") || !(Math.min(vw, vh) > c.minShort) || !Array.isArray(costs) || costs.length < c.frames) return false;
-  const p = percentile(costs.slice(-c.frames), 0.5);
-  return p !== null && p > c.mainMs;
-}
-
 const CAP = 600; // samples per series per window (a 5 s window at 60 Hz rAF is 300)
 
 /**

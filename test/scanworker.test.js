@@ -7,8 +7,8 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
-  bytesToBase64, captureCard, cloneMatches, createDetAnalyzer, createScanWorker, glareMap, glareSummary, grabRegions, regionPlan,
-  stripSharpness, warpQuad, workSize,
+  bytesToBase64, captureCard, chooseCloneRotation, cloneMatches, cloneRelation, cloneToWork, createDetAnalyzer, createScanWorker, glareMap,
+  glareSummary, grabRegions, grayThumb, regionPlan, rotateGray, stripSharpness, warpQuad, workSize,
 } from "../public/scanlib.js";
 import { detect } from "../public/det/detect.mjs";
 import { addNoise, background, drawCard, makeCard, placeCard } from "./helpers/detscenes.js";
@@ -16,16 +16,33 @@ import { addNoise, background, drawCard, makeCard, placeCard } from "./helpers/d
 // ---------------------------------------------------------------------------
 // helpers
 
-/** Canvas stand-in: drawImage (5/9 args, nearest sample), get/putImageData, toBlob (fake bytes), toDataURL. */
+/**
+ * Canvas stand-in: drawImage (5/9 args, nearest sample; setTransform affine, dest at 0,0), get/putImageData,
+ * toBlob (fake bytes), toDataURL.
+ */
 function makeCanvas(w, h) {
   const c = { width: Math.max(1, Math.round(w)), height: Math.max(1, Math.round(h)), blobs: 0 };
   c.buf = new Uint8ClampedArray(c.width * c.height * 4);
+  let T = [1, 0, 0, 1, 0, 0];
   const ctx = {
+    setTransform(...m) { T = m; },
     drawImage(src, ...a) {
       const S = src.frame ? src.frame : { w: src.width, h: src.height, d: src.buf };
       let sx = 0, sy = 0, sw = S.w, sh = S.h, dw, dh;
       if (a.length === 4) [, , dw, dh] = a; else [sx, sy, sw, sh, , , dw, dh] = a;
       dw = Math.round(dw); dh = Math.round(dh);
+      const [ta, tb, tc, td, te, tf] = T;
+      if (!(ta === 1 && tb === 0 && tc === 0 && td === 1 && te === 0 && tf === 0)) {
+        const det = ta * td - tb * tc;
+        for (let j = 0; j < c.height; j++) for (let i = 0; i < c.width; i++) {
+          const X = i + 0.5 - te, Y = j + 0.5 - tf, u = (td * X - tc * Y) / det, v = (-tb * X + ta * Y) / det;
+          if (u < 0 || v < 0 || u >= dw || v >= dh) continue;
+          const x = Math.min(S.w - 1, Math.floor(sx + (u * sw) / dw)), y = Math.min(S.h - 1, Math.floor(sy + (v * sh) / dh));
+          const si = (y * S.w + x) * 4, di = (j * c.width + i) * 4;
+          c.buf[di] = S.d[si]; c.buf[di + 1] = S.d[si + 1]; c.buf[di + 2] = S.d[si + 2]; c.buf[di + 3] = 255;
+        }
+        return;
+      }
       for (let j = 0; j < Math.min(dh, c.height); j++) for (let i = 0; i < Math.min(dw, c.width); i++) {
         const x = Math.min(S.w - 1, Math.floor(sx + ((i + 0.5) * sw) / dw)), y = Math.min(S.h - 1, Math.floor(sy + ((j + 0.5) * sh) / dh));
         const si = (y * S.w + x) * 4, di = (j * c.width + i) * 4;
@@ -681,11 +698,184 @@ describe("frame path 'clone' (work frame from a small clone of the camera track)
     assert.equal(tr.clones[0].stopped, true);
   });
 
+  /** RGBA {w, h, d} turned clockwise by rot (0/90/180/270). */
+  const rotateRgba = (img, rot) => {
+    const { w, h, d } = img, r = ((rot % 360) + 360) % 360, ow = r === 90 || r === 270 ? h : w, oh = r === 90 || r === 270 ? w : h;
+    const out = new Uint8ClampedArray(d.length);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const [nx, ny] = r === 90 ? [h - 1 - y, x] : r === 270 ? [y, w - 1 - x] : r === 180 ? [w - 1 - x, h - 1 - y] : [x, y];
+      out.set(d.subarray((y * w + x) * 4, (y * w + x) * 4 + 4), (ny * ow + nx) * 4);
+    }
+    return { w: ow, h: oh, d: out };
+  };
+
+  // Pixel 9 / Chrome 155 (0.7.0-beta.1 beacon): the clone of a portrait 2160x3840 track came as 853x480
+  // landscape. The rotation is checked once on gray thumbnails, then the clone is drawn turned.
+  for (const rot of [90, 270]) {
+    test(`a landscape clone of a portrait video (turned ${rot} deg) is drawn turned: same corners in video px`, async () => {
+      const tr = camTrack(), cv = cloneVideo({ size: (c) => [c.settings.height, c.settings.width] });
+      const vA = { videoWidth: W, videoHeight: H, frame: frames[0] };
+      const vB = { videoWidth: W, videoHeight: H, frame: frames[0] };
+      let t = 1000;
+      const a = createDetAnalyzer(vA, { makeCanvas, storage: null, glare: false });
+      const b = createDetAnalyzer(vB, { makeCanvas, storage: null, glare: false, frames: "clone", track: tr, cloneVideo: cv, now: () => t });
+      b.analyze(t);
+      await tick();
+      assert.deepEqual([cv.videoWidth, cv.videoHeight], [ws.H, ws.W], "the clone is landscape");
+      assert.equal(b.grabInfo().clone.state, "verify");
+      assert.equal(b.grabInfo().clone.rel, "swapped");
+      // the clone shows the video turned the other way (rotating it by `rot` gives the video's view)
+      const cloneFrame = (img) => rotateRgba(small(img), 360 - rot);
+      cv.frame = cloneFrame(frames[0]);
+      t = 1050;
+      cv.fire();
+      const o1 = b.analyze(t); // this frame from the video; the rotation is checked on it
+      assert.equal(o1.timing.path, "main");
+      const info = b.grabInfo().clone;
+      assert.equal(info.state, "ready", JSON.stringify(info));
+      assert.equal(info.rot, rot);
+      assert.ok(info.rot_margin >= 0.2 && info.rot_score >= 0.5, JSON.stringify(info));
+      delete vB.frame; // from now on a read of the 4K video would throw
+      a.analyze(1000);
+      a.analyze(t);
+      for (let i = 0; i < 8; i++) {
+        t = 1100 + i * 125;
+        cv.frame = cloneFrame(frames[i % 3]);
+        cv.fire();
+        vA.frame = frames[i % 3];
+        const oa = a.analyze(t), ob = b.analyze(t);
+        assert.equal(ob.timing.path, "clone");
+        for (const k of ["found", "accepted", "stable", "mode", "blank", "sharp"]) assert.deepEqual(ob[k], oa[k], `${k} @${i}`);
+        assert.deepEqual(ob.corners, oa.corners, `corners in video px @${i}`);
+      }
+      assert.ok(b.analyze(t).found);
+      assert.deepEqual(tr.applied, [], "the original track is never constrained");
+      b.close();
+    });
+  }
+
+  test("a rotation that stays unclear (flat scene) falls back to the video: clone:rotation-unclear", async () => {
+    let t = 0;
+    const flat = { w: W, h: H, d: new Uint8ClampedArray(W * H * 4).fill(128) };
+    const tr = camTrack(), cv = cloneVideo({ size: (c) => [c.settings.height, c.settings.width] });
+    const v = { videoWidth: W, videoHeight: H, frame: flat };
+    const b = createDetAnalyzer(v, { makeCanvas, storage: null, glare: false, frames: "clone", track: tr, cloneVideo: cv, now: () => t });
+    b.analyze(t);
+    await tick();
+    cv.frame = rotateRgba(small(flat), 90);
+    for (let i = 0; i < 40 && b.path === "clone"; i++) { t += 150; cv.fire(); assert.equal(b.analyze(t).timing.path, "main"); }
+    assert.deepEqual([b.path, b.grabInfo().why], ["main", "clone:rotation-unclear"]);
+    assert.equal(b.grabInfo().clone.rot_why, "flat");
+    assert.equal(tr.clones[0].stopped, true);
+  });
+
+  test("a clone that turns into the swapped size later is checked again before it is used", async () => {
+    let t = 1000;
+    const tr = camTrack();
+    const cv = cloneVideo();
+    const v = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    const b = createDetAnalyzer(v, { makeCanvas, storage: null, glare: false, frames: "clone", track: tr, cloneVideo: cv, now: () => t });
+    b.analyze(t);
+    await tick();
+    cv.frame = small(frames[0]);
+    cv.fire();
+    t += 100;
+    assert.equal(b.analyze(t).timing.path, "clone");
+    assert.equal(b.grabInfo().clone.rot, 0);
+    // the clone now reports landscape (as after a device-reported orientation flip)
+    [cv.videoWidth, cv.videoHeight] = [ws.H, ws.W];
+    cv.frame = rotateRgba(small(frames[0]), 90);
+    t += 100;
+    cv.fire();
+    assert.equal(b.analyze(t).timing.path, "main", "checked on the video frame first");
+    assert.equal(b.grabInfo().clone.rot, 270);
+    t += 100;
+    cv.fire();
+    assert.equal(b.analyze(t).timing.path, "clone");
+  });
+
+  test("cloneRelation: same, swapped (within 1 %) or another view", () => {
+    assert.equal(cloneRelation(480, 853, 2160, 3840), "same");
+    assert.equal(cloneRelation(853, 480, 2160, 3840), "swapped");
+    assert.equal(cloneRelation(640, 480, 2160, 3840), null);
+    assert.equal(cloneRelation(0, 0, 2160, 3840), null);
+  });
+
+  test("cloneToWork: a clone point turned by 90/270 lands on the video's point (work px / s = 4K px)", () => {
+    const VW4 = 2160, VH4 = 3840, w = workSize(VW4, VH4), cw = w.H, ch = w.W; // landscape clone 853x480
+    for (const [px, py] of [[100, 200], [2000, 3700], [1080, 1920], [0, 0]]) {
+      // the video point in work px, and where it sits in a clone turned the other way
+      const wx = px * w.s, wy = py * w.s;
+      const in270 = [wy, w.W - wx]; // clone = video turned 270 deg clockwise: (x, y) -> (y, W - x)
+      const in90 = [w.H - wy, wx]; // clone = video turned 90 deg clockwise: (x, y) -> (H - y, x)
+      for (const [rot, [cx, cy]] of [[90, in270], [270, in90]]) {
+        const [x, y] = cloneToWork(rot, cx, cy, cw, ch, w.W, w.H);
+        assert.ok(Math.abs(x / w.s - px) < 1e-6 && Math.abs(y / w.s - py) < 1e-6, `${rot}: ${[x / w.s, y / w.s]} vs ${[px, py]}`);
+      }
+    }
+    assert.deepEqual(cloneToWork(0, 10, 20, 480, 853, 480, 853), [10, 20]);
+  });
+
   test("cloneMatches: same orientation and aspect within 1 %", () => {
     assert.equal(cloneMatches(480, 853, 2160, 3840), true);
     assert.equal(cloneMatches(853, 480, 2160, 3840), false);
     assert.equal(cloneMatches(480, 640, 2160, 3840), false);
     assert.equal(cloneMatches(0, 0, 2160, 3840), false);
+  });
+});
+
+// The rotated clone's check (0.7.0-beta.2): gray thumbnails of the clone and the video frame.
+describe("chooseCloneRotation", () => {
+  // a 16x28 portrait "scene": smooth blobs + a bright corner patch (not symmetric), seeded noise
+  const rand = (seed) => () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const scene = (w, h, seed) => {
+    const r = rand(seed), d = new Float32Array(w * h);
+    const blobs = Array.from({ length: 5 }, () => [r() * w, r() * h, 2 + r() * 5, 40 + r() * 120]);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let v = 60 + (x < w * 0.3 && y < h * 0.25 ? 90 : 0);
+      for (const [bx, by, br, bv] of blobs) v += bv * Math.exp(-((x - bx) ** 2 + (y - by) ** 2) / (2 * br * br));
+      d[y * w + x] = v;
+    }
+    return { w, h, d };
+  };
+  const noisy = (g, amp, seed) => { const r = rand(seed); return { w: g.w, h: g.h, d: g.d.map((v) => v + (r() - 0.5) * 2 * amp) }; };
+
+  test("finds 90 and 270 for a swapped clone and 0 for a same-size one, with noise and gain", () => {
+    for (let seed = 1; seed <= 6; seed++) {
+      const video = noisy(scene(16, 28, seed), 8, seed + 100);
+      for (const rot of [0, 90, 270]) {
+        // the clone shows the video turned the other way, with its own noise and exposure
+        const raw = rotateGray(scene(16, 28, seed), (360 - rot) % 360);
+        const clone = noisy({ ...raw, d: raw.d.map((v) => v * 0.8 + 15) }, 8, seed + 200 + rot);
+        const res = chooseCloneRotation(clone, video);
+        assert.equal(res.rot, rot, `seed ${seed} rot ${rot}: ${JSON.stringify(res)}`);
+        assert.ok(res.margin >= 0.2 && res.score >= 0.5, JSON.stringify(res));
+      }
+    }
+  });
+
+  test("unclear: flat, symmetric (90 vs 270 alike), unrelated or another size -> rot null", () => {
+    const flat = { w: 28, h: 16, d: new Float32Array(28 * 16).fill(100) };
+    assert.equal(chooseCloneRotation(flat, scene(16, 28, 3)).why, "flat");
+    // point-symmetric scene: turned by 90 or by 270 look the same
+    const s = scene(16, 28, 4), sym = { w: 16, h: 28, d: s.d.map((v, i) => v + s.d[s.d.length - 1 - i]) };
+    const r1 = chooseCloneRotation(rotateGray(sym, 270), sym);
+    assert.equal(r1.rot, null);
+    assert.equal(r1.why, "margin");
+    // another scene
+    const r2 = chooseCloneRotation(rotateGray(noisy(scene(16, 28, 9), 30, 1), 90), scene(16, 28, 5));
+    assert.equal(r2.rot, null, JSON.stringify(r2));
+    assert.equal(chooseCloneRotation(scene(20, 20, 1), scene(16, 28, 1)).why, "size");
+  });
+
+  test("grayThumb area-averages RGBA; rotateGray turns clockwise", () => {
+    const img = { w: 4, h: 2, d: new Uint8ClampedArray([0, 0, 0, 255, 100, 100, 100, 255, 200, 200, 200, 255, 0, 0, 0, 255, 0, 0, 0, 255, 100, 100, 100, 255, 200, 200, 200, 255, 0, 0, 0, 255]) };
+    const g = grayThumb(img, 2, 1);
+    assert.ok(Math.abs(g.d[0] - 50) < 0.01 && Math.abs(g.d[1] - 100) < 0.01, String(g.d));
+    const m = { w: 3, h: 2, d: Float32Array.from([1, 2, 3, 4, 5, 6]) };
+    assert.deepEqual([...rotateGray(m, 90).d], [4, 1, 5, 2, 6, 3]);
+    assert.deepEqual([...rotateGray(m, 270).d], [3, 6, 2, 5, 1, 4]);
+    assert.deepEqual([...rotateGray(m, 180).d], [6, 5, 4, 3, 2, 1]);
   });
 });
 

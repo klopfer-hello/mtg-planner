@@ -4773,6 +4773,41 @@ const CAM_PHASE = { searching: "searching", tracking: "tracking", probing: "busy
 const FOIL_CYCLE = { auto: "nonfoil", nonfoil: "foil", foil: "auto" };
 const FOIL_SHORT = { auto: "Auto", nonfoil: "Non-foil", foil: "✦ Foil" };
 
+// The camera box's aspect, fixed per viewport orientation: the first started stream's, then kept when the
+// video's intrinsic size changes (a camera restart, a device-reported orientation flip: Android once came
+// back as 1920x1080 landscape and the view shrank and the UI jumped). The video fills it (object-fit: cover)
+// and the overlay maps video px with the same cover scale.
+let camBoxLock = null; // {ratio, portrait}
+const viewportPortrait = () => { try { return window.innerHeight >= window.innerWidth; } catch { return true; } };
+function camBoxRatio(vw, vh) {
+  const portrait = viewportPortrait();
+  if (vw > 0 && vh > 0 && (!camBoxLock || camBoxLock.portrait !== portrait)) camBoxLock = { ratio: vw / vh, portrait };
+  return camBoxLock && camBoxLock.portrait === portrait ? camBoxLock.ratio : 3 / 4;
+}
+
+/**
+ * Keeps a render error in the camera view inside the camera box: the scan tab (its staged list, the
+ * Record session) stays, the box says what happened and offers a restart (beta.1 field report: "it kind
+ * of crashed and the recording was cancelled").
+ */
+class CameraBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null, key: 0 }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error) { try { console.error("Camera view error", error); } catch { /* ignore */ } }
+  render() {
+    const { error, key } = this.state;
+    if (!error) return <React.Fragment key={key}>{this.props.children}</React.Fragment>;
+    return (
+      <div className="cam" style={{ aspectRatio: `${camBoxRatio(0, 0)}`, width: `min(100%, calc(72dvh * ${camBoxRatio(0, 0).toFixed(4)}))` }}>
+        <div className="cam-start">
+          <p role="alert" style={{ color: "#ffb4a8" }}>The camera view stopped ({String(error?.message || error).slice(0, 120)}).{this.props.recording ? " Recording is paused." : ""}</p>
+          <button type="button" className="btn primary" onClick={() => this.setState({ error: null, key: key + 1 })}><Icon.camera /> Restart camera view</button>
+        </div>
+      </div>
+    );
+  }
+}
+
 /**
  * Scanner camera, recognition-driven: detector A2 (scanlib
  * createDetAnalyzer) tracks the card; the ProbeController (probeRef, owned by
@@ -4804,6 +4839,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   const [dbg, setDbg] = useState(null); // ?scandebug=1: detector timing + probe state
   const debugOn = useMemo(() => { try { return new URLSearchParams(window.location.search).get("scandebug") === "1"; } catch { return false; } }, []);
   const genRef = useRef(0);
+  const restartAtRef = useRef(0); // last automatic restart after the track ended
   const activeRef = useRef(active);
   activeRef.current = active;
 
@@ -4825,7 +4861,8 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     const stale = () => gen !== genRef.current || !activeRef.current || document.hidden;
     setCam({ state: "starting", error: null, vw: 0, vh: 0 });
     try {
-      // ?scanres=1080: start at 1080p (field test; slow phones on the main-thread read drop to it on their own)
+      // ?scanres=1080: open the camera at 1080p (explicit opt-in; the stream's constraints are never changed
+      // mid-session: on the Pixel 9 that restarted the camera as landscape 1080p and the view jumped)
       let res = null;
       try { res = new URLSearchParams(window.location.search).get("scanres"); } catch { res = null; }
       const stream = await lib.openCamera(res === "1080" ? { width: 1920, height: 1080 } : undefined);
@@ -4837,7 +4874,21 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
       streamRef.current = stream;
       const track = stream.getVideoTracks()[0];
       trackRef.current = track;
-      track?.addEventListener?.("ended", () => { stop(); setCam({ state: "error", error: "The camera stopped (another app may have taken it).", vw: 0, vh: 0 }); });
+      track?.addEventListener?.("ended", () => {
+        // an old track's late event never stops the current stream
+        if (trackRef.current !== track) return;
+        stop();
+        const now = Date.now();
+        // one automatic restart per 30 s (a camera hiccup); the Record session goes on with the new stream
+        if (activeRef.current && !document.hidden && now - restartAtRef.current > 30000) {
+          restartAtRef.current = now;
+          setCam({ state: "off", error: null, vw: 0, vh: 0 });
+          setTimeout(() => { if (activeRef.current && !document.hidden) startRef.current?.().catch?.(() => {}); }, 300);
+          live.current.onError?.(live.current.record?.session ? "The camera stopped; restarting it (the recording goes on)." : "The camera stopped; restarting it.");
+          return;
+        }
+        setCam({ state: "error", error: "The camera stopped (another app may have taken it).", vw: 0, vh: 0 });
+      });
       const v = videoRef.current;
       v.muted = true;
       v.setAttribute("playsinline", "");
@@ -4860,6 +4911,8 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     }
   };
 
+  const startRef = useRef(null);
+  startRef.current = start;
   useEffect(() => { if (!active) stop(); }, [active, stop]);
   useEffect(() => {
     const h = () => { if (document.hidden) stop(); };
@@ -5021,7 +5074,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   // Field-test knobs: ?scanworker=0 (no workers), ?scangrab=cpu|gpu|auto (main-thread work-frame canvas,
   // default auto), ?scanframes=auto|clone|main|track|bitmap (where the work frame comes from, default
   // auto: a small clone of the camera track on Chrome, else the 4K video; track/bitmap = the beta.2
-  // worker paths, experiments only), ?scanres=1080|4k (start at 1080p / never drop to it).
+  // worker paths, experiments only), ?scanres=1080 (open the camera at 1080p; 4k/none = the default).
   useEffect(() => {
     if (cam.state !== "on" || !lib) return;
     const v = videoRef.current;
@@ -5033,7 +5086,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     const pxW = useWorkers ? lib.createScanWorker() : null;
     let det = null;
     const frames = ["auto", "clone", "main", "track", "bitmap"].includes(qs?.get("scanframes")) ? qs.get("scanframes") : "auto";
-    const resPref = qs?.get("scanres") || null;
+    const resPref = ["1080", "4k"].includes(qs?.get("scanres")) ? qs.get("scanres") : null;
     try { det = lib.createDetAnalyzer(v, { detectWorker: detW, pixels: pxW, grabMode, frames, track: trackRef.current, cloneVideo: cloneRef.current }); } catch (e) {
       detW?.close(); pxW?.close();
       live.current.onError?.(`Could not start the card detector: ${e.message}`);
@@ -5050,9 +5103,6 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     let seenLast = null, probeThumb = null, prevStill = false; // auto-ask: the probe answer (pc.last) seen, the last probe's card thumbnail
     const msHist = [];
     let dbgAt = 0;
-    // main-thread frame-read cost per analysis (the work-frame read): a slow read of the 4K video drops it to 1080p once
-    const readCosts = [];
-    let resDrop = null;
     const pct = (a, q) => { const b = [...a].sort((x, y) => x - y); return b.length ? b[Math.min(b.length - 1, Math.floor(q * b.length))] : null; };
 
     const poly = (ctx, q) => { ctx.beginPath(); q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.stroke(); };
@@ -5198,20 +5248,6 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
           const main = o.timing.main + (performance.now() - tPost);
           pacer?.note(main);
           perf?.frame({ total: o.ms, main, grab: o.timing.grab, detect: o.timing.detect, sharp: o.timing.sharp, wgrab: o.timing.wgrab });
-          readCosts.push(o.timing.grab || 0);
-          if (readCosts.length > 20) readCosts.shift();
-          const tr = trackRef.current;
-          if (!resDrop && resPref !== "4k" && tr?.applyConstraints && lib.shouldDropResolution?.({ path: o.timing.path, vw: o.vw, vh: o.vh, costs: readCosts.slice(4) })) {
-            resDrop = { from: [o.vw, o.vh], cost: Math.round(readCosts.slice(-8).sort((x, y) => x - y)[4]), at: Date.now(), ok: null };
-            // 1080 px short side in the track's own width/height convention (Android reports the
-            // sensor's landscape size for a portrait video), so the aspect and the framing stay
-            let st = {};
-            try { st = tr.getSettings?.() || {}; } catch { st = {}; }
-            const sw = st.width || o.vw, sh = st.height || o.vh, k = 1080 / Math.min(sw, sh);
-            tr.applyConstraints({ width: { ideal: Math.round(sw * k) }, height: { ideal: Math.round(sh * k) } })
-              .then(() => { resDrop.ok = true; readCosts.length = 0; })
-              .catch(() => { resDrop.ok = false; });
-          }
         }
       } else last = now;
       next();
@@ -5247,7 +5283,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
         video: { w: st.width ?? null, h: st.height ?? null, fps: st.frameRate ?? null, vw: v.videoWidth, vh: v.videoHeight, resize: st.resizeMode ?? null },
         worker: Boolean(detW?.available()), detect_worker: detW ? detW.state : "none", pixel_worker: pxW ? pxW.state : "none",
         encoder: Boolean(pxW?.available() && pxW.encoder), grab_mode: det.grabInfo ? det.grabInfo() : null, gap: pacer ? pacer.gap() : null,
-        frame_path: det.path ?? null, res: resDrop,
+        frame_path: det.path ?? null, res: resPref ? { pref: resPref } : null,
         dropped_frames: vq && vq0 ? vq.dropped - vq0.dropped : null, decoded_frames: vq && vq0 ? vq.total - vq0.total : null,
         record: Boolean(live.current.record?.session), visible: !document.hidden,
       });
@@ -5284,7 +5320,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   };
 
   const on = cam.state === "on";
-  const ratio = cam.vw && cam.vh ? cam.vw / cam.vh : 3 / 4;
+  const ratio = camBoxRatio(cam.state === "on" ? cam.vw : 0, cam.state === "on" ? cam.vh : 0);
   const style = { aspectRatio: `${ratio}`, width: `min(100%, calc(72dvh * ${ratio.toFixed(4)}))` };
   const support = lib ? lib.cameraSupport() : null;
   const foil = settings.foil || "auto";
@@ -5300,6 +5336,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
           {cam.state === "starting" ? <Spinner label="Starting camera…" /> : (
             <>
               {cam.error && <p role="alert" style={{ color: "#ffb4a8" }}>{cam.error}</p>}
+              {record?.session && <p role="status">Recording is paused until the camera runs again.</p>}
               {support && !support.secure && <p role="alert" style={{ color: "#ffb4a8" }}>The camera only works over HTTPS.</p>}
               <button type="button" className="btn primary" onClick={start} disabled={!lib}><Icon.camera /> {cam.error ? "Try again" : "Start camera"}</button>
               <p>Lay a card in view and hold it still for a moment – it's added once it's recognised.</p>
@@ -6366,6 +6403,7 @@ function ScanTab({ active, health, onCommitted }) {
         {scanner && (scanner.tesseract === false || scanner.djpeg === false) && (
           <div className="notice warn" role="status"><div className="grow">Text recognition is not installed on the server{scanner.tesseract === false ? " (tesseract missing)" : ""}{scanner.djpeg === false ? " (djpeg missing)" : ""}. Scans will be less accurate.</div></div>
         )}
+        <CameraBoundary recording={Boolean(rec?.session)}>
         <CameraView lib={lib} active={active} settings={settings} busy={busy} paused={sheetOpen} flash={flash}
           onError={showError} onUnlock={unlockSounds}
           probeRef={probeRef} detRef={detRef} queued={queued} record={rec} sendProbe={sendProbe} onManual={onManual}
@@ -6375,6 +6413,7 @@ function ScanTab({ active, health, onCommitted }) {
           onRecorded={(p) => { recStatsRef.current = p; }}
           overlay={(busy || last) && !sheetOpen ? <ResultCard {...resultProps} compact /> : null}
           valuePill={<CamValue last={lastPrice} total={totals} />} />
+        </CameraBoundary>
         {(busy || last) && <ResultCard {...resultProps} />}
 
         <div className="scan-settings">

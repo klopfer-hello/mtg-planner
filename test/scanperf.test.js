@@ -3,7 +3,8 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { FramePacer, PACER_DEFAULTS, PerfMonitor, RES_DROP, percentile, shouldDropResolution, summarize } from "../public/scanperf.js";
+import { readFileSync } from "node:fs";
+import { FramePacer, PACER_DEFAULTS, PerfMonitor, percentile, summarize } from "../public/scanperf.js";
 
 describe("percentile / summarize", () => {
   test("nearest rank; non-finite values ignored; empty → null", () => {
@@ -93,21 +94,28 @@ describe("PerfMonitor", () => {
   });
 });
 
-describe("shouldDropResolution", () => {
-  const costs = (v, n = 8) => new Array(n).fill(v);
-  test("a slow main-thread read of a 4K stream drops to 1080p", () => {
-    assert.equal(shouldDropResolution({ path: "main", vw: 2160, vh: 3840, costs: costs(450) }), true);
-    assert.equal(shouldDropResolution({ path: "main", vw: 3840, vh: 2160, costs: [...costs(10, 20), ...costs(200)] }), true, "the last 8 count");
-    assert.equal(shouldDropResolution({ path: "bitmap", vw: 2160, vh: 3840, costs: costs(450) }), true, "createImageBitmap on the page");
+// 0.7.0-beta.2: the automatic 4K -> 1080p drop (applyConstraints on the camera track mid-session)
+// restarted the Pixel 9's camera as 1920x1080 landscape: the live view shrank and the UI jumped. The
+// main track's constraints are never changed while scanning; ?scanres=1080 is applied at camera open.
+describe("no camera constraint changes mid-session", () => {
+  test("scanperf has no resolution drop any more", async () => {
+    const m = await import("../public/scanperf.js");
+    assert.equal(m.shouldDropResolution, undefined);
+    assert.equal(m.RES_DROP, undefined);
   });
 
-  test("never on the track path, at 1080p or below, before 8 frames, or at/under the threshold", () => {
-    assert.equal(shouldDropResolution({ path: "track", vw: 2160, vh: 3840, costs: costs(450) }), false);
-    assert.equal(shouldDropResolution({ path: undefined, vw: 2160, vh: 3840, costs: costs(450) }), false);
-    assert.equal(shouldDropResolution({ path: "main", vw: 1080, vh: 1920, costs: costs(450) }), false);
-    assert.equal(shouldDropResolution({ path: "main", vw: 2160, vh: 3840, costs: costs(450, 7) }), false);
-    assert.equal(shouldDropResolution({ path: "main", vw: 2160, vh: 3840, costs: costs(RES_DROP.mainMs) }), false);
-    assert.equal(shouldDropResolution({ path: "main", vw: 2160, vh: 3840, costs: costs(90) }, { mainMs: 60 }), true, "configurable");
+  test("the page never calls applyConstraints; scanlib only for torch, focus, the clone and the clone's undo", () => {
+    const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+    assert.equal(/applyConstraints/.test(html), false, "index.html calls no applyConstraints");
+    const lib = readFileSync(new URL("../public/scanlib.js", import.meta.url), "utf8");
+    const calls = lib.split("\n").filter((l) => /\.applyConstraints\(/.test(l) && !/^\s*(\/\/|\*)/.test(l)).map((l) => l.trim());
+    assert.equal(calls.length, 4, calls.join("\n"));
+    assert.ok(calls.some((l) => /torch/.test(l)), "torch (user tap)");
+    assert.ok(calls.some((l) => /focusMode/.test(l)), "continuous focus (camera open)");
+    assert.ok(calls.some((l) => /st\.track\.applyConstraints/.test(l)), "the analysis clone (its own track)");
+    // the clone's undo: only when the clone's constraints already moved the original (orig-changed)
+    const undo = calls.find((l) => /camTrack\.applyConstraints/.test(l));
+    assert.ok(undo && /w0 && h0/.test(undo), undo);
   });
 });
 

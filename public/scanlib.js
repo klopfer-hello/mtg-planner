@@ -36,7 +36,7 @@ import { detect, refine } from './det/detect.mjs';
 import { QuadTracker, BoxPrior, PRIOR_STORAGE_KEY, frameThumb, align } from './det/track.mjs';
 
 // frame pacing + perf beacon helpers (pure), re-exported for the page
-export { FramePacer, PerfMonitor, PACER_DEFAULTS, RES_DROP, shouldDropResolution } from './scanperf.js';
+export { FramePacer, PerfMonitor, PACER_DEFAULTS } from './scanperf.js';
 
 /** Capture tuning. Values come from the synthetic-capture research. */
 export const CAPTURE_DEFAULTS = Object.freeze({
@@ -749,6 +749,116 @@ export function cloneMatches(cw, ch, vw, vh) {
   return Math.abs((cw / ch) / (vw / vh) - 1) <= 0.01;
 }
 
+/**
+ * How a cw x ch analysis clone relates to the vw x vh video: 'same' (cloneMatches), 'swapped' (its
+ * width/height are the video's swapped, aspect within 1 %: Android Chrome 155 delivers a landscape
+ * 853x480 clone of a portrait 2160x3840 track) or null (another view).
+ */
+export function cloneRelation(cw, ch, vw, vh) {
+  if (cloneMatches(cw, ch, vw, vh)) return "same";
+  if (cloneMatches(ch, cw, vw, vh)) return "swapped";
+  return null;
+}
+
+/**
+ * The rotated clone's check (createDetAnalyzer): thumbnails at `short` px short side, a winner needs
+ * normalised correlation ≥ minScore and ≥ margin over the other candidate, flat thumbnails (gray std <
+ * minStd) are never judged; `tries` attempts `everyMs` apart, then the clone is dropped
+ * ('clone:rotation-unclear').
+ */
+export const CLONE_ROT = Object.freeze({ short: 16, minScore: 0.5, margin: 0.2, minStd: 3, tries: 8, everyMs: 300 });
+
+/** Gray tw x th thumbnail of an RGBA image {w, h, d} (area average): {w, h, d Float32Array}. */
+export function grayThumb(img, tw, th) {
+  const { w, h, d } = img, out = new Float32Array(tw * th);
+  for (let ty = 0; ty < th; ty++) {
+    const y0 = Math.floor((ty * h) / th), y1 = Math.max(y0 + 1, Math.floor(((ty + 1) * h) / th));
+    for (let tx = 0; tx < tw; tx++) {
+      const x0 = Math.floor((tx * w) / tw), x1 = Math.max(x0 + 1, Math.floor(((tx + 1) * w) / tw));
+      let s = 0, n = 0;
+      for (let y = y0; y < y1 && y < h; y++) for (let x = x0; x < x1 && x < w; x++) {
+        const i = (y * w + x) * 4;
+        s += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        n++;
+      }
+      out[ty * tw + tx] = n ? s / n : 0;
+    }
+  }
+  return { w: tw, h: th, d: out };
+}
+
+/** A gray image {w, h, d} rotated clockwise by rot (0 | 90 | 180 | 270 degrees). */
+export function rotateGray(g, rot) {
+  const { w, h, d } = g, r = ((rot % 360) + 360) % 360;
+  if (r === 0) return { w, h, d: Float32Array.from(d) };
+  const ow = r === 180 ? w : h, oh = r === 180 ? h : w, out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let nx, ny;
+    if (r === 90) { nx = h - 1 - y; ny = x; } else if (r === 270) { nx = y; ny = w - 1 - x; } else { nx = w - 1 - x; ny = h - 1 - y; }
+    out[ny * ow + nx] = d[y * w + x];
+  }
+  return { w: ow, h: oh, d: out };
+}
+
+// zero-mean normalised correlation of two same-size gray images; null when one is flat
+function ncc(a, b, minStd) {
+  const n = a.d.length;
+  let ma = 0, mb = 0;
+  for (let i = 0; i < n; i++) { ma += a.d[i]; mb += b.d[i]; }
+  ma /= n; mb /= n;
+  let sab = 0, saa = 0, sbb = 0;
+  for (let i = 0; i < n; i++) { const x = a.d[i] - ma, y = b.d[i] - mb; sab += x * y; saa += x * x; sbb += y * y; }
+  if (Math.sqrt(saa / n) < minStd || Math.sqrt(sbb / n) < minStd) return null;
+  return sab / Math.sqrt(saa * sbb);
+}
+
+/**
+ * Which clockwise rotation turns the clone's thumbnail into the video's: candidates [90, 270] when the
+ * clone is the video's size swapped, else [0, 180]. {rot (null = unclear), score (best correlation),
+ * margin (over the runner-up), scores {rot: corr}, why ('flat'|'size'|'weak'|'margin' when unclear)}.
+ */
+export function chooseCloneRotation(cloneThumb, videoThumb, cfg = {}) {
+  const c = { ...CLONE_ROT, ...cfg };
+  const swapped = cloneThumb.w === videoThumb.h && cloneThumb.h === videoThumb.w && cloneThumb.w !== cloneThumb.h;
+  const same = cloneThumb.w === videoThumb.w && cloneThumb.h === videoThumb.h;
+  if (!swapped && !same) return { rot: null, score: null, margin: null, scores: {}, why: "size" };
+  const cands = c.candidates || (swapped ? [90, 270] : [0, 180]);
+  const scores = {};
+  for (const r of cands) {
+    const g = rotateGray(cloneThumb, r);
+    if (g.w !== videoThumb.w || g.h !== videoThumb.h) continue;
+    const s = ncc(g, videoThumb, c.minStd);
+    if (s === null) return { rot: null, score: null, margin: null, scores, why: "flat" };
+    scores[r] = Math.round(s * 1000) / 1000;
+  }
+  const ranked = Object.entries(scores).sort((x, y) => y[1] - x[1]);
+  if (!ranked.length) return { rot: null, score: null, margin: null, scores, why: "size" };
+  const score = ranked[0][1], margin = ranked.length > 1 ? Math.round((score - ranked[1][1]) * 1000) / 1000 : score;
+  if (score < c.minScore) return { rot: null, score, margin, scores, why: "weak" };
+  if (margin < c.margin) return { rot: null, score, margin, scores, why: "margin" };
+  return { rot: Number(ranked[0][0]), score, margin, scores, why: null };
+}
+
+/**
+ * Canvas transform [a, b, c, d, e, f] that draws a clone frame rotated clockwise by rot into a W x H
+ * work canvas (video orientation); the clone is drawn at (0, 0, H, W) for 90/270 and (0, 0, W, H) for 0.
+ * A clone point (x, y) of a cw x ch frame lands at cloneToWork(rot, x, y, cw, ch, W, H).
+ */
+export function rotationTransform(rot, W, H) {
+  if (rot === 90) return [0, 1, -1, 0, W, 0];
+  if (rot === 270) return [0, -1, 1, 0, 0, H];
+  if (rot === 180) return [-1, 0, 0, -1, W, H];
+  return [1, 0, 0, 1, 0, 0];
+}
+
+/** Work-frame point (W x H, video orientation) of clone point (x, y) in a cw x ch clone frame rotated by rot. */
+export function cloneToWork(rot, x, y, cw, ch, W, H) {
+  const [dw, dh] = rot === 90 || rot === 270 ? [H, W] : [W, H];
+  const u = (x * dw) / cw, v = (y * dh) / ch;
+  const [a, b, c, d, e, f] = rotationTransform(rot, W, H);
+  return [a * u + c * v + e, b * u + d * v + f];
+}
+
 export function createDetAnalyzer(video, opts = {}) {
   const workShort = opts.workShort || CAPTURE_DEFAULTS.workShort;
   const mk = opts.makeCanvas || makeCanvas;
@@ -850,21 +960,31 @@ export function createDetAnalyzer(video, opts = {}) {
 
   // the camera frame at 480 px short side (main thread: drawImage + getImageData), from the analysis
   // clone when it is running and shows the video's view, else from the <video>
+  // A rotated clone is drawn turned into the video's orientation (rotationTransform), so the work frame,
+  // and every coordinate the analysis returns (work px / s = video px), is the same as on the main path.
   function grab() {
     const t0 = clock();
     const vw = video.videoWidth, vh = video.videoHeight;
     if (!vw || !vh) return null;
     const { W, H, s } = workSize(vw, vh, workShort);
-    const src = cloneSource(vw, vh, t0);
+    const cs = cloneSource(vw, vh, t0);
+    const src = cs.el;
     const mode = pickMode();
     const c = canvasFor("work", mode, W, H), wctx = ctxOf(c, mode);
-    wctx.drawImage(src, 0, 0, W, H);
+    if (cs.rot) {
+      wctx.setTransform(...rotationTransform(cs.rot, W, H));
+      if (cs.rot === 180) wctx.drawImage(src, 0, 0, W, H);
+      else wctx.drawImage(src, 0, 0, H, W);
+      wctx.setTransform(1, 0, 0, 1, 0, 0);
+    } else wctx.drawImage(src, 0, 0, W, H);
     const id = wctx.getImageData(0, 0, W, H);
     work = c;
     workImg = null;
     const grabMs = clock() - t0;
     if (!grabMode && src === video) grabTrials[mode].push(grabMs);
-    return { vw, vh, W, H, s, img: { w: W, h: H, d: id.data }, t0, grabMs, mode, src: src === video ? "main" : "clone" };
+    const img = { w: W, h: H, d: id.data };
+    if (cs.verify) verifyClone(cs, img, vw, vh, t0);
+    return { vw, vh, W, H, s, img, t0, grabMs, mode, src: src === video ? "main" : "clone" };
   }
 
   // -- analysis clone (path 'clone') --
@@ -873,33 +993,81 @@ export function createDetAnalyzer(video, opts = {}) {
     && cloneVideo && "srcObject" in cloneVideo && typeof globalThis.MediaStream === "function");
   const cloneErr = (why) => Object.assign(new Error(`clone: ${why}`), { why });
 
-  // the clone video when it is ready, delivers frames and shows the video's view; else the video
+  // {el: the clone video when it is ready, delivers frames and shows the video's view (rot: how it is
+  // turned), else the video; verify: set while a swapped clone's rotation is being checked}
   function cloneSource(vw, vh, now) {
-    if (!cl || cl.state !== "ready") return video;
-    if (!cloneMatches(cloneVideo.videoWidth, cloneVideo.videoHeight, vw, vh)) {
+    const VID = { el: video, rot: 0 };
+    if (!cl || (cl.state !== "ready" && cl.state !== "verify")) return VID;
+    const cw = cloneVideo.videoWidth, ch = cloneVideo.videoHeight;
+    const rel = cloneRelation(cw, ch, vw, vh);
+    if (!rel) {
       // e.g. a rotation the clone has not followed yet: this frame from the video; for good after ~30
       if (++cl.miss >= 30) offClone("aspect");
-      return video;
+      return VID;
     }
+    cl.miss = 0;
     // requestVideoFrameCallback counts the clone's frames where it fires: a clone that stopped
     // delivering (a hidden <video> the browser no longer updates) must never feed stale frames
     if (cl.frames > 0 && now - cl.lastAt > 1000) {
       if (now - cl.lastAt > 3000) offClone("stalled");
-      return video;
+      return VID;
     }
-    cl.miss = 0;
-    return cloneVideo;
+    const key = `${cw}x${ch}/${vw}x${vh}`;
+    if (cl.state === "ready" && key !== cl.key) {
+      // the sizes changed (device rotation, camera restart): an unrotated clone as before, a swapped one
+      // is checked again
+      if (rel === "same") { cl.rot = 0; cl.key = key; Object.assign(cloneInfo, { rot: 0 }); }
+      else Object.assign(cl, { state: "verify", tries: 0, nextTry: 0 });
+    }
+    if (cl.state === "verify") {
+      if (rel === "same") { Object.assign(cl, { state: "ready", rot: 0, key }); Object.assign(cloneInfo, { rot: 0 }); return { el: cloneVideo, rot: 0 }; }
+      return { ...VID, verify: true, key, cw, ch };
+    }
+    return { el: cloneVideo, rot: cl.rot || 0 };
+  }
+
+  /**
+   * A swapped clone (landscape clone of a portrait video or the reverse): which way it is turned is
+   * decided from one clone frame and the video frame read just now (the work frame), compared as gray
+   * thumbnails (chooseCloneRotation). Retried CLONE_ROT.tries times (a moving or flat scene), then off.
+   */
+  function verifyClone(cs, img, vw, vh, now) {
+    const st = cl;
+    if (!st || st.state !== "verify" || now < st.nextTry) return;
+    if (st.rvfc && st.frames === 0) {
+      if (now - st.readyAt > 3000) offClone("no-frames");
+      return;
+    }
+    st.nextTry = now + CLONE_ROT.everyMs;
+    st.tries++;
+    let res = null;
+    try {
+      const t = workSize(vw, vh, CLONE_ROT.short), tw = t.W, th = t.H;
+      const vt = grayThumb(img, tw, th);
+      const cc = canvasFor("rot", "cpu", th * 4, tw * 4), cx = ctx2d(cc);
+      cx.drawImage(cloneVideo, 0, 0, th * 4, tw * 4);
+      const ct = grayThumb({ w: th * 4, h: tw * 4, d: cx.getImageData(0, 0, th * 4, tw * 4).data }, th, tw);
+      res = chooseCloneRotation(ct, vt);
+    } catch { res = null; }
+    Object.assign(cloneInfo, { rot: res?.rot ?? null, rot_score: res?.score ?? null, rot_margin: res?.margin ?? null, rot_tries: st.tries, rot_why: res ? res.why : "error" });
+    if (res && res.rot !== null) {
+      Object.assign(st, { state: "ready", rot: res.rot, key: cs.key });
+      return;
+    }
+    if (st.tries >= CLONE_ROT.tries) offClone("rotation-unclear");
   }
 
   /**
    * Start the analysis clone: camTrack.clone() at the work size (in the track's own width/height
    * convention: Android may report the sensor's landscape size for a portrait video), crop-and-scale,
-   * into the hidden cloneVideo. Off (back to the video, reason in grabInfo().why) when the original
-   * track's size changed, the clone is not smaller, shows another view or delivers nothing in 3 s.
+   * into the hidden cloneVideo. A clone whose size is the video's swapped (Android Chrome: a landscape
+   * clone of the portrait track) is used once verifyClone knows its rotation, drawn turned. Off (back to
+   * the video, reason in grabInfo().why) when the original track's size changed, the clone is not
+   * smaller, shows another view, its rotation stays unclear or it delivers nothing in 3 s.
    */
   async function attachClone() {
     const t0 = clock();
-    const st = { state: "pending", track: null, frames: 0, lastAt: 0, miss: 0 };
+    const st = { state: "pending", track: null, frames: 0, lastAt: 0, miss: 0, rot: 0, key: null, rvfc: false, readyAt: 0, tries: 0, nextTry: 0 };
     cl = st;
     try {
       const s0 = settingsOf(camTrack);
@@ -929,8 +1097,10 @@ export function createDetAnalyzer(video, opts = {}) {
       if (s0.width && (s2.width !== s0.width || s2.height !== s0.height)) throw cloneErr("orig-changed");
       const vw2 = video.videoWidth || vw, vh2 = video.videoHeight || vh;
       if (Math.min(cw, ch) > 0.75 * Math.min(vw2, vh2)) throw cloneErr("not-scaled");
-      if (!cloneMatches(cw, ch, vw2, vh2)) throw cloneErr("aspect");
-      if (typeof cloneVideo.requestVideoFrameCallback === "function") {
+      const rel = cloneRelation(cw, ch, vw2, vh2);
+      if (!rel) throw cloneErr("aspect");
+      st.rvfc = typeof cloneVideo.requestVideoFrameCallback === "function";
+      if (st.rvfc) {
         const onFrame = () => {
           if (cl !== st || st.state === "off") return;
           st.frames++;
@@ -939,7 +1109,11 @@ export function createDetAnalyzer(video, opts = {}) {
         };
         try { cloneVideo.requestVideoFrameCallback(onFrame); } catch { /* ignore */ }
       }
-      st.state = "ready";
+      st.readyAt = clock();
+      Object.assign(cloneInfo, { rel, rot: rel === "same" ? 0 : null });
+      // a swapped clone is used only once its rotation is known (verifyClone, on the next frames)
+      if (rel === "same") Object.assign(st, { state: "ready", rot: 0, key: `${cw}x${ch}/${vw2}x${vh2}` });
+      else Object.assign(st, { state: "verify", tries: 0, nextTry: 0 });
     } catch (e) {
       if (cl === st) offClone(e?.why || "error");
       else stopClone(st);
@@ -1304,7 +1478,9 @@ export function createDetAnalyzer(video, opts = {}) {
    * ('cpu'|'gpu'|null while timing both: the page's canvas), pref, cpu/gpu (median ms of the video
    * reads per canvas), wmode (the worker's canvas), clone (null unless tried: {state, w, h (the clone
    * video), ask_w/ask_h (asked, track convention), set_w/set_h/resize (its settings), ow0/oh0 and
-   * ow1/oh1 (the original track's size before / after the clone started), setup_ms, frames})}.
+   * ow1/oh1 (the original track's size before / after the clone started), setup_ms, frames, rel
+   * ('same'|'swapped'), rot (clockwise degrees the clone is drawn turned; null while unknown), rot_score /
+   * rot_margin / rot_tries / rot_why (the rotation check of a swapped clone)})}.
    */
   function grabInfo() {
     const m = (a) => (a.length > GRAB_WARM ? r1(median(a.slice(GRAB_WARM))) : null);
