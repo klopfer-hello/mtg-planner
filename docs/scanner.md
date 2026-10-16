@@ -181,8 +181,8 @@ not part of backups.
 with `?scandebug=1`), the scanner also sends a small summary every 5 seconds to
 `POST /api/debug/perf`: frame-analysis and probe timings, frame gaps, long
 tasks, dropped frames, the granted camera size, whether the scan workers run,
-where the camera frame is read (`frame_path`), the `?scanres=` choice
-(`res`), and the phone's browser string, CPU core count, device
+where the camera frame is read (`frame_path`), the requested and delivered
+camera size with the Android decision (`res`), and the phone's browser string, CPU core count, device
 memory and pixel ratio. No images. Nothing is sent during normal scanning. The
 server keeps the newest 500 entries (≤ 4 KB each) in `debug-perf.jsonl` next
 to the database (env `DEBUG_PERF_FILE`); `GET /api/debug/perf?limit=` lists
@@ -190,24 +190,27 @@ them. Not part of backups.
 
 **Where the camera frame is read.** The card finder looks at a small copy of
 the camera picture (480 px on the short side), several times a second. On
-Chrome (Android and desktop) that copy comes from a second, invisible copy of
-the camera feed that the browser delivers at that small size, so the page
-never has to read the full 4K picture for it. The preview, the probe crops and
-the shutter photo still use the full 4K picture. The sharpness check uses the
-small copy too. Each probe reads the 4K picture once for the card and its
-bottom strip together. Some Android phones deliver that copy turned sideways
-(landscape while the camera picture is portrait): the scanner then compares
-one small copy with the 4K picture once, finds out which way it is turned and
-draws it turned back; if it can't tell, it reads the 4K picture instead. Safari
-and Firefox read the small copy from the 4K picture on the page. The camera's
-resolution is never changed while you scan, and the camera box keeps its size.
+desktop Chrome that copy comes from a second, invisible copy of the camera
+feed that the browser delivers at that small size, so the page never has to
+read the full 4K picture for it. The preview, the probe crops and the shutter
+photo still use the full picture. The sharpness check uses the small copy too.
+Each probe reads the full picture once for the card and its bottom strip
+together. On Android the camera opens at 1440p (instead of 4K) and the small
+copy is read from that picture: Android's invisible copy turned out to be a
+cropped landscape view, and 1440p reads much faster than 4K while the bottom
+strip stays wide enough (about 900-1000 px) for the ★/• and collector-number
+reading. Safari and Firefox (and iPhones) keep 4K and read the small copy from
+the picture on the page. The camera's resolution is never changed while you
+scan, and the camera box keeps its size.
 
 Test switches for a slow phone: `?scanworker=0` (no worker threads),
 `?scanframes=auto|clone|main|track|bitmap` (where the small copy comes from;
-default `auto` = `clone` on Chrome, else `main`; `track` and `bitmap` read the
+default `auto` = `clone` on desktop Chrome, `main` on Android and elsewhere;
+`clone` forces the invisible copy also on Android; `track` and `bitmap` read the
 camera in the worker thread and are experiments only: on a Pixel 9 `track`
 made the camera stall), `?scangrab=cpu|gpu|auto` (how the page reads it;
-default `auto`) and `?scanres=1080` (open the camera at 1080p).
+default `auto`) and `?scanres=1080|1440|4k` (the camera size; default 1440 on
+Android, else 4k).
 The perf beacon's `grab_mode` says which source ran (`path`, `why` when the
 copy failed, `clone` with its size and `rot`, how far it was turned).
 

@@ -7,8 +7,8 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
-  bytesToBase64, captureCard, chooseCloneRotation, cloneMatches, cloneRelation, cloneToWork, createDetAnalyzer, createScanWorker, glareMap,
-  glareSummary, grabRegions, grayThumb, regionPlan, rotateGray, stripSharpness, warpQuad, workSize,
+  bytesToBase64, cameraPlan, CAMERA_RESOLUTIONS, captureCard, chooseCloneRotation, cloneMatches, cloneRelation, cloneToWork, createDetAnalyzer, createScanWorker, glareMap,
+  glareSummary, grabRegions, grayThumb, isAndroid, openCamera, regionPlan, regionQuad, CAPTURE_DEFAULTS, rotateGray, stripSharpness, warpQuad, workSize,
 } from "../public/scanlib.js";
 import { detect } from "../public/det/detect.mjs";
 import { addNoise, background, drawCard, makeCard, placeCard } from "./helpers/detscenes.js";
@@ -961,5 +961,75 @@ describe("captureCard with a frame source (cfg.crop)", () => {
       assert.equal(px.calls[0].op, "probe");
       assert.ok(px.calls[0].payload.card.img.w > 600);
     }
+  });
+});
+
+describe("camera plan (Android 1440p + no clone, else 4K)", () => {
+  const PIXEL_UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Mobile Safari/537.36";
+  const IPHONE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+  const DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
+
+  test("isAndroid: userAgentData.platform, else the UA string", () => {
+    assert.equal(isAndroid({ userAgentData: { platform: "Android" }, userAgent: DESKTOP_UA }), true);
+    assert.equal(isAndroid({ userAgentData: { platform: "Windows" }, userAgent: DESKTOP_UA }), false);
+    assert.equal(isAndroid({ userAgent: PIXEL_UA }), true);
+    assert.equal(isAndroid({ userAgent: IPHONE_UA }), false);
+    assert.equal(isAndroid({ userAgent: DESKTOP_UA }), false);
+    assert.equal(isAndroid(null), false);
+    assert.equal(isAndroid({ get userAgentData() { throw new Error("x"); } }), false);
+  });
+
+  test("cameraPlan: Android 1440p + main path, else 4K + auto; params win", () => {
+    assert.deepEqual(cameraPlan({ android: true }), { android: true, res: "1440", width: 2560, height: 1440, why: "android", frames: "main", frames_why: "android" });
+    assert.deepEqual(cameraPlan({ android: false }), { android: false, res: "4k", width: 3840, height: 2160, why: "default", frames: "auto", frames_why: "default" });
+    assert.deepEqual(cameraPlan(), cameraPlan({ android: false }));
+    const forced = cameraPlan({ android: true, res: "4k", frames: "clone" });
+    assert.equal(forced.res, "4k"); assert.equal(forced.width, 3840); assert.equal(forced.why, "param");
+    assert.equal(forced.frames, "clone"); assert.equal(forced.frames_why, "param");
+    assert.equal(cameraPlan({ android: false, res: "1080" }).height, 1080);
+    assert.equal(cameraPlan({ android: false, res: "1440" }).width, 2560);
+    // unknown values fall back to the platform default
+    assert.equal(cameraPlan({ android: true, res: "8k", frames: "nope" }).res, "1440");
+    assert.equal(cameraPlan({ android: true, res: "toString" }).res, "1440");
+    assert.equal(cameraPlan({ android: true, frames: "auto" }).frames, "main");
+    assert.equal(cameraPlan({ android: false, frames: "main" }).frames_why, "param");
+    assert.deepEqual(Object.keys(CAMERA_RESOLUTIONS).sort(), ["1080", "1440", "4k"]);
+  });
+
+  test("openCamera asks for the plan's size first, keeps the fallback chain, reports which try opened", async () => {
+    const desc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    const calls = [];
+    let failFirst = false;
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { mediaDevices: { getUserMedia: async (c) => { calls.push(c.video); if (failFirst && calls.length === 1) throw Object.assign(new Error("over"), { name: "OverconstrainedError" }); return { id: calls.length }; } } },
+    });
+    try {
+      const info = {};
+      const plan = cameraPlan({ android: true });
+      await openCamera({ width: plan.width, height: plan.height, info });
+      assert.equal(calls[0].width.ideal, 2560); assert.equal(calls[0].height.ideal, 1440);
+      assert.equal(info.try, 0);
+      calls.length = 0; failFirst = true;
+      const info2 = {};
+      await openCamera({ width: 2560, height: 1440, info: info2 });
+      assert.equal(info2.try, 1);
+      assert.equal(calls[1].width.ideal, 1920);
+    } finally {
+      if (desc) Object.defineProperty(globalThis, "navigator", desc); else delete globalThis.navigator;
+    }
+  });
+
+  test("1440p portrait: the probe strip is read 1:1 (never upscaled) and stays ~950 px wide", () => {
+    // a card filling ~62 % of the short side of a portrait 1440x2560 frame (the box/free-hand framing)
+    const vw = 1440, vh = 2560, w = 0.62 * vw, h = w * 88 / 63, x = (vw - w) / 2, y = (vh - h) / 2;
+    const q = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+    const r = CAPTURE_DEFAULTS.stripRegion;
+    const sw = Math.round(Math.max(200, Math.min(CAPTURE_DEFAULTS.stripMaxWidth, (regionQuad(q, r)[1][0] - regionQuad(q, r)[0][0]))));
+    assert.ok(sw >= 900 && sw <= 1000, `strip ${sw}`);
+    const ps = regionPlan({ w: vw, h: vh }, q, r, sw, 1);
+    // k <= 1 always (regionPlan never upscales the read); here ~1: the strip keeps the source's pixels
+    assert.ok(ps.k <= 1 && ps.k > 0.99, `k ${ps.k}`);
+    assert.ok(Math.abs(ps.dw - ps.w) <= 1);
   });
 });

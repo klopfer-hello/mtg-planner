@@ -25,9 +25,11 @@
 // Reading the frame (Pixel 9 beacon, 0.6.2-beta.1: 235 ms for the 480 px work
 // frame + 220 ms for the strip sharpness per frame, each a full conversion of
 // the 4K camera frame on the main thread). The strip sharpness now comes from
-// the work frame (no second read), and on Chrome the work frame is drawn from
-// a clone of the camera track constrained to the work size (a second, hidden
-// <video>); the preview, probe and shutter crops keep the 4K track. The
+// the work frame (no second read), and on desktop Chrome the work frame is drawn
+// from a clone of the camera track constrained to the work size (a second,
+// hidden <video>); the preview, probe and shutter crops keep the 4K track.
+// Android (0.7.0-beta.3, cameraPlan): its clone is a landscape crop of the
+// portrait frame, so no clone; the camera opens at 1440p instead. The
 // beta.2 MediaStreamTrackProcessor path (frames read in the worker) made the
 // Pixel's camera stall (autofocus, preview): only behind ?scanframes=track.
 // Safari/Firefox read the 4K <video> on the page as before.
@@ -201,8 +203,43 @@ export function cameraSupport() {
   };
 }
 
-/** Rear camera, as high-res as the device allows (4K ideal, then 1080p, then anything). */
-export async function openCamera({ width = 3840, height = 2160 } = {}) {
+/** Whether the browser runs on Android (Chromium's userAgentData.platform, else the UA string). */
+export function isAndroid(nav = globalThis.navigator) {
+  try {
+    return nav?.userAgentData?.platform === "Android" || /Android/.test(String(nav?.userAgent || ""));
+  } catch { return false; }
+}
+
+/** Camera sizes the scanner asks for (landscape convention; the browser turns them for a portrait camera). */
+export const CAMERA_RESOLUTIONS = Object.freeze({ "1080": Object.freeze([1920, 1080]), "1440": Object.freeze([2560, 1440]), "4k": Object.freeze([3840, 2160]) });
+/** Work-frame paths createDetAnalyzer accepts (opts.frames). */
+export const FRAME_PATHS = Object.freeze(["auto", "clone", "main", "track", "bitmap"]);
+
+/**
+ * The camera request and frame path for this device, fixed for the whole session. Android (Pixel 9,
+ * 0.7.0-beta.2 beacons): its track clone is a landscape crop of the portrait frame, never usable, and
+ * running it slowed the 4K read (~360 ms per frame), so Android opens at 1440p and reads the work frame
+ * from the <video> ('auto' -> 'main'). iOS/desktop keep 4K and 'auto'. res ('1080'|'1440'|'4k', from
+ * ?scanres=) and frames (?scanframes=) override.
+ * @returns {{android:boolean, res:string, width:number, height:number, why:'param'|'android'|'default',
+ *   frames:string, frames_why:'param'|'android'|'default'}}
+ */
+export function cameraPlan({ android = false, res = null, frames = null } = {}) {
+  const r = typeof res === "string" && Object.hasOwn(CAMERA_RESOLUTIONS, res) ? res : null;
+  const pick = r || (android ? "1440" : "4k");
+  const [width, height] = CAMERA_RESOLUTIONS[pick];
+  const f = FRAME_PATHS.includes(frames) ? frames : "auto";
+  return {
+    android: Boolean(android), res: pick, width, height, why: r ? "param" : android ? "android" : "default",
+    frames: f === "auto" && android ? "main" : f, frames_why: f !== "auto" ? "param" : android ? "android" : "default",
+  };
+}
+
+/**
+ * Rear camera at the requested size (ideal; then 1080p, then anything). `info`, when given, gets
+ * `try` = the index of the constraint set that opened it (0 = the requested size).
+ */
+export async function openCamera({ width = 3840, height = 2160, info = null } = {}) {
   const md = globalThis.navigator?.mediaDevices;
   if (!md?.getUserMedia) throw new Error(globalThis.isSecureContext === false
     ? "The camera needs HTTPS (a secure context)."
@@ -214,9 +251,11 @@ export async function openCamera({ width = 3840, height = 2160 } = {}) {
     true,
   ];
   let last;
-  for (const video of tries) {
+  for (const [i, video] of tries.entries()) {
     try {
-      return await md.getUserMedia({ audio: false, video });
+      const stream = await md.getUserMedia({ audio: false, video });
+      if (info) info.try = i;
+      return stream;
     } catch (e) {
       last = e;
       if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) break;

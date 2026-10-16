@@ -4838,6 +4838,16 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   const [torch, setTorchState] = useState({ supported: null, on: false });
   const [dbg, setDbg] = useState(null); // ?scandebug=1: detector timing + probe state
   const debugOn = useMemo(() => { try { return new URLSearchParams(window.location.search).get("scandebug") === "1"; } catch { return false; } }, []);
+  // camera size + work-frame path, fixed per page load (scanlib cameraPlan: Android 1440p + the <video>
+  // path, else 4K + auto; ?scanres=1080|1440|4k and ?scanframes= override); camInfoRef = what opened
+  const plan = useMemo(() => {
+    let qs = null;
+    try { qs = new URLSearchParams(window.location.search); } catch { qs = null; }
+    const android = typeof lib?.isAndroid === "function" ? lib.isAndroid() : false;
+    return lib?.cameraPlan ? lib.cameraPlan({ android, res: qs?.get("scanres") ?? null, frames: qs?.get("scanframes") ?? null })
+      : { android, res: "4k", width: 3840, height: 2160, why: "default", frames: "auto", frames_why: "default" };
+  }, [lib]);
+  const camInfoRef = useRef({ try: null });
   const genRef = useRef(0);
   const restartAtRef = useRef(0); // last automatic restart after the track ended
   const activeRef = useRef(active);
@@ -4861,11 +4871,11 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     const stale = () => gen !== genRef.current || !activeRef.current || document.hidden;
     setCam({ state: "starting", error: null, vw: 0, vh: 0 });
     try {
-      // ?scanres=1080: open the camera at 1080p (explicit opt-in; the stream's constraints are never changed
-      // mid-session: on the Pixel 9 that restarted the camera as landscape 1080p and the view jumped)
-      let res = null;
-      try { res = new URLSearchParams(window.location.search).get("scanres"); } catch { res = null; }
-      const stream = await lib.openCamera(res === "1080" ? { width: 1920, height: 1080 } : undefined);
+      // the plan's size from the start; the stream's constraints are never changed mid-session (on the
+      // Pixel 9 that restarted the camera as landscape 1080p and the view jumped)
+      const info = { try: null };
+      const stream = await lib.openCamera({ width: plan.width, height: plan.height, info });
+      camInfoRef.current = info;
       if (stale()) {
         lib.stopStream(stream);
         if (gen === genRef.current) stop();
@@ -5073,8 +5083,9 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
   // Analysis loop (8 fps at most, slower when the phone can't keep up) + overlay drawing + perf beacon.
   // Field-test knobs: ?scanworker=0 (no workers), ?scangrab=cpu|gpu|auto (main-thread work-frame canvas,
   // default auto), ?scanframes=auto|clone|main|track|bitmap (where the work frame comes from, default
-  // auto: a small clone of the camera track on Chrome, else the 4K video; track/bitmap = the beta.2
-  // worker paths, experiments only), ?scanres=1080 (open the camera at 1080p; 4k/none = the default).
+  // auto: a small clone of the camera track on desktop Chrome, else the video; Android: main; track/
+  // bitmap = the beta.2 worker paths, experiments only), ?scanres=1080|1440|4k (camera size; default
+  // 1440 on Android, else 4k). Both via `plan` (scanlib cameraPlan).
   useEffect(() => {
     if (cam.state !== "on" || !lib) return;
     const v = videoRef.current;
@@ -5085,8 +5096,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
     const detW = useWorkers ? lib.createScanWorker() : null;
     const pxW = useWorkers ? lib.createScanWorker() : null;
     let det = null;
-    const frames = ["auto", "clone", "main", "track", "bitmap"].includes(qs?.get("scanframes")) ? qs.get("scanframes") : "auto";
-    const resPref = ["1080", "4k"].includes(qs?.get("scanres")) ? qs.get("scanres") : null;
+    const frames = plan.frames;
     try { det = lib.createDetAnalyzer(v, { detectWorker: detW, pixels: pxW, grabMode, frames, track: trackRef.current, cloneVideo: cloneRef.current }); } catch (e) {
       detW?.close(); pxW?.close();
       live.current.onError?.(`Could not start the card detector: ${e.message}`);
@@ -5283,7 +5293,10 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
         video: { w: st.width ?? null, h: st.height ?? null, fps: st.frameRate ?? null, vw: v.videoWidth, vh: v.videoHeight, resize: st.resizeMode ?? null },
         worker: Boolean(detW?.available()), detect_worker: detW ? detW.state : "none", pixel_worker: pxW ? pxW.state : "none",
         encoder: Boolean(pxW?.available() && pxW.encoder), grab_mode: det.grabInfo ? det.grabInfo() : null, gap: pacer ? pacer.gap() : null,
-        frame_path: det.path ?? null, res: resPref ? { pref: resPref } : null,
+        frame_path: det.path ?? null,
+        // requested vs delivered camera size + the platform decision (try 0 = the requested constraints opened it)
+        res: { pref: plan.res, why: plan.why, android: plan.android, frames: plan.frames, frames_why: plan.frames_why,
+          ask_w: plan.width, ask_h: plan.height, try: camInfoRef.current?.try ?? null, got_w: st.width ?? null, got_h: st.height ?? null },
         dropped_frames: vq && vq0 ? vq.dropped - vq0.dropped : null, decoded_frames: vq && vq0 ? vq.total - vq0.total : null,
         record: Boolean(live.current.record?.session), visible: !document.hidden,
       });
