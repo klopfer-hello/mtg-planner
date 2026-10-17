@@ -1028,7 +1028,7 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 .value-hero .v { font-size: 2rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.15; overflow-wrap: anywhere; }
 .change-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .change-tile { appearance: none; text-align: left; cursor: pointer; font: inherit; color: inherit; min-height: 56px; }
-.change-tile .v { font-size: 1rem; }
+.change-tile .v { font-size: clamp(.78rem, 3.7vw, 1rem); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .change-tile[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .change-tile:disabled { cursor: default; opacity: .7; }
 .gain { color: var(--ok); }
