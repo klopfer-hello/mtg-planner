@@ -617,6 +617,84 @@ describe("identify: a misread collector number vs title + fingerprint", () => {
   });
 });
 
+describe("identify: a near-exact collector line confirmed by the title", () => {
+  // foil German strips read "BX" as "BC" (the other set wins the set match) or the rarity letter as a digit
+  // ("9021" → 21 only as the 3rd number reading); the English reference art of a foil sits above fpVerify
+  const SETS = [
+    P({ id: "bx-21-de", name: "Gale Warden", printed_name: "Sturmwächterin", set_code: "bx", collector_number: "21", lang: "de" }),
+    P({ id: "bx-21-en", name: "Gale Warden", set_code: "bx", collector_number: "21", lang: "en" }),
+    P({ id: "bc-21-de", name: "Copper Sage", printed_name: "Kupferweiser", set_code: "bc", collector_number: "21", lang: "de" }),
+    P({ id: "bx-902-de", name: "Tin Lantern", printed_name: "Zinnlaterne", set_code: "bx", collector_number: "902", lang: "de" }),
+    P({ id: "bx-77-de", name: "Gale Warden", printed_name: "Sturmwächterin", set_code: "bx", collector_number: "77", lang: "de" }),
+  ];
+  const index = makeIndex(SETS);
+  const otherSet = (o = {}) => modernLine({ raw: "C 0021\nBC ★ DE", number: "21", numberCandidates: ["21", "2"],
+    setCandidates: [{ code: "bc", score: 0.75, cost: 0.5 }, { code: "bx", score: 0.5, cost: 1 }], langCode: "DE", lang: "de", confidence: 0.6, ...o });
+  const digitRarity = (o = {}) => otherSet({ raw: "9021\nBX ★ DE", number: "9021", numberCandidates: ["9021", "902", "21"],
+    setCandidates: [{ code: "bx", score: 1, cost: 0 }], confidence: 0.9, ...o });
+  const top = (id, name, score) => ({ printing_id: id, oracle_id: `o-${name.toLowerCase().replace(/\W+/g, "-")}`, name, score });
+  // weak foil art: its own distance 0.33 (above fpVerify, below fpReject), an unrelated card on top, no name gate
+  const weak = (extra = {}) => makeMatcher({ scores: { "bx-21-de": 0.33, "bx-21-en": 0.33, "bc-21-de": 0.42, "bx-902-de": 0.41, ...extra },
+    top: [top("zz-1-en", "Unrelated Card", 0.29)], gap: 0.01 });
+  const go = (line, title, matcher, settings = {}) => identify(
+    { db: null, idx: {}, matcher, claude: null, ocr: makeOcr({ line, title }), fp: fpStub, index, thresholds: DEFAULT_THRESHOLDS },
+    { card: CARD, strip: STRIP, settings: { storageLang: "scanned", foil: "auto", langHint: "de", ...settings } });
+
+  test("2nd set reading + the German title -> AUTO despite weak foil art", async () => {
+    const r = await go(otherSet(), "Sturmwächterin", weak());
+    assert.equal(r.printing.id, "bx-21-de");
+    assert.equal(r.status, "auto");
+    assert.equal(r.features.collector_titled, true);
+  });
+
+  test("3rd number reading + the title -> AUTO", async () => {
+    const r = await go(digitRarity(), "Sturmwächterin", weak());
+    assert.equal(r.printing.id, "bx-21-de");
+    assert.equal(r.status, "auto");
+  });
+
+  test("a weak title keeps it SUGGEST", async () => {
+    const r = await go(otherSet(), "Sturmwach", weak());
+    assert.equal(r.printing.id, "bx-21-de");
+    assert.equal(r.status, "suggest");
+  });
+
+  test("art that contradicts the card (> fpReject) is never AUTO", async () => {
+    const r = await go(otherSet(), "Sturmwächterin", weak({ "bx-21-de": 0.45, "bx-21-en": 0.45 }));
+    assert.notEqual(r.status, "auto");
+  });
+
+  test("the fingerprint naming another card (name gate) is never AUTO", async () => {
+    const m = makeMatcher({ scores: { "bx-21-de": 0.33, "bc-21-de": 0.42 }, top: [top("bc-21-de", "Copper Sage", 0.2)], gap: 0.1 });
+    const r = await go(otherSet(), "Sturmwächterin", m);
+    assert.notEqual(r.status, "auto");
+  });
+
+  test("without a scored fingerprint the line + title stay SUGGEST", async () => {
+    const r = await go(otherSet(), "Sturmwächterin", null);
+    assert.equal(r.printing.id, "bx-21-de");
+    assert.equal(r.status, "suggest");
+  });
+
+  test("a line below titleLineConf stays SUGGEST", async () => {
+    const r = await go(otherSet({ confidence: 0.2 }), "Sturmwächterin", weak());
+    assert.equal(r.status, "suggest");
+  });
+
+  test("the line names another printing of the same card too: SUGGEST", async () => {
+    const r = await go(otherSet({ numberCandidates: ["21", "77"] }), "Sturmwächterin", weak({ "bx-77-de": 0.33 }));
+    assert.equal(r.printing.id, "bx-21-de");
+    assert.equal(r.status, "suggest");
+  });
+
+  test("an exact line naming another card than the title is not made AUTO by the title", async () => {
+    const line = modernLine({ raw: "C 0902\nBX ★ DE", number: "902", numberCandidates: ["902"], setCandidates: [{ code: "bx", score: 1, cost: 0 }],
+      langCode: "DE", lang: "de", confidence: 0.6 });
+    const r = await go(line, "Sturmwächterin", weak());
+    assert.notEqual(r.status, "auto");
+  });
+});
+
 describe("identify: overlapped stages (speed step 1)", () => {
   const defer = () => { let resolve; const p = new Promise((r) => { resolve = r; }); return { p, resolve }; };
 
