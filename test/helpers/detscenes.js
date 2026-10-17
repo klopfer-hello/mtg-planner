@@ -213,29 +213,3 @@ export function sceneSet(n = 8, w = 480, h = 853) {
 export function emptyBox(seed = 77, w = 480, h = 853) {
   return addNoise(background('box', w, h, seed), seed);
 }
-
-/**
- * A card on a light table with a brightness gradient and (mostly) a soft reflection on its bottom edge, in a
- * 480 x 853 work frame: at half resolution the outer edge breaks up and an inner line can win (the free-hand
- * failure of the 0.7.0-beta.4 recordings). Returns {img, corners}.
- */
-export function tableScene(seed, w = 480, h = 853) {
-  const r = rng(seed * 13 + 5), t = rng(seed), d = new Uint8ClampedArray(w * h * 4);
-  const base = 150 + r() * 80, gx = t() - 0.5, gy = t() - 0.5;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const v = base + 40 * (gx * x / w + gy * y / h) + (t() - 0.5) * 3, i = (y * w + x) * 4;
-    d[i] = v; d[i + 1] = v - 3; d[i + 2] = v - 8; d[i + 3] = 255;
-  }
-  const img = { w, h, d };
-  const corners = placeCard(w * (0.4 + 0.2 * r()), h * (0.4 + 0.2 * r()), w * (0.45 + 0.25 * r()), (r() - 0.5) * 30, 0.03 * r());
-  drawCard(img, makeCard(seed), corners);
-  if (r() < 0.7) {
-    const cx = (corners[2][0] + corners[3][0]) / 2, cy = (corners[2][1] + corners[3][1]) / 2, rad = 30 + r() * 40, amt = 0.6 + 0.35 * r();
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const g = Math.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * rad * rad)) * amt, i = (y * w + x) * 4;
-      for (let k = 0; k < 3; k++) d[i + k] = d[i + k] + (255 - d[i + k]) * g;
-    }
-  }
-  addNoise(img, seed, 8);
-  return { img, corners };
-}
