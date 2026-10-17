@@ -12,13 +12,7 @@
 //                per-corner median over a short window, hysteresis between
 //                competing outlines (a different outline must win switchFrames
 //                frames in a row), single-frame jumps rejected, corner order
-//                (reading orientation) by vote. A rejected (jump) frame keeps the
-//                old corners but reports accepted false / fresh false, so nobody
-//                captures or probes with a quad this frame's detection disagrees
-//                with; rebaseAfter jumps in a row re-base the track on the newest
-//                detection (a card moving > gate per frame, or flicker between
-//                outlines, used to freeze the quad for seconds: the free-hand
-//                recordings probed stale quads 0.9-2.4 s old).
+//                (reading orientation) by vote.
 //   BoxPrior     learns the scan-box prior from accepted captures: enables box
 //                mode ('auto') once the last N captures were centred, near
 //                axis-aligned and consistent in angle and position; opts() go
@@ -48,8 +42,8 @@ export function align(q, ref) {
 }
 
 export class QuadTracker {
-  constructor({ window = 5, gate = 0.05, switchFrames = 3, rebaseAfter = 3, maxMiss = 4, stableFrames = 4, stableJitter = 0.04, stableDrift = 0.015, orientWindow = 9, useWeak = true, noise = 0.012 } = {}) {
-    Object.assign(this, { window, gate, switchFrames, rebaseAfter, maxMiss, stableFrames, stableJitter, stableDrift, orientWindow, useWeak, noise });
+  constructor({ window = 5, gate = 0.05, switchFrames = 3, maxMiss = 4, stableFrames = 4, stableJitter = 0.04, stableDrift = 0.015, orientWindow = 9, useWeak = true, noise = 0.012 } = {}) {
+    Object.assign(this, { window, gate, switchFrames, maxMiss, stableFrames, stableJitter, stableDrift, orientWindow, useWeak, noise });
     this.reset();
   }
 
@@ -64,14 +58,9 @@ export class QuadTracker {
     this.smHist = [];   // recent smoothed outputs (drift check)
     this.age = 0;
     this.jumps = 0;
-    this.rejRun = 0;    // rejected (jump) frames in a row
   }
 
-  /**
-   * det: detect() result scaled to the caller's coordinates ({found, corners}). Returns the track state;
-   * `fresh` = this frame's detection agrees with the returned corners (false on a rejected jump frame,
-   * whose `accepted` is false too).
-   */
+  /** det: detect() result scaled to the caller's coordinates ({found, corners}). Returns the track state. */
   update(det) {
     this.age++;
     // weak outlines (card-ish quad below the confidence bar) are tracked too (UI outline, box-prior learning);
@@ -101,23 +90,15 @@ export class QuadTracker {
       this.hist.push(qa); if (this.hist.length > this.window) this.hist.shift();
       this.shifts.push(a.s); if (this.shifts.length > this.orientWindow) this.shifts.shift();
       this.cand = [];
-      this.rejRun = 0;
     } else {
-      // jump: a different outline. Accept it only after switchFrames consistent frames, or re-base on the
-      // newest detection after rebaseAfter jumps in a row (inconsistent ones: a card moving more than the
-      // gate per frame, or flicker between outlines; holding the old corners then means a stale quad)
+      // jump: a different outline. Accept it only after switchFrames consistent frames.
       this.jumps++;
       const last = this.cand[this.cand.length - 1];
       if (last && align(q, last).d <= this.gate * cardW(last)) this.cand.push(shiftQ(q, align(q, last).s));
       else this.cand = [q];
       if (this.cand.length >= this.switchFrames) {
-        this.hist = this.cand.slice(-this.window); this.cand = []; this.shifts = [0]; this.smHist = []; this.rejRun = 0;
-      } else if (++this.rejRun >= this.rebaseAfter) {
-        this.hist = [q]; this.cand = []; this.shifts = [0]; this.smHist = []; this.prevOff = null; this.rejRun = 0;
-      } else {
-        this.accepted = false;
-        return this.state(true, true);
-      }
+        this.hist = this.cand.slice(-this.window); this.cand = []; this.shifts = [0]; this.smHist = [];
+      } else return this.state(true, true);
     }
     // robust smoothing: per-corner, per-coordinate median of the window
     this.smoothed = [0, 1, 2, 3].map((i) => [median(this.hist.map((h) => h[i][0])), median(this.hist.map((h) => h[i][1]))]);
@@ -147,7 +128,7 @@ export class QuadTracker {
       for (const h of this.smHist) { const a = align(h, q); drift = Math.max(drift, a.d / cw); }
       stable = jitter <= this.stableJitter && drift <= this.stableDrift;
     }
-    return { corners: q, found: Boolean(q) && this.miss <= this.maxMiss, accepted: Boolean(this.accepted), seen, rejected, fresh: Boolean(seen && !rejected), stable, jitter, drift, n: this.hist.length };
+    return { corners: q, found: Boolean(q) && this.miss <= this.maxMiss, accepted: Boolean(this.accepted), seen, rejected, stable, jitter, drift, n: this.hist.length };
   }
 }
 

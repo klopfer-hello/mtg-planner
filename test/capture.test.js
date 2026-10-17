@@ -473,23 +473,3 @@ test('probe: rearm({rescan}) tracks the card in view; a probe of the next card i
   u.ctl.reset();
   assert.equal(u.ctl.rescan, null);
 });
-
-test('probe: never on a stale quad (fresh false: the tracker kept the old corners on a jump frame)', () => {
-  const c = new ProbeController();
-  const base = { found: true, corners: [[0, 0], [1, 0], [1, 1], [0, 1]], accepted: true, sharp: 100 };
-  const th = new Float32Array(192).fill(100);
-  let t = 0, r = null;
-  for (; t < 3000; t += 125) {
-    r = c.step({ ...base, accepted: false, fresh: false, cardThumb: th, now: t });
-    assert.equal(r.probe, null, `stale quad probed at ${t}`);
-  }
-  assert.equal(r.state, PROBE_STATES.TRACKING);
-  assert.equal(r.hint, 'Hold steady');
-  assert.equal(r.still, true, 'the card region is still; only the quad is stale');
-  // the next fresh frame probes (and an analysis without `fresh` keeps the old behaviour)
-  assert.ok(c.step({ ...base, fresh: true, cardThumb: th, now: t }).probe);
-  const d = new ProbeController();
-  let p = null;
-  for (t = 0; t < 2000 && !p; t += 125) p = d.step({ ...base, cardThumb: th, now: t }).probe;
-  assert.ok(p);
-});

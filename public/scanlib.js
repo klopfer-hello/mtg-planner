@@ -694,9 +694,7 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
  *
  * FrameAnalysis (capture.js ProbeController.step() input): {vw, vh, found
  * (a tracked outline this frame), weak (found, detection below the bar),
- * accepted, stable, fresh (this frame's detection agrees with `corners`; false on
- * a frame the tracker rejected as a jump: the outline is the old one), corners
- * (smoothed, video px, TL,TR,BR,BL), rawCorners,
+ * accepted, stable, corners (smoothed, video px, TL,TR,BR,BL), rawCorners,
  * jitter, drift, mode, score, orientConf, thumb (24x40), cardThumb (12x16),
  * sharp, glare {advice, code, regions}, priorQuad (video px | null),
  * priorLearned (box mode active), now, ms, timing {main, grab, detect, sharp,
@@ -1390,7 +1388,7 @@ export function createDetAnalyzer(video, opts = {}) {
     const total = clock() - g.t0;
     return {
       vw, vh, found: seen, weak: Boolean(seen && !tr.accepted), accepted: Boolean(seen && tr.accepted), stable,
-      fresh: Boolean(seen && tr.fresh !== false), corners, rawCorners: r.corners ? toVideo(r.corners, s) : null,
+      corners, rawCorners: r.corners ? toVideo(r.corners, s) : null,
       jitter: Number.isFinite(tr.jitter) ? tr.jitter : null, drift: Number.isFinite(tr.drift) ? tr.drift : null,
       mode: r.mode || "free", score: Number.isFinite(r.score) ? r.score : null,
       orientConf: Number.isFinite(r.orientConf) ? r.orientConf : null,

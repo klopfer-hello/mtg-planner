@@ -5267,8 +5267,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
             let ask = null;
             if (aa) {
               try {
-                // a stale outline (the tracker rejected this frame's detection) is never photographed
-                ask = aa.step({ found: o.found, cardThumb: o.cardThumb, still: r.still && o.fresh !== false, sharp: o.sharp, now: Date.now(),
+                ask = aa.step({ found: o.found, cardThumb: o.cardThumb, still: r.still, sharp: o.sharp, now: Date.now(),
                   blocked: Boolean(L.paused || !L.auto || L.busy || L.queued > 0 || r.probe || pc.flight || capturingRef.current || r.state === "hold") });
               } catch { ask = null; }
               if (r.probe) probeThumb = o.cardThumb || null;

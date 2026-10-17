@@ -286,7 +286,6 @@ describe("createDetAnalyzer", () => {
     for (let i = 0; i < 8; i++) o = step(i % 2 ? img : frame("cloth", VW, VH, "cloth", 21, clothQ, 2));
     assert.ok(o.found && o.accepted && o.stable, JSON.stringify({ found: o.found, accepted: o.accepted, stable: o.stable }));
     assert.equal(o.weak, false);
-    assert.equal(o.fresh, true, "this frame's detection agrees with the track");
     assert.ok(maxErr(o.corners, clothQ) / cardW(clothQ) < 0.03, "corners in full-res video px");
     assert.equal(o.vw, VW); assert.equal(o.vh, VH);
     assert.equal(o.thumb.length, 24 * 40);
