@@ -164,17 +164,41 @@ export class BoxPrior {
    * row clear it (a capture inside resets the count). A restored, not yet confirmed box goes dormant (free
    * mode) after probeAfter frames passed to noteFrame() without any card outline, so cards lying elsewhere
    * (on a table) can be detected at all and then unlearn it.
+   *
+   * Self-healing (an active box in 'auto' mode, learned or this session's): the box can be wrong while the
+   * detector still "finds" a card in it (box mode reuses the learned outline, detect()'s anchor.fromPrior),
+   * so nothing gets staged and add() never runs. Three signals put the box to sleep for the session
+   * (dormant = free mode) and count as one capture outside (unlearnAfter of those, or of captures outside,
+   * in a row forget it):
+   *  - noteFree() gets a prior-free detect() the caller runs every few hundred ms:
+   *    'reuse': disagreeAfter checks in a row where the box result is the reused outline of a card (not
+   *    blank) and the free outline is confident and > freeDiff card widths away from it;
+   *    'free': disagreeAfter checks in a row with a confident free outline outside the box (the judge
+   *    criteria, either reading orientation) at the same place, which the box result doesn't match;
+   *  - noteProbe() 'probes': failAfter unidentified probes in a row cropped from the box's reused outline
+   *    while the latest free outline (<= freeFreshMs old) is confident and > freeDiff card widths away from the probe quad.
+   * A box result within freeDiff of the free outline never counts: box mode then tracks the card.
+   * Recorded box sessions (2026-10-14/15): the reused outline disagreed with a card's free outline > 0.1 in
+   * single checks only; the wrong box of the iPhone recording (2026-10-17) in 179 of 186 box frames.
+   * A later accepted capture inside the box wakes it again (judge), as for the noteFrame dormancy.
    */
   constructor({ mode = 'auto', need = 3, keep = 6, centreTol = 0.05, angleTol = 4, axisTol = 8, centredTol = 0.2, scaleSlack = [0.9, 1.12], weight = 1,
-    unlearnAfter = UNLEARN_AFTER, outsideTol = 0.12, outsideAngle = 10, outsideScale = [0.8, 1.25], probeAfter = 24, now = () => Date.now() } = {}) {
-    Object.assign(this, { mode, need, keep, centreTol, angleTol, axisTol, centredTol, scaleSlack, weight, unlearnAfter, outsideTol, outsideAngle, outsideScale, probeAfter, now });
+    unlearnAfter = UNLEARN_AFTER, outsideTol = 0.12, outsideAngle = 10, outsideScale = [0.8, 1.25], probeAfter = 24,
+    disagreeAfter = 4, failAfter = 5, freeDiff = 0.1, freeFreshMs = 3000, now = () => Date.now() } = {}) {
+    Object.assign(this, { mode, need, keep, centreTol, angleTol, axisTol, centredTol, scaleSlack, weight, unlearnAfter, outsideTol, outsideAngle, outsideScale, probeAfter,
+      disagreeAfter, failAfter, freeDiff, freeFreshMs, now });
     this.caps = [];
     this.learned = null;    // {center:[fx,fy], angle, size, quad|null (frame fractions), aspect, confidence, learned_at}
     this.outside = 0;       // accepted captures in a row outside `learned`
     this.confirmed = false; // a capture of this session agreed with `learned`
     this.dormant = false;   // restored box unconfirmed and nothing seen in it for probeAfter frames
     this.misses = 0;
-    this.revision = 0;      // bumps whenever `learned` changes (the caller persists toJSON() then)
+    this.revision = 0;      // bumps whenever `learned` or the strikes change (the caller persists toJSON() then)
+    this.free = null;       // latest prior-free outline {at, found, quad, outside, w, h} (noteFree)
+    this.disagree = 0;      // free checks in a row with a confident outline outside the box, same place
+    this.reuse = 0;         // free checks in a row contradicting the box's reused outline
+    this.fails = 0;         // unidentified probes in a row cropped from the box
+    this.slept = null;      // why the box went dormant this session: 'empty' | 'reuse' | 'free' | 'probes' | null
   }
 
   setMode(mode) { this.mode = mode; }
@@ -196,7 +220,77 @@ export class BoxPrior {
   noteFrame(det) {
     if (this.source !== 'learned' || this.confirmed) { this.misses = 0; return; }
     if (det && det.corners && (det.found || det.weak)) this.misses = 0;
-    else if (++this.misses >= this.probeAfter) this.dormant = true;
+    else if (++this.misses >= this.probeAfter) { this.dormant = true; this.slept = 'empty'; }
+  }
+
+  /** Is the self-healing watching? (an active box in 'auto' mode) */
+  get watching() { return this.mode === 'auto' && Boolean(this.learned) && this.active; }
+
+  /**
+   * A prior-free detect() result `det` of a w x h frame at time `at` (while watching), with the same
+   * frame's box result `box` {quad (w x h px | null), fromPrior (detect's anchor.fromPrior), card (a card,
+   * not the blank box)}. Keeps it for noteProbe() and counts the 'reuse' and 'free' signals (see the
+   * constructor). Returns true when this call put the box to sleep.
+   */
+  noteFree(det, w, h, at, box = null) {
+    if (!this.watching) { this.disagree = 0; this.reuse = 0; this.free = null; return false; }
+    const found = Boolean(det && det.found && det.corners);
+    const quad = found ? det.corners : null;
+    const outside = found && !this.inside(quad, w, h, true);
+    const prev = this.free;
+    this.free = { at, found, quad, outside, w, h };
+    if (!found) return false;
+    // the box result is the same outline: box mode tracks this card well, wherever it lies
+    const agrees = Boolean(box && box.card && box.quad && align(quad, box.quad).d <= this.freeDiff * cardW(box.quad));
+    if (box && box.card && box.quad) {
+      if (box.fromPrior && !agrees) {
+        if (++this.reuse >= this.disagreeAfter) { this.sleep('reuse'); return true; }
+      } else this.reuse = 0;
+    }
+    if (!outside || agrees) { this.disagree = 0; return false; }
+    const m = Math.min(w, h);
+    const same = prev && prev.found && prev.outside && prev.w === w && prev.h === h && dist(centre(prev.quad), centre(quad)) <= this.centreTol * m;
+    this.disagree = same ? this.disagree + 1 : 1;
+    if (this.disagree >= this.disagreeAfter) { this.sleep('free'); return true; }
+    return false;
+  }
+
+  /**
+   * A probe answer: outcome 'staged' | 'same' | 'unidentified' (others are ignored), quad = the probe's crop
+   * in w x h px, at = now on the noteFree clock. Only unidentified probes cropped from the box's reused
+   * outline count; staged/same reset the count. Returns true when this call put the box to sleep.
+   */
+  noteProbe(outcome, quad, w, h, at) {
+    if (!this.watching) { this.fails = 0; return false; }
+    if (outcome === 'staged' || outcome === 'same') { this.fails = 0; return false; }
+    if (outcome !== 'unidentified' || !quad) return false;
+    // only crops of the box's own reused outline count (a fresh box-mode outline follows the card)
+    const reused = this.opts(w, h).prior?.quad;
+    if (!reused || align(quad, reused).d > 0.03 * cardW(reused)) return false;
+    if (++this.fails < this.failAfter) return false;
+    const F = this.free;
+    if (!F || !F.found || F.w !== w || F.h !== h || !(at - F.at <= this.freeFreshMs)) return false;
+    if (align(F.quad, quad).d <= this.freeDiff * cardW(quad)) return false; // the crop was the card: it is just hard
+    this.sleep('probes');
+    return true;
+  }
+
+  /** @private dormant for this session; counts as one capture outside the box. */
+  sleep(why) {
+    this.dormant = true; this.slept = why; this.disagree = 0; this.reuse = 0; this.fails = 0;
+    if (++this.outside >= this.unlearnAfter) {
+      this.learned = null; this.outside = 0; this.confirmed = false; this.dormant = false; this.slept = null;
+    }
+    this.revision++;
+  }
+
+  /** @private judge()'s inside test: corners (w x h px) within the learned box (anyFlip: either reading orientation). */
+  inside(corners, w, h, anyFlip = false) {
+    const L = this.learned;
+    const m = Math.min(w, h), c = centre(corners), s = cardW(corners) / m, da = angDiff(cardAngle(corners), L.angle);
+    return sameAspect(w, h, L.aspect) && dist(c, [L.center[0] * w, L.center[1] * h]) <= this.outsideTol * m
+      && (anyFlip ? Math.min(da, 180 - da) : da) <= this.outsideAngle
+      && s >= L.size * this.outsideScale[0] && s <= L.size * this.outsideScale[1];
   }
 
   /** @private */
@@ -207,16 +301,11 @@ export class BoxPrior {
 
   /** @private accepted capture vs the learned box: confirm it, or count towards forgetting it. */
   judge(corners, w, h) {
-    const L = this.learned;
-    if (!L) return;
-    const m = Math.min(w, h), c = centre(corners), s = cardW(corners) / m;
-    const inside = sameAspect(w, h, L.aspect) && dist(c, [L.center[0] * w, L.center[1] * h]) <= this.outsideTol * m
-      && angDiff(cardAngle(corners), L.angle) <= this.outsideAngle
-      && s >= L.size * this.outsideScale[0] && s <= L.size * this.outsideScale[1];
-    if (inside) {
+    if (!this.learned) return;
+    if (this.inside(corners, w, h)) {
       this.outside = 0;
-      this.confirmed = true; this.dormant = false; this.misses = 0;
-      L.confidence++;
+      this.confirmed = true; this.dormant = false; this.slept = null; this.misses = 0; this.fails = 0; this.disagree = 0; this.reuse = 0;
+      this.learned.confidence++;
       return;
     }
     if (++this.outside >= this.unlearnAfter) {
@@ -268,7 +357,7 @@ export class BoxPrior {
     if (this.mode === 'box') return true;
     if (this.mode !== 'auto') return false;
     const src = this.source;
-    return src === 'caps' || (src === 'learned' && !this.dormant);
+    return (src === 'caps' || src === 'learned') && !this.dormant;
   }
 
   /** detect() options for the next frame: {mode:'box', prior} when active, else {} (free mode). */
@@ -305,30 +394,35 @@ export class BoxPrior {
     return L.quad.map(([x, y]) => [x * w, y * h]);
   }
 
-  /** Persistable state {v, center, angle, size, quad, aspect, confidence, learned_at}, or null when nothing is learned. */
+  /**
+   * Persistable state {v, center, angle, size, quad, aspect, confidence, learned_at, outside}, or null when nothing
+   * is learned (outside = the strikes towards forgetting, so a wrong box is forgotten across page loads too).
+   */
   toJSON() {
     const L = this.learned;
     if (!L) return null;
     return { v: PRIOR_VERSION, center: [...L.center], angle: L.angle, size: L.size, quad: L.quad ? L.quad.map((p) => [...p]) : null,
-      aspect: L.aspect, confidence: L.confidence, learned_at: L.learned_at };
+      aspect: L.aspect, confidence: L.confidence, learned_at: L.learned_at, outside: this.outside };
   }
 
   /** Restore toJSON() output (e.g. parsed from localStorage). Invalid input is ignored; returns whether it was used. */
   restore(data) {
     if (!data || typeof data !== 'object' || data.v !== PRIOR_VERSION) return false;
-    const { center, angle, size, quad, aspect, confidence, learned_at } = data;
+    const { center, angle, size, quad, aspect, confidence, learned_at, outside } = data;
     if (!isPt(center) || center.some((v) => v < 0 || v > 1) || !finite(angle) || !finite(size) || !(size > 0 && size <= 1.5)
       || !finite(aspect) || !(aspect > 0)) return false;
     if (quad != null && !(Array.isArray(quad) && quad.length === 4 && quad.every(isPt))) return false;
     this.learned = { center: [...center], angle, size, quad: quad ? quad.map((p) => [...p]) : null, aspect,
       confidence: finite(confidence) && confidence > 0 ? confidence : this.need, learned_at: typeof learned_at === 'string' ? learned_at : null };
-    this.outside = 0; this.confirmed = false; this.dormant = false; this.misses = 0;
+    this.outside = Number.isInteger(outside) && outside > 0 && outside < this.unlearnAfter ? outside : 0;
+    this.confirmed = false; this.dormant = false; this.slept = null; this.misses = 0; this.fails = 0; this.disagree = 0; this.reuse = 0; this.free = null;
     return true;
   }
 
   /** Forget the learned box and this session's captures. */
   forget() {
     this.caps = []; this.learned = null; this.outside = 0; this.confirmed = false; this.dormant = false; this.misses = 0; this.revision++;
+    this.free = null; this.disagree = 0; this.reuse = 0; this.fails = 0; this.slept = null;
   }
 }
 

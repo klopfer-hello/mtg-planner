@@ -301,6 +301,110 @@ describe("BoxPrior", () => {
     assert.equal(q.active, true, "a confirmed box never goes dormant");
   });
 
+  describe("self-healing (noteFree / noteProbe)", () => {
+    const restored = (o = {}) => { const q = new BoxPrior(o); q.restore(learned().toJSON()); return q; };
+    const reusedQ = (q) => q.opts(W, H).prior.quad;
+    const det = (corners) => ({ found: true, corners });
+    // the wrong learned box keeps "finding" its own outline (box mode reuses it) while the card lies elsewhere
+    const reuseBox = (q) => ({ quad: reusedQ(q), fromPrior: true, card: true });
+
+    test("deadlock: a reused box outline the free detector contradicts goes to sleep and earns a persisted strike", () => {
+      const q = restored();
+      for (let i = 0; i < 3; i++) assert.equal(q.noteFree(det(tableQ(1)), W, H, i * 600, reuseBox(q)), false);
+      assert.equal(q.active, true);
+      assert.equal(q.noteFree(det(tableQ(1)), W, H, 1800, reuseBox(q)), true);
+      assert.equal(q.active, false);
+      assert.equal(q.slept, "reuse");
+      assert.deepEqual(q.opts(W, H), {}, "free mode");
+      assert.equal(q.toJSON().outside, 1, "the strike is persisted");
+      const r = new BoxPrior();
+      r.restore(JSON.parse(JSON.stringify(q.toJSON())));
+      assert.equal(r.outside, 1);
+      assert.equal(r.active, true, "a new session tries the box again");
+    });
+
+    test("a box result that is not a card (blank box) or not the reused outline never counts as reuse", () => {
+      const q = restored();
+      for (let i = 0; i < 10; i++) q.noteFree(det(boxQ(0)), W, H, i * 600, { quad: placeCard(240, 426, 300, 20), fromPrior: true, card: false });
+      for (let i = 0; i < 10; i++) q.noteFree(det(boxQ(0)), W, H, i * 600, { quad: placeCard(240, 426, 300, 20), fromPrior: false, card: true });
+      assert.equal(q.active, true);
+    });
+
+    test("'free': a confident outline outside the box at the same place that box mode doesn't see", () => {
+      const q = restored();
+      // moving outlines don't add up
+      for (let i = 0; i < 6; i++) q.noteFree(det(tableQ(i)), W, H, i * 600, null);
+      assert.equal(q.active, true);
+      for (let i = 0; i < 4; i++) q.noteFree(det(tableQ(2)), W, H, 4000 + i * 600, { quad: null, fromPrior: false, card: false });
+      assert.equal(q.slept, "free");
+      assert.equal(q.active, false);
+    });
+
+    test("normal box use never sleeps: box result agrees with the free outline, either reading orientation", () => {
+      const q = restored();
+      for (let i = 0; i < 40; i++) {
+        const c = boxQ(i % 3), flipped = [c[2], c[3], c[0], c[1]];
+        q.noteFree(det(i % 2 ? flipped : c), W, H, i * 600, { quad: c, fromPrior: i % 4 === 0, card: true });
+        q.noteProbe("unidentified", c, W, H, i * 600 + 300); // a hard card, cropped from its own outline
+      }
+      // a card off the box that box mode still tracks (its outline = the free one)
+      for (let i = 0; i < 8; i++) q.noteFree(det(tableQ(1)), W, H, 30000 + i * 600, { quad: tableQ(1), fromPrior: false, card: true });
+      assert.equal(q.active, true);
+      assert.equal(q.outside, 0);
+      assert.equal(q.slept, null);
+    });
+
+    test("'probes': failAfter unidentified probes of the reused outline while the free outline differs", () => {
+      const q = restored();
+      q.noteFree(det(tableQ(1)), W, H, 0, null);
+      for (let i = 0; i < 4; i++) assert.equal(q.noteProbe("unidentified", reusedQ(q), W, H, 100 + i * 500), false);
+      q.noteProbe("staged", reusedQ(q), W, H, 2100); // an identified card resets the count
+      for (let i = 0; i < 4; i++) q.noteProbe("unidentified", reusedQ(q), W, H, 2200 + i * 500);
+      assert.equal(q.active, true);
+      assert.equal(q.noteProbe("unidentified", reusedQ(q), W, H, 2900), true);
+      assert.equal(q.slept, "probes");
+      assert.equal(q.active, false);
+
+      const s = restored(); // stale free outline (> freeFreshMs): no
+      s.noteFree(det(tableQ(1)), W, H, 0, null);
+      for (let i = 0; i < 6; i++) s.noteProbe("unidentified", reusedQ(s), W, H, 4000 + i * 500);
+      assert.equal(s.active, true);
+      const f = restored(); // fresh box-mode outlines (not the reused one) are just a hard card
+      f.noteFree(det(tableQ(1)), W, H, 0, null);
+      for (let i = 0; i < 6; i++) f.noteProbe("unidentified", boxQ(1), W, H, 100 + i * 100);
+      assert.equal(f.active, true);
+    });
+
+    test("a capture inside the box wakes it; unlearnAfter sleeps in a row (across sessions) forget it", () => {
+      const q = restored();
+      for (let i = 0; i < 4; i++) q.noteFree(det(tableQ(1)), W, H, i * 600, reuseBox(q));
+      assert.equal(q.active, false);
+      q.add(boxQ(2), W, H, true);
+      assert.equal(q.active, true);
+      assert.equal(q.slept, null);
+      assert.equal(q.outside, 0, "the box is right after all");
+
+      let saved = learned().toJSON();
+      for (let s = 1; s <= UNLEARN_AFTER; s++) {
+        const p = new BoxPrior();
+        assert.equal(p.restore(saved), true);
+        for (let i = 0; i < 4; i++) p.noteFree(det(tableQ(1)), W, H, i * 600, reuseBox(p));
+        assert.equal(p.slept, s < UNLEARN_AFTER ? "reuse" : null);
+        saved = p.toJSON();
+      }
+      assert.equal(saved, null, "forgotten");
+    });
+
+    test("only an active box in auto mode is watched", () => {
+      const q = new BoxPrior({ mode: "box" });
+      q.restore(learned().toJSON());
+      for (let i = 0; i < 6; i++) q.noteFree(det(tableQ(1)), W, H, i * 600, { quad: boxQ(0), fromPrior: true, card: true });
+      assert.equal(q.active, true);
+      const n = new BoxPrior();
+      for (let i = 0; i < 6; i++) assert.equal(n.noteFree(det(tableQ(1)), W, H, i * 600, null), false);
+    });
+  });
+
   test("in-session auto behaviour is the research one: a stray capture switches to free mode", () => {
     const p = learned();
     p.add(tableQ(0), W, H);

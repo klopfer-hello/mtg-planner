@@ -9,7 +9,7 @@ import {
   createScanSounds, defaultCardQuad, glareMap, mapToPhoto, photoMapping, quadSize, warpQuad, workSize,
 } from "../public/scanlib.js";
 import { ProbeController } from "../public/capture.js";
-import { PRIOR_STORAGE_KEY } from "../public/det/track.mjs";
+import { BoxPrior, PRIOR_STORAGE_KEY } from "../public/det/track.mjs";
 import { addNoise, background, drawCard, makeCard, placeCard } from "./helpers/detscenes.js";
 
 // ---------------------------------------------------------------------------
@@ -356,6 +356,71 @@ describe("createDetAnalyzer", () => {
     assert.deepEqual(next.an.captureOpts(), { preferPhoto: false });
     next.an.forgetPrior();
     assert.equal(storage.m.has(PRIOR_STORAGE_KEY), false);
+  });
+
+  const wrongQ = (dx = 0) => placeCard(VW * 0.6 + dx, VH * 0.42, VW * 0.4, 0, 0);
+  const awayQ = placeCard(VW * 0.35, VH * 0.72, VW * 0.45, 8, 0.01);
+  const wrongBox = () => {
+    const b = new BoxPrior();
+    for (let i = 0; i < 3; i++) b.add(wrongQ(i).map(([x, y]) => [x * (480 / VW), y * (480 / VW)]), 480, 853, true);
+    return b;
+  };
+  const wrong = wrongQ(2);
+
+  test("self-healing: a wrong learned box goes to sleep within seconds, persists the strike, and the card is tracked", () => {
+    // a box learned off-centre (another holder); the card now lies elsewhere on cloth
+    const storage = memStorage({ [PRIOR_STORAGE_KEY]: JSON.stringify(wrongBox().toJSON()) });
+    const { an, step } = rig({ storage, glare: false });
+    an.prior.confirmed = true; // as after a self-confirming staged probe: the empty-box dormancy never helps
+    const img = frame("away", VW, VH, "cloth", 23, awayQ);
+    let o, t = 0;
+    assert.equal(step(img).priorLearned, true);
+    for (let i = 0; i < 40 && !an.prior.slept; i++) { o = step(img); t += 125; }
+    assert.equal(an.prior.slept, "free", "asleep");
+    assert.ok(t <= 3000, `within ${t} ms`);
+    assert.equal(JSON.parse(storage.m.get(PRIOR_STORAGE_KEY)).outside, 1, "strike persisted");
+    for (let i = 0; i < 8; i++) o = step(img);
+    assert.equal(o.priorLearned, false);
+    assert.equal(o.priorSlept, "free");
+    assert.ok(o.found && maxErr(o.corners, awayQ) / cardW(awayQ) < 0.03, "the card itself is tracked");
+    an.reset(); // camera restart: the box is tried again, the strike stays
+    assert.equal(an.prior.slept, null);
+    assert.equal(an.prior.outside, 1);
+  });
+
+  test("self-healing: unidentified probes of the box outline put it to sleep (noteProbe, video px)", () => {
+    const storage = memStorage({ [PRIOR_STORAGE_KEY]: JSON.stringify(wrongBox().toJSON()) });
+    const { an, step } = rig({ storage, glare: false });
+    const o = step(frame("away", VW, VH, "cloth", 23, awayQ));
+    assert.equal(o.priorLearned, true);
+    assert.ok(maxErr(o.priorQuad, wrong) / cardW(wrong) < 0.02);
+    for (let i = 0; i < 4; i++) assert.equal(an.noteProbe("unidentified", o.priorQuad, { prior: true }), false);
+    assert.equal(an.noteProbe("unidentified", o.priorQuad, { prior: false }), false, "a probe from free mode doesn't count");
+    assert.equal(an.noteProbe("unidentified", o.priorQuad, { prior: true }), true);
+    assert.equal(an.prior.slept, "probes");
+    assert.equal(JSON.parse(storage.m.get(PRIOR_STORAGE_KEY)).outside, 1);
+  });
+
+  test("self-healing: a right box is kept over a long run of box cards", () => {
+    const storage = memStorage();
+    const { an, step } = rig({ storage, glare: false });
+    for (let c = 0; c < 3; c++) {
+      let o;
+      for (let i = 0; i < 6; i++) o = step(empty());
+      for (let i = 0; i < 8; i++) o = step(boxCard(40 + c, 1 + (i & 1)));
+      an.savePrior(o.corners);
+    }
+    const next = rig({ storage, glare: false });
+    for (let c = 0; c < 6; c++) {
+      for (let i = 0; i < 6; i++) next.step(empty());
+      for (let i = 0; i < 10; i++) {
+        const o = next.step(boxCard(50 + c, 1 + (i & 1)));
+        if (i === 9) next.an.noteProbe("unidentified", o.corners, { prior: o.priorLearned });
+      }
+    }
+    assert.equal(next.an.prior.slept, null);
+    assert.equal(next.an.prior.active, true);
+    assert.equal(next.an.prior.outside, 0);
   });
 
   test("blocked storage never breaks the analyzer", () => {

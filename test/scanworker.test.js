@@ -11,6 +11,7 @@ import {
   glareSummary, grabRegions, grayThumb, isAndroid, openCamera, regionPlan, regionQuad, CAPTURE_DEFAULTS, rotateGray, stripSharpness, warpQuad, workSize,
 } from "../public/scanlib.js";
 import { detect } from "../public/det/detect.mjs";
+import { BoxPrior, PRIOR_STORAGE_KEY } from "../public/det/track.mjs";
 import { addNoise, background, drawCard, makeCard, placeCard } from "./helpers/detscenes.js";
 
 // ---------------------------------------------------------------------------
@@ -331,6 +332,31 @@ describe("createDetAnalyzer: analyzeAsync", () => {
     assert.equal(jobs.length, 8);
     assert.ok(jobs.every((j) => j.op === "detect" && j.transfer.length === 1));
     assert.ok(a.analyze(9999).stable, "the card was tracked to stable");
+  });
+
+  test("with a detect worker the prior-free check runs there too and a wrong learned box sleeps like analyze()", async () => {
+    // a box learned off the card (centred enough to be learned), the card lies elsewhere
+    const box = new BoxPrior();
+    for (let i = 0; i < 3; i++) box.add(placeCard(W * 0.58 + i, H * 0.42, W * 0.4).map(([x, y]) => [x * (480 / W), y * (480 / W)]), 480, 853, true);
+    assert.ok(box.learned);
+    const saved = JSON.stringify(box.toJSON());
+    const mkStore = () => { const s = storage(); s.setItem(PRIOR_STORAGE_KEY, saved); return s; };
+    const jobs = [];
+    const detectWorker = {
+      available: () => true,
+      call: async (op, { img, opts }) => { jobs.push(opts); return { r: structuredClone(detect(img, opts)), d: img.d, ms: 1 }; },
+    };
+    const vA = { videoWidth: W, videoHeight: H, frame: frames[0] }, vB = { videoWidth: W, videoHeight: H, frame: frames[0] };
+    const a = createDetAnalyzer(vA, { makeCanvas, storage: mkStore() }), b = createDetAnalyzer(vB, { makeCanvas, storage: mkStore(), detectWorker });
+    a.prior.confirmed = b.prior.confirmed = true;
+    for (let i = 0; i < 30; i++) {
+      vA.frame = vB.frame = frames[i % 3];
+      const oa = a.analyze(i * 125), ob = await b.analyzeAsync(i * 125);
+      assert.equal(ob.priorLearned, oa.priorLearned, `@${i}`);
+      assert.deepEqual(ob.corners, oa.corners, `corners @${i}`);
+    }
+    assert.ok(a.prior.slept && b.prior.slept === a.prior.slept, `${a.prior.slept} / ${b.prior.slept}`);
+    assert.ok(jobs.some((o) => o.mode === "box") && jobs.some((o) => !o.mode), "box detect + prior-free check");
   });
 
   test("a failing detect worker drops that frame (null), an unavailable one falls back to analyze()", async () => {

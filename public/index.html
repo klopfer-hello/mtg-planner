@@ -5014,6 +5014,10 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
       if (outcome === "staged" && o?.accepted && gen === genRef.current) {
         try { detRef.current?.savePrior?.(p.quad); } catch { /* storage may be blocked */ }
       }
+      // unidentified probes in a row from a box the prior-free detector disagrees with put the box to sleep
+      if (gen === genRef.current) {
+        try { detRef.current?.noteProbe?.(res?.outcome ?? null, p.quad, { prior: Boolean(o?.priorLearned) }); } catch { /* advisory */ }
+      }
     } catch (e) {
       pc.failed(p.id);
       perfRef.current?.probe({ rtt: Date.now() - t0, error: true });
@@ -5091,7 +5095,7 @@ function CameraView({ lib, probeRef, detRef, autoAskRef = null, active, settings
       type: "frame", t: Date.now(), state: r?.state ?? null, hint: r?.hint ?? null,
       found: Boolean(o?.found), weak: Boolean(o?.weak), accepted: Boolean(o?.accepted), stable: Boolean(o?.stable),
       cmad: n1(r?.cmad), still: Boolean(r?.still), sharp: n1(o?.sharp), hold: Boolean(r?.hold), mode: o?.mode ?? null,
-      prior: Boolean(o?.priorLearned), probe: pc?.last ? { outcome: pc.last.outcome, reason: pc.last.reason, ms: pc.last.ms } : null,
+      prior: Boolean(o?.priorLearned), prior_slept: o?.priorSlept ?? null, probe: pc?.last ? { outcome: pc.last.outcome, reason: pc.last.reason, ms: pc.last.ms } : null,
       events: S.events.splice(0),
     };
     const session = S.session, seq = S.seq++;

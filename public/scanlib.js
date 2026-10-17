@@ -697,7 +697,7 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
  * accepted, stable, corners (smoothed, video px, TL,TR,BR,BL), rawCorners,
  * jitter, drift, mode, score, orientConf, thumb (24x40), cardThumb (12x16),
  * sharp, glare {advice, code, regions}, priorQuad (video px | null),
- * priorLearned (box mode active), now, ms, timing {main, grab, detect, sharp,
+ * priorLearned (box mode active), priorSlept ('empty'|'reuse'|'free'|'probes'|null), now, ms, timing {main, grab, detect, sharp,
  * mode, worker}}.
  *
  * analyzeAsync(now) is the same with detect() in opts.detectWorker (a
@@ -719,9 +719,18 @@ export function workSize(vw, vh, short = CAPTURE_DEFAULTS.workShort) {
  * capture to the prior first: the given video corners, else the last frame's
  * accepted track, once per stable run).
  *
+ * Self-healing (BoxPrior.noteFree/noteProbe): while the box is active, every
+ * freeCheckMs (600) the frame is also detected without the prior, and the UI
+ * hands each probe answer to noteProbe(outcome, quadV, {prior}). A box that the
+ * prior-free outlines keep contradicting, or that yields only unidentified
+ * probes while they disagree, sleeps for the session (free mode, the track is
+ * dropped) and earns a persisted strike towards forgetting it. Without this a
+ * wrong learned box never unlearned: box mode reused its outline, so nothing
+ * was staged and savePrior never ran (iPhone recording 2026-10-17).
+ *
  * @param {HTMLVideoElement|{videoWidth:number, videoHeight:number}} video
  * @param {object} [opts] {workShort, storage, makeCanvas (tests), prior/tracker (instances),
- *   priorOpts, trackerOpts, glare (true), glareDelayMs (800), glareEveryMs (1500), blankSharp (DET_BLANK_SHARP), now,
+ *   priorOpts, trackerOpts, glare (true), glareDelayMs (800), glareEveryMs (1500), blankSharp (DET_BLANK_SHARP), freeCheckMs (600), now,
  *   detectWorker, pixels, grabMode, frames, track, cloneVideo, chromium}
  *
  * An outline whose strip is blank (sharp < blankSharp) is reported as no card
@@ -907,6 +916,9 @@ export function createDetAnalyzer(video, opts = {}) {
   const tracker = opts.tracker || new QuadTracker(opts.trackerOpts || {});
   const blankSharp = opts.blankSharp ?? DET_BLANK_SHARP;
   const glareOn = opts.glare !== false, glareEveryMs = opts.glareEveryMs ?? 1500, glareDelayMs = opts.glareDelayMs ?? 800;
+  // prior-free check detect() while the box prior is active (BoxPrior.noteFree), at most every freeCheckMs
+  const freeCheckMs = opts.freeCheckMs ?? 600;
+  let freeAt = -Infinity;
   const detectWorker = opts.detectWorker || null, pixels = opts.pixels || null;
   const noGlare = () => ({ advice: null, code: "ok", regions: null });
   let work = null, workImg = null, last = null, wasStable = false, runId = 0, addedRun = -1;
@@ -1189,9 +1201,41 @@ export function createDetAnalyzer(video, opts = {}) {
     if (!g) return null;
     const po = prior.opts(g.W, g.H), td = clock();
     const r = detectSafe(g.img, po);
+    const fr = wantFree(po, now) ? detectSafe(g.img, {}) : null;
     const detectMs = clock() - td;
     const tk = trackStep(g, r, now);
-    return complete(g, po, r, now, tk, detectMs, 0);
+    return checked(complete(g, po, r, now, tk, detectMs, 0), fr, r, g, now);
+  }
+
+  // Self-healing box prior (BoxPrior.noteFree / noteProbe): a box that went to sleep drops the track (it
+  // held the box's outline) and is persisted (its strikes, or its removal once forgotten)
+  const wantFree = (po, now) => po.mode === "box" && prior.watching && now - freeAt >= freeCheckMs;
+  // the frame's FrameAnalysis `o` after the free check fr (null = none this frame) against the box result r
+  function checked(o, fr, r, g, now) {
+    if (!fr) return o;
+    freeAt = now;
+    const box = { quad: r.corners || null, fromPrior: Boolean(r.anchor?.fromPrior), card: Boolean(o.found) };
+    if (prior.noteFree(fr, g.W, g.H, now, box)) slept();
+    return o;
+  }
+  function slept() {
+    tracker.reset();
+    wasStable = false; runId++;
+    persistPrior();
+  }
+
+  /**
+   * A probe answer (capture.js outcome) for the probe cropped at quadV (video px) from a frame whose
+   * analysis said priorLearned (= the box was active then; others are ignored): failAfter unidentified ones
+   * in a row while the prior-free outline disagrees put the box to sleep. Returns true when it did.
+   */
+  function noteProbe(outcome, quadV, { prior: fromBox = true } = {}) {
+    const L = last;
+    if (!fromBox || !L || !quadV) return false;
+    const q = quadV.map(([x, y]) => [x * L.s, y * L.s]);
+    if (!prior.noteProbe(outcome, q, L.W, L.H, L.now)) return false;
+    slept();
+    return true;
   }
 
   // the clone path is chosen on the first frame (it needs no worker) and set up in the background;
@@ -1292,10 +1336,18 @@ export function createDetAnalyzer(video, opts = {}) {
     const po = prior.opts(g.W, g.H), td = clock();
     let out;
     try { out = await detectWorker.call("detect", { img: g.img, opts: po }, [g.img.d.buffer]); } catch { return null; }
-    const wait = clock() - td;
     g.img = { w: g.W, h: g.H, d: out.d };
+    let fr = null;
+    if (wantFree(po, now)) {
+      try {
+        const f = await detectWorker.call("detect", { img: g.img, opts: {} }, [g.img.d.buffer]);
+        g.img = { w: g.W, h: g.H, d: f.d };
+        fr = f.r;
+      } catch { return null; }
+    }
+    const wait = clock() - td;
     const tk = trackStep(g, out.r, now);
-    return complete(g, po, out.r, now, tk, Number.isFinite(out.ms) ? out.ms : wait, wait);
+    return checked(complete(g, po, out.r, now, tk, Number.isFinite(out.ms) ? out.ms : wait, wait), fr, out.r, g, now);
   }
 
   // track / bitmap path: the worker reads the frame
@@ -1330,10 +1382,18 @@ export function createDetAnalyzer(video, opts = {}) {
     }
     wgrabMode = out.mode || wgrabMode;
     const g = { vw, vh, W, H, s, img: { w: W, h: H, d: out.d }, t0, grabMs, mode: kind, wgrab: out.grabMs };
+    let fr = null;
+    if (wantFree(po, now)) {
+      try {
+        const f = await detectWorker.call("detect", { img: g.img, opts: {} }, [g.img.d.buffer]);
+        g.img = { w: W, h: H, d: f.d };
+        fr = f.r;
+      } catch { return null; }
+    }
     work = null;
     workImg = g.img;
     const tk = trackStep(g, out.r, now);
-    return complete(g, po, out.r, now, tk, out.ms, wait);
+    return checked(complete(g, po, out.r, now, tk, out.ms, wait), fr, out.r, g, now);
   }
 
   // tracker + prior for a detected frame: {tr, tracked, trackedV}
@@ -1384,7 +1444,7 @@ export function createDetAnalyzer(video, opts = {}) {
       }
     }
     const pq = (po.prior && po.prior.quad) || prior.learnedQuad(W, H);
-    last = { W, H, s, tr, seen, mode: r.mode || "free", runId };
+    last = { W, H, s, tr, seen, mode: r.mode || "free", runId, now };
     const total = clock() - g.t0;
     return {
       vw, vh, found: seen, weak: Boolean(seen && !tr.accepted), accepted: Boolean(seen && tr.accepted), stable,
@@ -1393,7 +1453,7 @@ export function createDetAnalyzer(video, opts = {}) {
       mode: r.mode || "free", score: Number.isFinite(r.score) ? r.score : null,
       orientConf: Number.isFinite(r.orientConf) ? r.orientConf : null,
       thumb: frameThumb(img), cardThumb: seen ? quadThumb(img, tr.corners) : null,
-      sharp, blank, glare, priorQuad: pq ? toVideo(pq, s) : null, priorLearned: Boolean(prior.active),
+      sharp, blank, glare, priorQuad: pq ? toVideo(pq, s) : null, priorLearned: Boolean(prior.active), priorSlept: prior.slept || null,
       now, ms: total,
       // main-thread ms (total minus the waits for the workers), per step (grab: this thread's frame
       // read; sharp: the work-frame strip sharpness; wgrab: the worker's frame read), and how the frame
@@ -1439,6 +1499,10 @@ export function createDetAnalyzer(video, opts = {}) {
       else if (L.seen && L.tr.accepted && L.runId !== addedRun) q = L.tr.corners;
       if (q) { prior.add(q, L.W, L.H, L.mode === "box"); addedRun = L.runId; }
     }
+    persistPrior();
+  }
+
+  function persistPrior() {
     try {
       const j = prior.toJSON();
       if (j) storage?.setItem(PRIOR_STORAGE_KEY, JSON.stringify(j));
@@ -1449,8 +1513,8 @@ export function createDetAnalyzer(video, opts = {}) {
   /** New session (camera restart): tracker cleared, the learned box re-read from storage. */
   function reset() {
     tracker.reset();
-    prior.caps = []; prior.misses = 0; prior.dormant = false;
-    wasStable = false; last = null; addedRun = -1;
+    prior.caps = []; prior.misses = 0; prior.dormant = false; prior.slept = null; prior.fails = 0; prior.disagree = 0; prior.free = null;
+    wasStable = false; last = null; addedRun = -1; freeAt = -Infinity;
     glare = noGlare(); glareAt = -Infinity; stableSince = null; runId++;
     loadPrior();
   }
@@ -1541,7 +1605,7 @@ export function createDetAnalyzer(video, opts = {}) {
 
   loadPrior();
   return {
-    analyze, analyzeAsync, prior, tracker, reset, glareOf, savePrior, loadPrior, forgetPrior, captureOpts, frameJpeg, frameJpegAsync,
+    analyze, analyzeAsync, prior, tracker, reset, glareOf, savePrior, loadPrior, forgetPrior, noteProbe, captureOpts, frameJpeg, frameJpegAsync,
     grabInfo, crop, close, get path() { return path; },
   };
 }
