@@ -13,7 +13,8 @@ import path from "node:path";
 
 import { SCHEMA_VERSION, cardPrice, getAppMeta, openDb, setAppMeta, stats, transaction } from "./lib/db.js";
 import { QUERY_HELP, SECTION_BYS, collectionSections, searchCollection } from "./lib/query.js";
-import { CARD_FACTS_META, IMPORT_MODES, backfillCardFacts, cardFactsPending, importManaBoxCsv, refreshOwnedCards } from "./lib/manabox.js";
+import { CARD_FACTS_META, IMPORT_MODES, backfillCardFacts, cardFactsPending, importManaBoxCsv, refreshOwnedCards, tokenFactsPending } from "./lib/manabox.js";
+import { accessoriesForRows, createAccessoryFetcher, ensureAccessoryData } from "./lib/accessories.js";
 import { syncEnglishPrices } from "./lib/prices.js";
 import {
   DECK_STATUSES, DeckError, bracketVerdict, cardUsage, deckComboRequest, deckDetail, deckPower, draftDeck, eurForFinish, exportDeck, listDecks,
@@ -325,16 +326,16 @@ async function runCardFacts() {
   if (restoring || cardFactsRunning) return scheduleCardFacts(CARD_FACTS_RETRY_MS);
   cardFactsRunning = true;
   try {
-    if (!cardFactsPending(db).length && getAppMeta(db, CARD_FACTS_META)) return;
+    if (!cardFactsPending(db).length && !tokenFactsPending(db).length && getAppMeta(db, CARD_FACTS_META)) return;
     const r = await backfillCardFacts(() => db, {
       runChunk: (fn) => {
         if (restoring) throw new HttpError(503, "restore running");
         return exclusive(fn);
       },
     });
-    if (r.refreshed || r.skipped) console.log(`[cards] v9 card facts: ${r.refreshed} refreshed, ${r.skipped} without a Game Changer flag`);
+    if (r.refreshed || r.skipped) console.log(`[cards] card facts (v9/v15): ${r.refreshed} refreshed (incl. tokens), ${r.skipped} skipped`);
   } catch (err) {
-    console.warn(`[cards] v9 card facts: ${err.message}; retrying in ${CARD_FACTS_RETRY_MS / 1000} s`);
+    console.warn(`[cards] card facts: ${err.message}; retrying in ${CARD_FACTS_RETRY_MS / 1000} s`);
     cardFactsRunning = false;
     return scheduleCardFacts(CARD_FACTS_RETRY_MS);
   } finally {
@@ -382,8 +383,28 @@ function getDeckOr404(id) {
   for (const c of detail.cards) c.prices = parseJsonField(c.prices, null);
   // Missing or stale combos: fetch in the background (the UI re-reads once after a few seconds).
   if (detail.combos?.needs_fetch && detail.spellbook_request) spellbook.ensure(detail.spellbook_request);
+  // Tokens & extras whose card/token rows are missing: same pattern.
+  const acc = detail.accessories;
+  if (acc?.fetch_ids.length) {
+    tokenFetcher.ensure(acc.fetch_ids);
+    acc.status = tokenFetcher.status(acc.fetch_ids);
+  }
   return detail;
 }
+
+// Tokens & extras (lib/accessories.js): deck reads only use cached card rows; the deck
+// cards without all_parts and the token printings they name are fetched here in the
+// background (/cards/collection, 2 req/s), written through exclusive() (busy → retried
+// in 5 s), never during a restore; off with the scheduler (SCHEDULER_ENABLED=false).
+const tokenFetcher = createAccessoryFetcher({
+  db: () => db,
+  write: (fn) => {
+    if (restoring) throw new HttpError(503, "restore running");
+    return exclusive(fn);
+  },
+  enabled: () => !shuttingDown && schedulerConfig().enabled,
+  log: console,
+});
 
 // Commander Spellbook (lib/spellbook.js): combos for the bracket and score.
 // Deck reads only look at the cache; this scheduler fills it in the background,
@@ -460,8 +481,12 @@ async function evaluateDeck(req) {
   }
   const combos = draft.request ? await spellbook.evaluate(draft.request, { waitMs: 8000 }) : undefined;
   const p = deckPower(db, draft.deck, draft.rows, { combos });
+  // Tokens & extras: fetch what the draft's cards miss (≤4 s, errors → card text only).
+  await ensureAccessoryData(db, draft.rows, { timeoutMs: 4000 });
+  const accessories = accessoriesForRows(db, draft.rows.map(({ all_parts: _p, ...r }) => r));
+  if (accessories.fetch_ids.length) accessories.status = "unavailable";
   return {
-    stats: p.stats, power: p.power, combos: p.combos, unresolved: draft.unresolved, parse_errors: draft.parse_errors,
+    stats: p.stats, power: p.power, combos: p.combos, accessories, unresolved: draft.unresolved, parse_errors: draft.parse_errors,
     ...(target != null ? { verdict: bracketVerdict(p.power, target) } : {}),
   };
 }

@@ -37,6 +37,9 @@ Decks can be exported as a text list you can import elsewhere.
 - You can set the **commander** (up to two for partner/background pairs;
   legendary creatures in the deck are suggested) and move cards between
   boards.
+- A **cover picture**: the commander, else the most expensive card (EUR,
+  basic lands never). The deck list shows it as a thumbnail on phones and as
+  the card art on wider screens.
 
 ## Deck stats
 
@@ -51,6 +54,32 @@ Open **Stats** on any deck (every format):
 - The commander and a companion are shown as chips. Side and maybe boards are
   not counted.
 - Cards without card data yet are listed as **unknown**, never as free.
+
+## Tokens & extras
+
+Open **Tokens & extras** on any deck (also while you only plan it) to see what
+you need on the table besides the cards:
+
+- **Tokens**: picture, name, power/toughness, which cards make them
+  (*from Battle Screech ×4*), roughly how many to have ready (*have ~16*) and
+  how many token cards you own, with their binder (*you own 3 (Tokens)*).
+- **Counters and markers**: +1/+1 and −1/−1 counters, loyalty, poison,
+  energy, lore, time, shield, oil and other named counters, dice (with their
+  size), coins, the Monarch, the Initiative, Day/Night, City's Blessing,
+  dungeons, The Ring, emblems, face-down cards and token copies. Each names the
+  cards that need it.
+- The estimate is a rough guide: copies × tokens per card, twice for
+  flashback and for triggered or activated abilities, *X* effects count 2,
+  capped at 20.
+- Sideboard cards count and are marked *side*; the maybeboard is left out.
+- Where the data comes from: Scryfall's list of the tokens a card makes and
+  the token cards themselves (fetched once in the background and cached),
+  else the card text. Without a connection the names and counts still come
+  from the card text.
+- The **Build list** ends with a *Tokens & extras* group: token cards you own
+  per binder, the rest as *need*, then the counters and markers. They can be
+  ticked but don't count towards *picked*.
+- The planner sees a short *Tokens & extras* line for saved decks and drafts.
 
 ## Bracket and power score
 
@@ -227,7 +256,9 @@ same-origin request.
 
 | Route | |
 | --- | --- |
-| `GET /api/decks/:id/build` | the build list: `{deck_id, name, status, box_binder, total, picked, complete, movable_picked, groups: [{key, kind, title, binder?, quantity, picked, lines: [{key, source, name, quantity, picked, oracle_id, scryfall_id, commander, binder?, decks?, price_eur?}]}]}`; `kind` is `binder`, `other`, `basics`, `buy` or `box` |
+| `GET /api/decks/:id` | the deck; adds `cover: {scryfall_id, name, image_small, image_normal, image_art, source}` (`source` is `commander` or `top`; null without a card image; the rows of `GET /api/decks` carry it too) and `accessories: {status, tokens: [{key, name, type_line, pt, colors, oracle_text, image_small, scryfall_ids, source, from: [{name, quantity, side?}], estimate, estimate_note, side_only?, owned: {quantity, binders: [{binder, quantity}]}}], markers: [{key, label, kind, note?, sizes?, from, side_only?}], maybe_skipped, unknown}`; `status` is `ok`, `pending` (token data is being fetched: read again after a few seconds) or `unavailable` (card text only) |
+| `POST /api/decks/evaluate` | also returns `accessories` for the draft |
+| `GET /api/decks/:id/build` | the build list: `{deck_id, name, status, box_binder, total, picked, complete, movable_picked, groups: [{key, kind, title, binder?, quantity, picked, lines: [{key, source, name, quantity, picked, oracle_id, scryfall_id, commander, binder?, decks?, price_eur?}]}]}`; `kind` is `binder`, `other`, `basics`, `buy`, `box` or `tokens` (token lines with `token`, `need`; marker lines with `marker`; not counted in `total`/`picked`) |
 | `PUT /api/decks/:id/build/picks {key, source, quantity}` | tick (`quantity` = the line's copies) or untick (`0`) one line; returns the list; 404 when the line is gone |
 | `DELETE /api/decks/:id/build/picks` | untick everything; returns the list |
 | `POST /api/decks/:id/to-binder {binder?, confirm_master?, picked_only?}` | *Put into deck box*; `picked_only: true` moves only the cards ticked in a binder group (400 when none) |

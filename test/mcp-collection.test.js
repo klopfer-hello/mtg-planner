@@ -483,6 +483,7 @@ describe("mcp-collection.js deck power", () => {
     assert.match(r.text, /\nScore [\d.]+\/10: speed [\d.]+\/1 · fast mana [\d.]+\/1\.75 · tutors 0\/1 · combos 1\.5\/2 · interaction/);
     assert.match(r.text, /\nNot Commander-legal: .*not 100/);
     assert.match(r.text, /\nCombos \(Commander Spellbook\): Sol Ring \+ Counterspell \(3 mana\)/);
+    assert.match(r.text, /\nTokens & extras: also Proliferate\.\n/, "tokens & extras of the draft (Atraxa proliferates)");
     assert.match(r.text, /\nTarget bracket 3: OVER - 2-card combo Sol Ring \+ Counterspell/);
     assert.equal(calls.length, 1);
     assert.deepEqual(Object.keys(calls[0].body).sort(), ["commanders", "main"]);

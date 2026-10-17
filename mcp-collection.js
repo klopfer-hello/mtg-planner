@@ -35,6 +35,7 @@ import { getPrinting, openIndex } from "./lib/cardindex.js";
 import { fetchCollectionPolitely } from "./lib/manabox.js";
 import { WishlistError, addWishlistItem, listWishlist, wishlistShopping } from "./lib/wishlist.js";
 import { deckVersion, listDeckVersions } from "./lib/deckhistory.js";
+import { accessoriesForRows, accessoriesText, ensureAccessoryData } from "./lib/accessories.js";
 
 const VERSION = process.env.APP_VERSION || "dev";
 const DEFAULT_PROTOCOL = "2025-06-18";
@@ -157,7 +158,7 @@ const POWER_TEXT_HELP =
   "'Bracket: N <label> (...) - <the rules that set it, with cards>' (≥N = combos not checked yet, may be higher; tutors " +
   "never set the bracket; Brackets 1 and 5 are only set by the user, the app hints 'looks cEDH-like'; Commander " +
   "Spellbook's own rating is a second opinion only), 'Score x/10: <8 categories points/max>' and 'Not Commander-legal: ...' " +
-  "when there are problems.";
+  "when there are problems. 'Tokens & extras:' = tokens to have ready (~estimate, owned copies) and counters/dice/markers the cards need.";
 
 const TOOLS = [
   {
@@ -776,12 +777,24 @@ function targetBracket(v) {
  * deckDetail with its combos checked when they are missing or stale: one
  * Spellbook call (shared settings, slots and backoff), waiting at most
  * COMBO_WAIT_MS; on timeout/offline the text says "combos not checked".
+ * Missing tokens & extras data (all_parts, token rows) is fetched too, as long.
  */
-async function detailWithCombos(d, id) {
-  const detail = deckDetail(d, id);
-  if (!detail?.combos?.needs_fetch || !detail.spellbook_request) return detail;
-  await combos().evaluate(detail.spellbook_request, { waitMs: COMBO_WAIT_MS });
-  return deckDetail(d, id);
+async function detailWithCombos(d, id, { withCombos = true } = {}) {
+  let detail = deckDetail(d, id);
+  if (!detail) return detail;
+  const extras = detail.accessories?.fetch_ids.length ? ensureAccessoryData(d, detail.cards, { timeoutMs: COMBO_WAIT_MS }) : null;
+  const combo = withCombos && detail.combos?.needs_fetch && detail.spellbook_request
+    ? combos().evaluate(detail.spellbook_request, { waitMs: COMBO_WAIT_MS }) : null;
+  if (!extras && !combo) return detail;
+  await Promise.all([extras, combo]);
+  detail = deckDetail(d, id);
+  return withExtrasStatus(detail);
+}
+
+/** Token data still missing after a fetch attempt: the text says it came partly from card text. */
+function withExtrasStatus(detail) {
+  if (detail?.accessories?.fetch_ids.length) detail.accessories.status = "unavailable";
+  return detail;
 }
 
 async function getDeck(args) {
@@ -860,6 +873,9 @@ async function evaluateDeckTool(args) {
   }
   const view = draft.request ? await combos().evaluate(draft.request, { waitMs: COMBO_WAIT_MS }) : undefined;
   const p = deckPower(d, draft.deck, draft.rows, { combos: view });
+  await ensureAccessoryData(d, draft.rows, { timeoutMs: COMBO_WAIT_MS });
+  const acc = accessoriesForRows(d, draft.rows.map(({ all_parts: _p, ...r }) => r));
+  if (acc.fetch_ids.length) acc.status = "unavailable";
   const counts = BOARDS.map((b) => `${b} ${draft.rows.filter((r) => r.board === b).reduce((a, r) => a + r.quantity, 0)}`).join(", ");
   const lines = [`Draft${draft.deck.format ? ` [${draft.deck.format}]` : ""} (not saved): ${counts}.${p.power.commander ? "" : " Not a Commander deck: stats only (no bracket or score)."}`];
   if (draft.unresolved.length) lines.push(`Not found on Scryfall (check spelling; left out of the checks): ${draft.unresolved.join("; ")}`);
@@ -869,6 +885,8 @@ async function evaluateDeckTool(args) {
     const top = p.combos.items.slice(0, 5).map((c) => `${c.cards.join(" + ")} (${c.assembly_mv ?? "?"} mana)`);
     lines.push(`Combos (Commander Spellbook): ${top.join("; ")}${p.combos.items.length > 5 ? "; ..." : ""}`);
   }
+  const extras = accessoriesText(acc);
+  if (extras) lines.push(extras);
   if (target) lines.push(bracketVerdict(p.power, target));
   return lines.join("\n");
 }
@@ -896,7 +914,7 @@ async function saveDeckTool(args) {
     lines.push(`Could not resolve ${saved.unresolved.length} name(s) on Scryfall (kept as unknown cards — check spelling): ${saved.unresolved.join("; ")}`);
   }
   // With a target the verdict needs the combos (usually cached by the evaluate_deck run before).
-  const detail = target ? await detailWithCombos(d, saved.id) : deckDetail(d, saved.id);
+  const detail = await detailWithCombos(d, saved.id, { withCombos: Boolean(target) });
   lines.push("", deckToText(detail));
   if (target) lines.push("", bracketVerdict(detail.power, target));
   return lines.join("\n");

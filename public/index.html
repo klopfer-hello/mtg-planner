@@ -424,6 +424,22 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 }
 .deck-item:hover { border-color: var(--accent); }
 .deck-item .t { font-weight: 700; font-size: 1.02rem; overflow-wrap: anywhere; }
+/* Deck cover: a thumb at the row start on phones, the art crop as a banner on desktop tiles. */
+.deck-item { grid-template-columns: 44px minmax(0, 1fr); column-gap: 12px; align-items: start; }
+.deck-item .body { display: grid; gap: 6px; min-width: 0; }
+.deck-item .cover { width: 44px; }
+.deck-item .cover picture, .deck-title .cover picture { display: contents; }
+.deck-title { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.deck-title .cover { width: 48px; }
+.deck-title h2 { min-width: 0; }
+@media (min-width: 768px) {
+  .deck-item { grid-template-columns: minmax(0, 1fr); padding: 0 0 14px; overflow: hidden; align-content: start; }
+  .deck-item .cover { width: 100%; aspect-ratio: 626 / 300; border-radius: 0; }
+  .deck-item .cover img { object-position: 50% 27%; }
+  .deck-item .cover img.art { object-position: 50% 40%; }
+  .deck-item .cover .ph svg { width: 36px; height: 36px; }
+  .deck-item .body { padding: 0 16px; }
+}
 .deck-head { display: grid; gap: 10px; }
 .deck-head h2 { font-size: 1.4rem; overflow-wrap: anywhere; }
 /* Deck power (v0.7.0): bracket/score badges, PowerSheet, stats charts.
@@ -477,6 +493,19 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 .pw-combos li { overflow-wrap: anywhere; }
 .pw-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: .88rem; }
 .deck-stats > summary { color: var(--text); }
+.deck-extras > summary { color: var(--text); }
+.deck-extras .body { display: grid; gap: 12px; margin-top: 8px; min-width: 0; }
+.token-grid { display: grid; gap: 10px; min-width: 0; }
+@media (min-width: 768px) { .token-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); } }
+.token-tile { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 10px; align-items: start; min-width: 0; }
+.token-tile .cover { width: 56px; }
+.token-tile .cover .ph { font-weight: 800; font-size: .9rem; }
+.token-tile .info { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.token-tile .nm { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ok-text { color: var(--ok); }
+.extra-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+.extra-list li { display: grid; gap: 2px; overflow-wrap: anywhere; }
+.extra-list li .badge { justify-self: start; }
 .deck-stats .body { display: grid; gap: 14px; margin-top: 8px; min-width: 0; }
 .curve-chart { width: 100%; max-width: 520px; height: auto; display: block; }
 .curve-chart text { font-family: var(--font); }
@@ -2530,6 +2559,24 @@ function DeckNeedBadges({ d }) {
   );
 }
 
+/**
+ * Deck cover (GET /api/decks cover): the commander, else the most expensive card. Phones: a card
+ * thumb; desktop list tiles: the art crop (`banner`). No card image → a deck icon.
+ */
+function DeckCover({ cover, banner = true }) {
+  const small = cover?.image_small || cover?.image_normal;
+  return (
+    <span className="cover" aria-hidden="true" title={cover ? `${cover.source === "commander" ? "Commander" : "Most valuable card"}: ${cover.name}` : undefined}>
+      {small ? (
+        <picture>
+          {banner && cover.image_art && <source media="(min-width: 768px)" srcSet={cover.image_art} />}
+          <img src={small} alt="" loading="lazy" decoding="async" width="146" height="204" className={banner && cover.image_art ? "art" : undefined} />
+        </picture>
+      ) : <span className="ph"><Icon.decks /></span>}
+    </span>
+  );
+}
+
 function DeckList({ dataVersion, onOpen, refreshKey }) {
   const [decks, setDecks] = useState(null);
   const [error, setError] = useState(null);
@@ -2571,6 +2618,8 @@ function DeckList({ dataVersion, onOpen, refreshKey }) {
         <div className="deck-list">
           {decks.map((d) => (
             <button key={d.id} type="button" className="deck-item" onClick={() => onOpen(d.id)}>
+              <DeckCover cover={d.cover} />
+              <span className="body">
               <span className="t">{d.name}</span>
               <span className="row small">
                 <StatusBadge status={d.status} />
@@ -2582,6 +2631,7 @@ function DeckList({ dataVersion, onOpen, refreshKey }) {
                 <span className="muted">{plural(d.card_count, "card")}</span>
                 {d.value_eur != null && <span className="muted" title="Value of main deck, commander and sideboard (EUR prices)">· <b style={{ color: "var(--text)" }}>{fmtEur(d.value_eur)}</b></span>}
                 <span className="muted">· updated {fmtAgo(d.updated_at)}</span>
+              </span>
               </span>
             </button>
           ))}
@@ -3099,6 +3149,7 @@ const BUILD_GROUP_HINT = {
   basics: "Not enough in the collection: take them from your basic lands.",
   buy: "You don't own these.",
   box: "Already where the deck lives.",
+  tokens: "Tokens and markers to bring. Not counted in the progress.",
 };
 
 /**
@@ -3201,6 +3252,9 @@ function BuildSheet({ deck, onClose, onSetBuilt, onCollectionChanged }) {
                         <span className="q">{l.quantity}×</span>
                         <span className="nm"><b>{l.name}</b>{l.commander && <span className="badge accent">commander</span>}
                           {g.kind === "other" && <span className="small muted">in {l.binder || UNSORTED}{asList(l.decks).length ? ` · ${asList(l.decks).join(", ")}` : ""}</span>}
+                          {l.token && l.pt && <span className="badge">{l.pt}</span>}
+                          {l.token && <span className="small muted">{l.need ? `need · you own none${l.estimate_note ? ` · ${l.estimate_note}` : ""}` : `in ${l.binder || UNSORTED}`}</span>}
+                          {l.marker && asList(l.from).length > 0 && <span className="small muted">{asList(l.from).join(", ")}</span>}
                         </span>
                         {g.kind === "buy" && <span className="p small muted">{l.price_eur == null ? "" : fmtEur(l.price_eur * l.quantity)}</span>}
                       </button>
@@ -3240,7 +3294,7 @@ function patchPick(list, id, quantity) {
       gd += n - l.picked;
       return { ...l, picked: n };
     });
-    delta += gd;
+    if (g.kind !== "tokens") delta += gd;
     if (g.kind === "binder") movable += gd;
     return gd ? { ...g, lines, picked: g.picked + gd } : g;
   });
@@ -3871,6 +3925,65 @@ function DeckStats({ deck }) {
   );
 }
 
+const COLOUR_NAMES = { W: "white", U: "blue", B: "black", R: "red", G: "green" };
+const colourWords = (c) => (c ? c.split("").map((x) => COLOUR_NAMES[x] ?? x).join(" ") : "colorless");
+const fromCards = (from) => asList(from).map((f) => `${f.name}${f.quantity > 1 ? ` ×${f.quantity}` : ""}${f.side ? " (side)" : ""}`).join(", ");
+
+/**
+ * Collapsed "Tokens & extras" disclosure (deck.accessories): token tiles (image, P/T, which cards
+ * make them, how many to have ready, how many you own and where), then counters/dice/markers.
+ */
+function DeckExtras({ deck }) {
+  const a = deck?.accessories;
+  if (!a) return null;
+  const tokens = asList(a.tokens);
+  const markers = asList(a.markers);
+  if (!tokens.length && !markers.length && a.status !== "pending") return null;
+  const sum = [tokens.length && plural(tokens.length, "token"), markers.length && plural(markers.length, "extra", "extras")].filter(Boolean).join(" · ");
+  return (
+    <details className="disclosure deck-extras">
+      <summary>Tokens & extras{sum ? ` · ${sum}` : ""}</summary>
+      <div className="body">
+        {a.status === "pending" && <p className="small muted" role="status" style={{ margin: 0 }}>Checking token details…</p>}
+        {a.status === "unavailable" && <p className="small muted" style={{ margin: 0 }}>Token details aren't available right now: names come from the card text.</p>}
+        {tokens.length > 0 && (
+          <div className="token-grid">
+            {tokens.map((t) => {
+              const own = t.owned?.quantity ?? 0;
+              const where = asList(t.owned?.binders).map((b) => `${b.binder || UNSORTED}${asList(t.owned?.binders).length > 1 ? ` ${b.quantity}` : ""}`).join(", ");
+              return (
+                <div key={t.key} className="token-tile">
+                  <span className="cover" aria-hidden="true">
+                    {t.image_small ? <img src={t.image_small} alt="" loading="lazy" decoding="async" width="146" height="204" /> : <span className="ph">{t.pt || "T"}</span>}
+                  </span>
+                  <div className="info">
+                    <div className="nm"><b>{t.name}</b>{t.pt && <span className="badge">{t.pt}</span>}{t.side_only && <span className="badge">side</span>}</div>
+                    <span className="small muted">{t.pt ? `${colourWords(t.colors)} · ` : ""}{t.type_line || "Token"}</span>
+                    <span className="small">from {fromCards(t.from)}</span>
+                    <span className="small"><b>Have ~{t.estimate}{t.estimate >= 20 ? "+" : ""}</b> ready{t.estimate_note ? <span className="muted"> ({t.estimate_note})</span> : null}</span>
+                    <span className={`small ${own >= t.estimate ? "ok-text" : "muted"}`}>{own ? `You own ${own}${where ? ` (${where})` : ""}` : "You own none"}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {markers.length > 0 && (
+          <ul className="extra-list">
+            {markers.map((m) => (
+              <li key={m.key}>
+                <b>{m.label}</b>{m.side_only && <span className="badge">side</span>}
+                <span className="small muted">{fromCards(m.from)}{m.note ? ` · ${m.note}` : ""}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {a.maybe_skipped > 0 && <p className="small muted" style={{ margin: 0 }}>Maybeboard not included.</p>}
+      </div>
+    </details>
+  );
+}
+
 /** Settings → Online services: the Commander Spellbook combo check (shared by the server and the planner). */
 function SpellbookPanel({ health, dataVersion }) {
   const [enabled, setEnabled] = useState(null);
@@ -3944,7 +4057,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
   useEffect(load, [load, dataVersion]); // also after the planner saved this deck
   // Combos still pending (the server fetches them in the background): look again after 4 s, at most twice per deck.
   const pendingTries = useRef({ id, n: 0 });
-  const combosPending = deck?.id === id && deck?.combos?.status === "pending";
+  const combosPending = deck?.id === id && (deck?.combos?.status === "pending" || deck?.accessories?.status === "pending");
   useEffect(() => {
     if (pendingTries.current.id !== id) pendingTries.current = { id, n: 0 };
     if (!combosPending || pendingTries.current.n >= 2) return undefined;
@@ -4074,7 +4187,10 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
           <header className="deck-head">
             {!editing ? (
               <>
-                <h2>{deck.name}</h2>
+                <div className="deck-title">
+                  <DeckCover cover={deck.cover} banner={false} />
+                  <h2>{deck.name}</h2>
+                </div>
                 <div className="row small">
                   {deck.format && <span className="badge">{deck.format}</span>}
                   <SourceBadge source={deck.source} />
@@ -4147,6 +4263,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
             )}
             <DeckNeedNotice deck={deck} />
             <DeckStats deck={deck} />
+            <DeckExtras deck={deck} />
             <div className="row">
               <button type="button" className="btn primary" onClick={() => onAsk(deck)}><Icon.sparkle /> Ask the planner</button>
               {deck.cards.length > 0 && <button type="button" className="btn" onClick={() => setBuildOpen(true)}><Icon.checklist /> Build list</button>}
