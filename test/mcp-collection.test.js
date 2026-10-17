@@ -86,7 +86,7 @@ describe("mcp-collection.js", () => {
   test("lists exactly the documented, non-destructive tools", async () => {
     const { result } = await mcp.request("tools/list", {});
     const names = result.tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["check_owned", "collection_overview", "edit_copies", "evaluate_deck", "get_card", "get_deck", "list_binders", "list_decks", "save_deck", "search_collection", "shopping_list"]);
+    assert.deepEqual(names, ["add_to_wishlist", "check_owned", "collection_overview", "edit_copies", "evaluate_deck", "get_card", "get_deck", "list_binders", "list_decks", "list_wishlist", "save_deck", "search_collection", "shopping_list"]);
     for (const t of result.tools) {
       assert.equal(typeof t.description, "string");
       assert.equal(t.inputSchema?.type, "object", `${t.name} needs an object inputSchema`);
@@ -248,6 +248,22 @@ describe("mcp-collection.js", () => {
     assert.match(list2.text, /Izzet Test .*, \d+ shared with other built decks \(buy extra to play both\)/);
     const shop2 = await mcp.call("shopping_list");
     assert.match(shop2.text, /Izzet Test \[built\]: \d+ to buy, €\d+\.\d\d; \d+ shared with other built decks/);
+  });
+
+  test("wishlist: add (source claude, merge), list, shown in shopping_list; no removal tool", async () => {
+    assert.equal((await mcp.call("list_wishlist")).text, "The wishlist is empty.");
+    const add = await mcp.call("add_to_wishlist", { card: "Serra Angel", quantity: 2, max_price_eur: 1, note: "flyers" });
+    assert.equal(add.isError, false, add.text);
+    assert.match(add.text, /^Added wishlist item:\n  #\d+ 2x Serra Angel \(any printing\) \| owned 0 \| to buy 2, €0\.10 each \| max €1\.00 \(price is below max\) \| note: flyers/);
+    const again = await mcp.call("add_to_wishlist", { card: "Serra Angel" });
+    assert.match(again.text, /^Updated wishlist item:\n  #\d+ 3x Serra Angel/);
+    assert.match((await mcp.call("add_to_wishlist", { card: "Sol Ring" })).text, /GOT IT/);
+    const list = await mcp.call("list_wishlist");
+    assert.match(list.text, /^Wishlist: 2 items, 3 copies to buy for €0\.30; 1 already owned \(got it\):/);
+    assert.match((await mcp.call("shopping_list")).text, /Wishlist \(not for a deck\): 1 cards, €0\.30[^\n]*\n  3x Serra Angel \| €0\.10 each \(below the user's max price\)/);
+    assert.equal(ctx.db.prepare("SELECT source FROM wishlist WHERE name = 'Serra Angel'").get().source, "claude");
+    const bad = await mcp.call("add_to_wishlist", { card: "Serra Angel", collector_number: "33" });
+    assert.equal(bad.isError, true);
   });
 });
 

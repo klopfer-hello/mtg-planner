@@ -68,7 +68,12 @@ open the same main database file, which runs in WAL mode with a busy timeout.
   edit log and undo.
 - `lib/decks.js`: decklist parsing, name resolution (owned printings first),
   and ownership and missing-cost math.
-- `lib/scheduler.js`: the nightly index and price refresh.
+- `lib/scheduler.js`: the nightly index and price refresh and the daily value
+  snapshot.
+- `lib/finance.js`: value history (`value_history`, `value_history_binders`,
+  change-only `card_history`) and the Value tab views ([finance.md](finance.md)).
+- `lib/wishlist.js`: the wishlist (`wishlist` table): prices, owned counts,
+  the shopping-list section.
 - `lib/backups.js`: manual backups (`VACUUM INTO` + gzip, manifest,
   retention) and restore (validation, safety backup, file swap with rollback).
 - `lib/claude.js`: locates the runtime-installed CLI, spawns it per turn and
