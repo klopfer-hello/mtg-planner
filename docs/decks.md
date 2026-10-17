@@ -10,6 +10,7 @@ score) work.
 - [Bracket and power score](#bracket-and-power-score)
 - [Combo check (Commander Spellbook)](#combo-check-commander-spellbook)
 - [Idea vs. built decks](#idea-vs-built-decks)
+- [Deck boxes are reserved](#deck-boxes-are-reserved)
 - [To buy](#to-buy)
 - [Put into deck box](#put-into-deck-box)
 - [Build list](#build-list)
@@ -203,6 +204,33 @@ ManaBox deck binders start as built).
   decks** ("can be moved"), separate from what you still need **to buy**.
 - Two built decks that need more copies than you own are flagged as a
   **conflict**.
+- Copies in a **deck box** belong to that box: see below.
+
+## Deck boxes are reserved
+
+A precon or a boxed deck stays whole: its cards are not used for other decks.
+
+- Copies in a binder of type **Deck box** (see
+  [collection.md](collection.md#binders)) are **free only for the deck that
+  owns the box**.
+- Every other deck shows them as **in deck box <name> · can be moved** (⇄),
+  like copies another built deck has. They are never free and never "to buy".
+- A box **nobody owns** (e.g. `Commander Deck: …` with no deck in the app)
+  is reserved for every deck.
+- A built deck's own box and its claim count once: the deck takes its cards
+  from its own box first.
+- A deck box never makes a **conflict**; conflicts stay between built decks.
+- Basic lands stay free, also in a box.
+- To use a box's cards freely, set the binder's type to *Binder* (or Trade,
+  Bulk, Other) in its **⋯** menu.
+
+**Which deck owns a box?** The deck linked to it: binder **⋯ → Belongs to
+deck**, or *Put into deck box*. A ManaBox deck owns its ManaBox binder, and a
+binder named like the deck (or `Deck box: <deck>`) counts too. One box per
+deck, one deck per box. When a box's name looks like a deck's name
+(`Secret Lair Commander: Odds and Ends` ↔ `Secret Lair Commander Deck: Odds
+and Ends`), its page asks once: "Looks like the box of …? **Link** / **No**".
+It never links on its own. The deck page shows its box under the value.
 
 ## To buy
 
@@ -215,8 +243,8 @@ deck still needs and, across all built decks, what to buy with a € total (see
 **Put into deck box** moves the copies a built deck needs into a
 `Deck box: <name>` binder:
 
-- Unsorted copies are taken first, never copies out of another built deck's
-  box.
+- Unsorted copies are taken first, then plain binders. Never copies out of
+  another deck box (any deck's, linked or not) or another built deck's binder.
 - The box is remembered, also when the deck or the binder is renamed.
 - A ManaBox deck's own binder already counts as boxed.
 
@@ -227,7 +255,8 @@ an idea deck you are about to build.
 
 - Cards are grouped by the **binder** their free copies are in (Unsorted
   first). It uses the same order as *Put into deck box*.
-- **In other decks**: you own them, but another built deck has them.
+- **In other decks or boxes**: you own them, but another built deck or a deck
+  box has them ("in deck box … · reserved").
 - **Basic lands**: basics you don't own enough of.
 - **To buy**: cards you don't own, with prices.
 - **Already in …**: copies already in the deck box. They count as picked.
@@ -259,7 +288,7 @@ same-origin request.
 
 | Route | |
 | --- | --- |
-| `GET /api/decks/:id` | the deck; adds `cover: {scryfall_id, name, image_small, image_normal, image_art, source}` (`source` is `commander` or `top`; null without a card image; the rows of `GET /api/decks` carry it too) and `accessories: {status, tokens: [{key, name, type_line, pt, colors, oracle_text, image_small, scryfall_ids, source, from: [{name, quantity, side?}], estimate, estimate_note, side_only?, owned: {quantity, binders: [{binder, quantity}]}}], markers: [{key, label, kind, note?, sizes?, from, side_only?}], maybe_skipped, unknown}`; `status` is `ok`, `pending` (token data is being fetched: read again after a few seconds) or `unavailable` (card text only) |
+| `GET /api/decks/:id` | the deck; adds `cover: {scryfall_id, name, image_small, image_normal, image_art, source}` (`source` is `commander` or `top`; null without a card image; the rows of `GET /api/decks` carry it too) and `accessories: {status, tokens: [{key, name, type_line, pt, colors, oracle_text, image_small, scryfall_ids, source, from: [{name, quantity, side?}], estimate, estimate_note, side_only?, owned: {quantity, binders: [{binder, quantity}]}}], markers: [{key, label, kind, note?, sizes?, from, side_only?}], maybe_skipped, unknown}`; `status` is `ok`, `pending` (token data is being fetched: read again after a few seconds) or `unavailable` (card text only); deck boxes: `box {binder, via}` (the box this deck owns), per card `in_boxes [{binder, deck_id, deck_name, quantity}]` (other deck boxes holding it) and `in_use_box` (the part of `in_use` lying there), `in_use_box_count`, and `shopping.in_use[]` items add `boxes` and `in_box` |
 | `POST /api/decks/evaluate` | also returns `accessories` for the draft |
 | `GET /api/decks/:id/build` | the build list: `{deck_id, name, status, box_binder, total, picked, complete, movable_picked, groups: [{key, kind, title, binder?, quantity, picked, lines: [{key, source, name, quantity, picked, oracle_id, scryfall_id, commander, binder?, decks?, price_eur?}]}]}`; `kind` is `binder`, `other`, `basics`, `buy`, `box` or `tokens` (token lines with `token`, `need`; marker lines with `marker`; not counted in `total`/`picked`) |
 | `PUT /api/decks/:id/build/picks {key, source, quantity}` | tick (`quantity` = the line's copies) or untick (`0`) one line; returns the list; 404 when the line is gone |
