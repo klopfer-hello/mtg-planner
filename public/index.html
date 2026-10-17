@@ -498,6 +498,47 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 .value-grid .stat.total .v { color: var(--accent); }
 .cmd-suggest .chip svg, .chip svg { width: 18px; height: 18px; flex: none; }
 @media (max-width: 359px) { .deck-row { padding: 6px 4px; gap: 2px 8px; } .deck-row .end .price { min-width: 0; } }
+/* Build checklist + deck history */
+.build-progress { display: grid; gap: 6px; }
+.build-progress .bar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.build-progress .bar > span { display: block; height: 100%; background: var(--ok); transition: width .2s; }
+.build-group { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 10px 8px; }
+.build-group > summary { display: flex; align-items: center; gap: 8px; min-height: 48px; cursor: pointer; font-weight: 700; list-style: none; }
+.build-group > summary::-webkit-details-marker { display: none; }
+.build-group > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+.build-group[open] > summary::before { transform: rotate(90deg); }
+.build-group .gname { display: flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
+.build-group .gname svg { width: 18px; height: 18px; flex: none; color: var(--muted); }
+.build-lines { display: grid; }
+.build-line {
+  appearance: none; display: grid; grid-template-columns: 28px auto minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  width: 100%; min-height: 52px; padding: 6px 4px; border: 0; border-top: 1px solid var(--border); background: none;
+  color: inherit; text-align: left; cursor: pointer; font: inherit;
+}
+.build-line:disabled { cursor: default; }
+.build-line .tick { width: 26px; height: 26px; border: 2px solid var(--border); border-radius: 7px; display: grid; place-items: center; }
+.build-line .tick svg { width: 18px; height: 18px; }
+.build-line.on .tick { background: var(--ok); border-color: var(--ok); color: #fff; }
+.build-line.on .nm b { color: var(--muted); text-decoration: line-through; }
+.build-line .q { font-weight: 800; color: var(--muted); font-variant-numeric: tabular-nums; }
+.build-line .nm { min-width: 0; display: flex; gap: 2px 8px; align-items: center; flex-wrap: wrap; }
+.build-line .nm b { font-weight: 600; overflow-wrap: anywhere; }
+.build-line .p { font-variant-numeric: tabular-nums; }
+.build-end { padding-top: 4px; }
+.version-row {
+  appearance: none; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: inherit; text-align: left; cursor: pointer; font: inherit;
+}
+.version-row:hover { background: var(--surface-2); }
+.version-row .vbody { display: grid; gap: 2px; overflow-wrap: anywhere; }
+.diff-h { margin: 4px 0 0; font-size: .95rem; }
+.diff-board h4 { margin: 0 0 4px; font-size: .85rem; color: var(--muted); }
+.diff-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: .9rem; }
+.diff-list li { display: flex; gap: 8px; overflow-wrap: anywhere; }
+.diff-list .sym { width: 1em; flex: none; font-weight: 800; text-align: center; }
+.diff-list .add .sym { color: var(--ok); }
+.diff-list .rem .sym { color: var(--bad); }
+.diff-list .chg .sym { color: var(--warn); }
 .cmd-suggest .chip { max-width: 100%; text-align: left; overflow-wrap: anywhere; height: auto; min-height: 40px; padding: 6px 12px; }
 .action-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
 .action-grid .btn { white-space: normal; text-align: center; line-height: 1.2; }
@@ -1276,6 +1317,8 @@ const Icon = {
   bolt: () => <Svg><path d="M13 2L5 14h6l-1 8 8-12h-6z" /></Svg>,
   undo: () => <Svg><path d="M9 14L4 9l5-5" /><path d="M4 9h11a5 5 0 0 1 0 10h-3" /></Svg>,
   check: () => <Svg><path d="M5 12.5l4.5 4.5L19 7" /></Svg>,
+  history: () => <Svg><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" /><path d="M12 8v4l3 2" /></Svg>,
+  checklist: () => <Svg><path d="M4 6l1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17M11 6h9M11 12h9M11 18h9" /></Svg>,
   minus: () => <Svg><path d="M5 12h14" /></Svg>,
   more: () => <Svg><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></Svg>,
   crown: () => <Svg><path d="M4 18h16M5 15l-1-9 5 4 3-6 3 6 5-4-1 9z" /></Svg>,
@@ -2572,7 +2615,7 @@ function DeckShopping({ deck, onOpenDeck }) {
 }
 
 /** POST /api/decks/:id/to-binder: gather the deck's owned copies into one binder. */
-function DeckBoxSheet({ deck, onClose, onDone }) {
+function DeckBoxSheet({ deck, pickedOnly = false, onClose, onDone }) {
   const [name, setName] = useState(deck.box_binder || `Deck box: ${deck.name}`.slice(0, 100));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -2583,7 +2626,7 @@ function DeckBoxSheet({ deck, onClose, onDone }) {
     if (!name.trim() || busy) return;
     setBusy(true); setError(null);
     try {
-      const res = await guarded((confirm) => api(`/api/decks/${deck.id}/to-binder`, { method: "POST", json: { binder: name.trim(), confirm_master: confirm } }));
+      const res = await guarded((confirm) => api(`/api/decks/${deck.id}/to-binder`, { method: "POST", json: { binder: name.trim(), confirm_master: confirm, ...(pickedOnly ? { picked_only: true } : {}) } }));
       if (res) { setResult(res); onDone?.(res); }
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
@@ -2591,11 +2634,11 @@ function DeckBoxSheet({ deck, onClose, onDone }) {
   const missing = asList(result?.missing, "items", "cards");
   const movedCopies = result?.moved_copies ?? moved.reduce((a, m) => a + (Number(m.quantity ?? m.moved) || 0), 0);
   return (
-    <Sheet title="Put into deck box" onClose={onClose}>
+    <Sheet title={pickedOnly ? "Put picked cards into deck box" : "Put into deck box"} onClose={onClose}>
       {!result ? (
         <form className="stack" onSubmit={submit}>
           <p className="small" style={{ margin: 0 }}>
-            Moves the copies <b>{deck.name}</b> needs into one binder: first from {UNSORTED}, then from your other binders.
+            {pickedOnly && <><b>Only the cards you ticked</b> move. </>}Moves the copies <b>{deck.name}</b> needs into one binder: first from {UNSORTED}, then from your other binders.
             Copies already in this binder{deck.source === "manabox" ? " or in the deck's own ManaBox binder" : ""} count as boxed;
             copies in another built deck's box stay where they are.
           </p>
@@ -2631,6 +2674,269 @@ function DeckBoxSheet({ deck, onClose, onDone }) {
         </div>
       )}
       {masterDialog}
+    </Sheet>
+  );
+}
+
+// ===========================================================================
+// Build checklist + deck history (v10)
+// ===========================================================================
+
+const BUILD_GROUP_HINT = {
+  other: "Owned, but another built deck holds them.",
+  basics: "Not enough in the collection: take them from your basic lands.",
+  buy: "You don't own these.",
+  box: "Already where the deck lives.",
+};
+
+/**
+ * Build checklist: the deck's cards grouped by the binder to pick them from, a tick per line
+ * (stored on the server, so it works across devices), then "Put into deck box" / "Mark as built".
+ */
+function BuildSheet({ deck, onClose, onSetBuilt, onCollectionChanged }) {
+  const [list, setList] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null); // line id being saved
+  const [hidePicked, setHidePicked] = useState(false);
+  const [boxing, setBoxing] = useState(false);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const load = useCallback(() => {
+    setError(null);
+    api(`/api/decks/${deck.id}/build`).then(setList).catch((e) => setError(e.message));
+  }, [deck.id]);
+  useEffect(load, [load]);
+
+  const lineId = (l) => `${l.key}\u0000${l.source}`;
+  const toggle = async (l) => {
+    if (l.source === "box" || busy) return;
+    const quantity = l.picked >= l.quantity ? 0 : l.quantity;
+    const id = lineId(l);
+    setBusy(id);
+    setError(null);
+    // Optimistic: tick at once, the server's list replaces it.
+    setList((cur) => cur && patchPick(cur, id, quantity));
+    try {
+      setList(await api(`/api/decks/${deck.id}/build/picks`, { method: "PUT", json: { key: l.key, source: l.source, quantity } }));
+    } catch (err) {
+      setError(err.message);
+      load();
+    } finally {
+      setBusy(null);
+    }
+  };
+  const clearAll = async () => {
+    if (!window.confirm("Untick every card on this list?")) return;
+    try { setList(await api(`/api/decks/${deck.id}/build/picks`, { method: "DELETE" })); } catch (err) { setError(err.message); }
+  };
+  const markBuilt = async () => {
+    setStatusBusy(true);
+    try { await onSetBuilt(); load(); } finally { setStatusBusy(false); }
+  };
+
+  if (boxing && list) {
+    return (
+      <DeckBoxSheet deck={{ ...deck, box_binder: list.box_binder }} pickedOnly
+        onClose={() => { setBoxing(false); load(); }} onDone={() => onCollectionChanged?.()} />
+    );
+  }
+  const total = list?.total ?? 0;
+  const picked = list?.picked ?? 0;
+  const pct = total ? Math.round((picked / total) * 100) : 0;
+  const progress = list && (
+    <div className="build-progress" aria-live="polite">
+      <div className="row between small"><b>{fmtInt(picked)} / {fmtInt(total)} picked</b>
+        {list.complete ? <span className="badge ok">✓ all picked</span> : <span className="muted">{pct}%</span>}</div>
+      <div className="bar" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={picked} aria-label="Picked cards">
+        <span style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+  return (
+    <Sheet title={`Build: ${deck.name}`} onClose={onClose} pinned={progress}>
+      {!list && !error && <Spinner label="Loading the list…" />}
+      <ErrorNotice error={error} onRetry={list ? null : load} onDismiss={list ? () => setError(null) : null} />
+      {list && (
+        <div className="stack">
+          {total === 0 && <div className="empty"><h3>Nothing to pick</h3><span>This deck has no cards yet.</span></div>}
+          {total > 0 && (
+            <div className="row between">
+              <label className="row small" style={{ minHeight: 44, cursor: "pointer" }}>
+                <input type="checkbox" checked={hidePicked} onChange={(e) => setHidePicked(e.target.checked)} style={{ width: 20, height: 20, accentColor: "var(--accent)" }} />
+                Hide picked
+              </label>
+              {picked > 0 && <button type="button" className="btn ghost sm" onClick={clearAll}>Untick all</button>}
+            </div>
+          )}
+          {list.groups.map((g) => {
+            const lines = hidePicked ? g.lines.filter((l) => l.picked < l.quantity) : g.lines;
+            const done = g.picked >= g.quantity;
+            return (
+              <details key={g.key} className="build-group" open={g.kind !== "box" && !done}>
+                <summary>
+                  <span className="grow gname">{g.kind === "binder" ? <Icon.collection /> : g.kind === "buy" ? <Icon.cart /> : g.kind === "box" ? <Icon.box /> : null}
+                    <span>{g.title}</span></span>
+                  <span className={`badge ${done ? "ok" : ""}`}>{fmtInt(g.picked)}/{fmtInt(g.quantity)}</span>
+                </summary>
+                {BUILD_GROUP_HINT[g.kind] && <p className="small muted" style={{ margin: "0 0 4px" }}>{BUILD_GROUP_HINT[g.kind]}</p>}
+                {lines.length === 0 && <p className="small muted" style={{ margin: 0 }}>All picked.</p>}
+                <div className="build-lines">
+                  {lines.map((l) => {
+                    const on = l.picked >= l.quantity;
+                    return (
+                      <button key={lineId(l)} type="button" role="checkbox" aria-checked={on ? "true" : l.picked > 0 ? "mixed" : "false"}
+                        className={`build-line${on ? " on" : ""}`} disabled={l.source === "box" || busy === lineId(l)} onClick={() => toggle(l)}>
+                        <span className="tick" aria-hidden="true">{on ? <Icon.check /> : null}</span>
+                        <span className="q">{l.quantity}×</span>
+                        <span className="nm"><b>{l.name}</b>{l.commander && <span className="badge accent">commander</span>}
+                          {g.kind === "other" && <span className="small muted">in {l.binder || UNSORTED}{asList(l.decks).length ? ` · ${asList(l.decks).join(", ")}` : ""}</span>}
+                        </span>
+                        {g.kind === "buy" && <span className="p small muted">{l.price_eur == null ? "" : fmtEur(l.price_eur * l.quantity)}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </details>
+            );
+          })}
+          {total > 0 && (
+            <div className="stack build-end">
+              {list.movable_picked > 0 && (
+                <button type="button" className="btn primary" onClick={() => setBoxing(true)}><Icon.box /> Put picked cards into deck box</button>
+              )}
+              {deck.status !== "built" && (
+                <button type="button" className={`btn${list.complete ? " primary" : ""}`} disabled={statusBusy} onClick={markBuilt}>
+                  <Icon.check /> {statusBusy ? "Saving…" : "Mark deck as built"}
+                </button>
+              )}
+              {deck.status === "built" && <span className="small muted">This deck is built. Ticks only help you collect; they don't move cards.</span>}
+            </div>
+          )}
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+/** Checklist with one line's ticks set (optimistic update before the server answers). */
+function patchPick(list, id, quantity) {
+  let delta = 0, movable = 0;
+  const groups = list.groups.map((g) => {
+    let gd = 0;
+    const lines = g.lines.map((l) => {
+      if (`${l.key}\u0000${l.source}` !== id) return l;
+      const n = Math.min(quantity, l.quantity);
+      gd += n - l.picked;
+      return { ...l, picked: n };
+    });
+    delta += gd;
+    if (g.kind === "binder") movable += gd;
+    return gd ? { ...g, lines, picked: g.picked + gd } : g;
+  });
+  const picked = list.picked + delta;
+  return { ...list, groups, picked, movable_picked: list.movable_picked + movable, complete: list.total > 0 && picked >= list.total };
+}
+
+const ACTOR_LABEL = { app: "You", claude: "✦ Claude", import: "ManaBox import", scan: "Scanner", system: "Before history" };
+
+/** Added / removed / changed cards per board (and renamed, format, bracket). */
+function DeckDiff({ diff, empty = "No card changes." }) {
+  if (!diff) return null;
+  const boards = asList(diff.boards);
+  const meta = asList(diff.meta);
+  const metaLabel = { name: "Name", format: "Format", description: "Description", status: "Status", bracket_declared: "Bracket" };
+  const val = (f, v) => (v == null || v === "" ? "—" : f === "bracket_declared" ? `B${v}` : f === "description" ? "…" : String(v));
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      {meta.map((m) => <div key={m.field} className="small">{metaLabel[m.field] ?? m.field}: <s className="muted">{val(m.field, m.from)}</s> → <b>{val(m.field, m.to)}</b></div>)}
+      {boards.length === 0 && meta.length === 0 && <span className="small muted">{empty}</span>}
+      {boards.map((b) => (
+        <div key={b.board} className="diff-board">
+          <h4>{BOARD_LABEL[b.board] ?? b.board}</h4>
+          <ul className="diff-list">
+            {asList(b.added).map((c) => <li key={`a${c.name}`} className="add"><span className="sym" aria-label="added">+</span>{c.quantity}× {c.name}</li>)}
+            {asList(b.removed).map((c) => <li key={`r${c.name}`} className="rem"><span className="sym" aria-label="removed">−</span>{c.quantity}× {c.name}</li>)}
+            {asList(b.changed).map((c) => <li key={`c${c.name}`} className="chg"><span className="sym" aria-label="changed">~</span>{c.name}: {c.from === c.to ? `${c.to}×` : `${c.from} → ${c.to}`}{c.printing ? " (other printing)" : ""}</li>)}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Deck history: versions newest first; tap one for its changes and "Restore this version". */
+function HistorySheet({ deck, onClose, onRestored }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [open, setOpen] = useState(null); // version detail
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    setError(null);
+    api(`/api/decks/${deck.id}/history`).then(setData).catch((e) => setError(e.message));
+  }, [deck.id]);
+  useEffect(load, [load]);
+  const show = async (v) => {
+    setError(null);
+    setBusy(true);
+    try { setOpen({ ...(await api(`/api/decks/${deck.id}/history/${v.id}`)), current: v.current }); } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+  const restore = async () => {
+    const v = open.version;
+    const what = open.restore?.summary && open.restore.summary !== "No changes" ? `\n\nChanges: ${open.restore.summary}.` : "";
+    if (!window.confirm(`Restore the version from ${fmtDate(v.at)}?${what}\n\nIt is saved as a new version, so nothing is lost. The status (idea/built) stays.`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api(`/api/decks/${deck.id}/history/${v.id}/restore`, { method: "POST", json: { confirm: true } });
+      onRestored?.(res);
+      setOpen(null);
+      load();
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+  const versions = asList(data?.versions);
+  return (
+    <Sheet title={open ? "Version" : `History: ${deck.name}`} onClose={onClose}
+      actions={open ? <button type="button" className="btn ghost sm" onClick={() => setOpen(null)}><Icon.back /> List</button> : null}>
+      <ErrorNotice error={error} onDismiss={() => setError(null)} />
+      {!open && !data && !error && <Spinner label="Loading history…" />}
+      {!open && data && (
+        <div className="stack" style={{ gap: 8 }}>
+          <p className="small muted" style={{ margin: 0 }}>Every change is saved. Tap a version to see what changed. The newest {fmtInt(data.keep)} are kept.</p>
+          {versions.length === 0 && <div className="empty"><h3>No history yet</h3></div>}
+          {versions.map((v) => (
+            <button key={v.id} type="button" className="version-row" disabled={busy} onClick={() => show(v)}>
+              <span className="grow vbody">
+                <span className="row small" style={{ gap: 6 }}>
+                  <b>{fmtDate(v.at)}</b>
+                  <span className={`badge ${v.actor === "claude" ? "accent" : ""}`}>{ACTOR_LABEL[v.actor] ?? v.actor}</span>
+                  {v.current && <span className="badge ok">current</span>}
+                </span>
+                <span className="small">{v.summary}</span>
+              </span>
+              <span className="small muted">{plural(v.card_count, "card")}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {open && (
+        <div className="stack">
+          <div className="row small" style={{ gap: 6 }}>
+            <b>{fmtDate(open.version.at)}</b>
+            <span className="badge">{ACTOR_LABEL[open.version.actor] ?? open.version.actor}</span>
+            <span className="muted">{plural(open.version.card_count, "card")}</span>
+          </div>
+          <div className="small">{open.version.summary}</div>
+          <h3 className="diff-h">What changed here</h3>
+          {open.diff ? <DeckDiff diff={open.diff} /> : <span className="small muted">The oldest saved version: nothing earlier to compare with.</span>}
+          {!open.current && (
+            <>
+              <h3 className="diff-h">If you restore it</h3>
+              <DeckDiff diff={open.restore} empty="Same cards as now." />
+              <button type="button" className="btn primary" disabled={busy} onClick={restore}><Icon.undo /> {busy ? "Restoring…" : "Restore this version"}</button>
+            </>
+          )}
+          {open.current && <span className="badge ok" style={{ justifySelf: "start" }}>This is the deck as it is now</span>}
+        </div>
+      )}
     </Sheet>
   );
 }
@@ -3208,6 +3514,8 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
   const [statusBusy, setStatusBusy] = useState(false);
   const [deckBox, setDeckBox] = useState(false);
   const [powerOpen, setPowerOpen] = useState(false);
+  const [buildOpen, setBuildOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const load = useCallback(() => {
     setError(null);
@@ -3421,7 +3729,9 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
             <DeckStats deck={deck} />
             <div className="row">
               <button type="button" className="btn primary" onClick={() => onAsk(deck)}><Icon.sparkle /> Ask the planner</button>
+              {deck.cards.length > 0 && <button type="button" className="btn" onClick={() => setBuildOpen(true)}><Icon.checklist /> Build list</button>}
               {deck.status === "built" && <button type="button" className="btn" onClick={() => setDeckBox(true)}><Icon.box /> Put into deck box</button>}
+              <button type="button" className="btn" onClick={() => setHistoryOpen(true)}><Icon.history /> History</button>
               <a className="btn" href={exportHref} download><Icon.download /> Export</a>
               {!editing && <button type="button" className="btn" onClick={startEdit}><Icon.edit /> Rename</button>}
               <button type="button" className="btn danger" onClick={remove}><Icon.trash /> Delete</button>
@@ -3461,6 +3771,10 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
           )}
           {powerOpen && <PowerSheet deck={deck} onClose={() => setPowerOpen(false)} onChanged={() => { load(); onChanged(); }} />}
           {deckBox && <DeckBoxSheet deck={deck} onClose={() => setDeckBox(false)} onDone={() => { load(); onCollectionChanged(); }} />}
+          {buildOpen && <BuildSheet deck={deck} onClose={() => { setBuildOpen(false); load(); }} onSetBuilt={() => setStatus("built")}
+            onCollectionChanged={() => { load(); onCollectionChanged(); }} />}
+          {historyOpen && <HistorySheet deck={deck} onClose={() => setHistoryOpen(false)}
+            onRestored={(res) => { if (res && Array.isArray(res.cards)) setDeck(res); else load(); onChanged(); }} />}
         </>
       )}
     </div>
