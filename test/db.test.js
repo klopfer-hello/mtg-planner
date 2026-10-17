@@ -70,9 +70,11 @@ describe("normalizeCard (v9 facts)", () => {
 });
 
 describe("migrations v10-v14", () => {
-  test("v9 -> v14: wishlist, value history and binder type/cover; rows kept, idempotent re-run", () => {
+  test("v9 -> v14: deck history/build picks, wishlist, value history and binder type/cover; rows kept, idempotent re-run", () => {
     seedCollection(ctx.db, [[ID.sol, 2, { binder: "Box" }], [ID.lightning, 1]]);
-    ctx.db.exec(`DROP TABLE wishlist; DROP TABLE value_history; DROP TABLE value_history_binders; DROP TABLE card_history;
+    ctx.db.prepare("INSERT INTO decks (name, format, source, status) VALUES ('D', 'commander', 'manual', 'built'), ('E', NULL, 'manual', 'idea')").run();
+    ctx.db.prepare("INSERT INTO deck_cards (deck_id, board, name, scryfall_id, quantity) VALUES (1, 'main', 'Sol Ring', ?, 1)").run(ID.sol);
+    ctx.db.exec(`DROP TABLE deck_build_picks; DROP TABLE deck_versions; DROP TABLE wishlist; DROP TABLE value_history; DROP TABLE value_history_binders; DROP TABLE card_history;
       ALTER TABLE binders DROP COLUMN type; ALTER TABLE binders DROP COLUMN cover_scryfall_id; PRAGMA user_version = 9`);
     ctx.db.close();
     assert.equal(SCHEMA_VERSION, 14);
@@ -81,6 +83,9 @@ describe("migrations v10-v14", () => {
       assert.equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
       for (const t of ["wishlist", "value_history", "value_history_binders", "card_history"]) assert.ok(cols(db, t).length > 0, t);
       for (const c of ["type", "cover_scryfall_id"]) assert.ok(cols(db, "binders").includes(c), c);
+      for (const t of ["deck_versions", "deck_build_picks"]) assert.ok(cols(db, t).length > 0, t);
+      assert.deepEqual(db.prepare("SELECT deck_id, COUNT(*) AS n FROM deck_versions GROUP BY deck_id ORDER BY deck_id").all().map((r) => [r.deck_id, r.n]), [[1, 1], [2, 1]], "one starting version per deck");
+      assert.equal(db.prepare("SELECT card_count FROM deck_versions WHERE deck_id = 1").get().card_count, 1);
       assert.equal(db.prepare("SELECT SUM(quantity) AS n FROM collection").get().n, 3);
       if (i === 0) db.prepare("INSERT INTO binders (name, origin, type) VALUES ('Box', 'app', 'trade') ON CONFLICT(name) DO UPDATE SET type = 'trade'").run();
       db.exec("PRAGMA user_version = 9"); // re-run v10-v14 on a migrated DB

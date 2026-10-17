@@ -25,6 +25,7 @@ with exactly two MCP servers:
   [decks.md](decks.md#bracket-and-power-score). `list_wishlist` shows the
   wishlist and `add_to_wishlist` adds a card when you ask; removing items is
   only possible in the app ([finance.md](finance.md#wishlist)).
+  `get_deck_history` reads a deck's [history](decks.md#deck-history) (read-only).
 - **[bmurdock/scryfall-mcp](https://github.com/bmurdock/scryfall-mcp)** gives
   access to every card ever printed, prices, the comprehensive rules, staple
   and synergy searches, and deck and mana-base analysis.

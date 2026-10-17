@@ -11,7 +11,7 @@ import { createReadStream, existsSync, rmSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
-import { SCHEMA_VERSION, cardPrice, getAppMeta, openDb, setAppMeta, stats } from "./lib/db.js";
+import { SCHEMA_VERSION, cardPrice, getAppMeta, openDb, setAppMeta, stats, transaction } from "./lib/db.js";
 import { QUERY_HELP, SECTION_BYS, collectionSections, searchCollection } from "./lib/query.js";
 import { CARD_FACTS_META, IMPORT_MODES, backfillCardFacts, cardFactsPending, importManaBoxCsv, refreshOwnedCards } from "./lib/manabox.js";
 import { syncEnglishPrices } from "./lib/prices.js";
@@ -52,6 +52,8 @@ import {
 import { deleteCopies, editCopies, listEdits, relanguageScans, undoEdit } from "./lib/edits.js";
 import { cardHistory, ensureSnapshot, financeHistory, financeMovers, financeSummary, financeTop, snapshotValue } from "./lib/finance.js";
 import { WishlistError, addWishlistItem, deleteWishlistItem, getWishlistItem, listWishlist, updateWishlistItem, wishlistShopping } from "./lib/wishlist.js";
+import { DeckHistoryError, deckVersion, listDeckVersions, recordDeckVersion, restoreDeckVersion } from "./lib/deckhistory.js";
+import { BuildError, buildChecklist, clearBuildPicks, pickedKeys, setBuildPick } from "./lib/deckbuild.js";
 
 const PORT = Number(process.env.PORT) || 8080;
 const STATIC_DIR = path.resolve(process.env.STATIC_DIR || "/app/public");
@@ -516,8 +518,11 @@ async function patchDeck(req, id) {
   const bracket = declared === undefined ? deck.bracket_declared : declared;
   // Idea -> built: the cards this deck now shares with other built decks (they were "in use" while it was an idea).
   const before = status === "built" && deck.status !== "built" ? deckDetail(db, id) : null;
-  db.prepare("UPDATE decks SET name = ?, format = ?, description = ?, status = ?, bracket_declared = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(name, format, description, status, bracket, id);
+  transaction(db, () => {
+    db.prepare("UPDATE decks SET name = ?, format = ?, description = ?, status = ?, bracket_declared = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(name, format, description, status, bracket, id);
+    recordDeckVersion(db, id, { actor: "app" });
+  });
   // A format change can make it a commander deck (or not).
   if (format !== deck.format) scheduleSpellbook(id);
   const row = db.prepare("SELECT * FROM decks WHERE id = ?").get(id);
@@ -547,12 +552,62 @@ function statusPreview(id, status) {
   };
 }
 
-/** POST /api/decks/:id/to-binder {binder?, confirm_master?} -> moved/missing summary + deck detail. */
+/**
+ * POST /api/decks/:id/to-binder {binder?, confirm_master?, picked_only?} -> moved/missing summary + deck detail.
+ * picked_only: only the cards ticked in the build checklist (binder groups) move.
+ */
 async function postDeckToBinder(req, id) {
   const body = await readJson(req);
   const binder = optString(body.binder, "binder", 200);
-  const result = await exclusive(async () => scanCall(() => deckToBinder(db, id, { binder, confirm_master: body.confirm_master === true })));
+  const result = await exclusive(async () => scanCall(() => {
+    const keys = body.picked_only === true ? deckLibCall(() => pickedKeys(db, id)) : null;
+    if (keys && !keys.length) throw new HttpError(400, "No picked cards to put into the deck box");
+    return deckToBinder(db, id, { binder, confirm_master: body.confirm_master === true, keys });
+  }));
   return { ...result, deck: getDeckOr404(id) };
+}
+
+/** Errors of lib/deckbuild.js and lib/deckhistory.js as HTTP errors. */
+const deckLibCall = (fn) => {
+  try { return fn(); } catch (err) {
+    throw err instanceof BuildError || err instanceof DeckHistoryError ? new HttpError(err.status, err.message) : err;
+  }
+};
+
+/**
+ * Build checklist + deck history routes: GET /api/decks/:id/build, PUT /api/decks/:id/build/picks
+ * {key, source, quantity}, DELETE /api/decks/:id/build/picks, GET /api/decks/:id/history,
+ * GET /api/decks/:id/history/:vid, POST /api/decks/:id/history/:vid/restore {confirm:true}.
+ */
+async function deckBuildHistoryApi(req, method, id, rest) {
+  if (rest === "build") {
+    if (method !== "GET") throw new HttpError(405, "Method not allowed");
+    return deckLibCall(() => buildChecklist(db, id));
+  }
+  if (rest === "build/picks") {
+    if (method === "PUT") {
+      const body = await readJson(req);
+      return deckLibCall(() => setBuildPick(db, id, { key: body.key, source: body.source, quantity: body.quantity }));
+    }
+    if (method === "DELETE") return deckLibCall(() => clearBuildPicks(db, id));
+    throw new HttpError(405, "Method not allowed");
+  }
+  if (rest === "history") {
+    if (method !== "GET") throw new HttpError(405, "Method not allowed");
+    return deckLibCall(() => listDeckVersions(db, id));
+  }
+  const m = /^history\/(\d+)(\/restore)?$/.exec(rest);
+  if (!m) throw new HttpError(404, "Not found");
+  if (!m[2]) {
+    if (method !== "GET") throw new HttpError(405, "Method not allowed");
+    return deckLibCall(() => deckVersion(db, id, Number(m[1])));
+  }
+  if (method !== "POST") throw new HttpError(405, "Method not allowed");
+  const body = await readJson(req);
+  if (body.confirm !== true) throw new HttpError(400, "Send confirm: true to restore this version");
+  const restored = deckLibCall(() => restoreDeckVersion(db, id, Number(m[1]), { actor: "app" }));
+  scheduleSpellbook(id);
+  return { ...getDeckOr404(id), restored };
 }
 
 const deckCall = (fn) => { try { return fn(); } catch (err) { throw err instanceof DeckError ? new HttpError(err.status, err.message) : err; } };
@@ -1657,6 +1712,9 @@ async function handleApi(req, res, url) {
   if (pathname === "/api/shopping-list" && method === "GET") return sendJson(res, 200, { ...shoppingList(db), wishlist: wishlistShopping(db) });
   if (pathname === "/api/wishlist" || pathname.startsWith("/api/wishlist/")) return handleWishlistApi(req, res, url);
   if (pathname.startsWith("/api/finance/")) return handleFinanceApi(req, res, url);
+  if ((m = /^\/api\/decks\/(\d+)\/(build(?:\/picks)?|history(?:\/\d+(?:\/restore)?)?)$/.exec(pathname))) {
+    return sendJson(res, 200, await deckBuildHistoryApi(req, method, Number(m[1]), m[2]));
+  }
   if ((m = /^\/api\/decks\/(\d+)\/(cards|commander|to-binder|status-preview|combos)$/.exec(pathname))) {
     const id = Number(m[1]);
     if (m[2] === "combos" && method === "POST") return sendJson(res, 202, postDeckCombos(id));

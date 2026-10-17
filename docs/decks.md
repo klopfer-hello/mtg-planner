@@ -1,7 +1,8 @@
 # Decks
 
 How decks, idea vs. built decks, conflicts, the shopping list, deck boxes,
-deck stats and the power level (bracket and score) work.
+the build list, the deck history, deck stats and the power level (bracket and
+score) work.
 
 - [Adding decks](#adding-decks)
 - [What a deck shows](#what-a-deck-shows)
@@ -11,6 +12,9 @@ deck stats and the power level (bracket and score) work.
 - [Idea vs. built decks](#idea-vs-built-decks)
 - [Shopping list](#shopping-list)
 - [Put into deck box](#put-into-deck-box)
+- [Build list](#build-list)
+- [Deck history](#deck-history)
+- [API](#api)
 
 ## Adding decks
 
@@ -182,3 +186,54 @@ decks, what to buy with a € total.
   box.
 - The box is remembered, also when the deck or the binder is renamed.
 - A ManaBox deck's own binder already counts as boxed.
+
+## Build list
+
+**Build list** helps you collect a deck's cards from your binders, mainly for
+an idea deck you are about to build.
+
+- Cards are grouped by the **binder** their free copies are in (Unsorted
+  first). It uses the same order as *Put into deck box*.
+- **In other decks**: you own them, but another built deck has them.
+- **Basic lands**: basics you don't own enough of.
+- **To buy**: cards you don't own, with prices.
+- **Already in …**: copies already in the deck box. They count as picked.
+- Tap a card to tick it. Ticks are saved on the server, so you can switch
+  devices. A bar shows *23 / 61 picked*.
+- At the end: **Put picked cards into deck box** (moves only the ticked cards)
+  and **Mark deck as built**.
+- Ticking never moves cards. A card that leaves the deck loses its tick.
+
+## Deck history
+
+Every change to a deck is saved as a **version**: edits in the app, decks
+Claude saves, ManaBox imports and scanner commits.
+
+- **History** lists the versions: when, who (you, Claude, ManaBox import,
+  scanner) and what changed (for example *+2 −1 cards*).
+- Tap a version to see what was added, removed or changed per board.
+- **Restore this version** puts its cards, name, format and bracket back. It is
+  saved as a new version, so nothing is lost. The status (idea / built) stays.
+- The newest 50 versions per deck are kept. Saving the same state twice does
+  not add a version. Deleting a deck deletes its history.
+- Decks that existed before the history started get one starting version.
+- Claude can read a deck's history (`get_deck_history`), but can't restore it.
+
+## API
+
+JSON; state-changing calls need `Content-Type: application/json` and a
+same-origin request.
+
+| Route | |
+| --- | --- |
+| `GET /api/decks/:id/build` | the build list: `{deck_id, name, status, box_binder, total, picked, complete, movable_picked, groups: [{key, kind, title, binder?, quantity, picked, lines: [{key, source, name, quantity, picked, oracle_id, scryfall_id, commander, binder?, decks?, price_eur?}]}]}`; `kind` is `binder`, `other`, `basics`, `buy` or `box` |
+| `PUT /api/decks/:id/build/picks {key, source, quantity}` | tick (`quantity` = the line's copies) or untick (`0`) one line; returns the list; 404 when the line is gone |
+| `DELETE /api/decks/:id/build/picks` | untick everything; returns the list |
+| `POST /api/decks/:id/to-binder {binder?, confirm_master?, picked_only?}` | *Put into deck box*; `picked_only: true` moves only the cards ticked in a binder group (400 when none) |
+| `GET /api/decks/:id/history` | `{deck_id, keep, versions: [{id, at, actor, summary, card_count, name, restored_from, current}]}`, newest first; `actor` is `app`, `claude`, `import`, `scan` or `system` (starting version) |
+| `GET /api/decks/:id/history/:version` | `{version: {…, meta, cards}, diff, restore}`: `diff` = changes against the version before (null for the oldest), `restore` = what restoring would change |
+| `POST /api/decks/:id/history/:version/restore {confirm: true}` | restore that version (400 without `confirm`); returns the deck plus `restored: {version_id, restored_from}` |
+
+A diff is `{boards: [{board, added: [{name, quantity}], removed: [...],
+changed: [{name, from, to, printing?}]}], meta: [{field, from, to}], added,
+removed, moved}`.

@@ -34,6 +34,7 @@ import { EDIT_CONDITIONS, editCopies } from "./lib/edits.js";
 import { getPrinting, openIndex } from "./lib/cardindex.js";
 import { fetchCollectionPolitely } from "./lib/manabox.js";
 import { WishlistError, addWishlistItem, listWishlist, wishlistShopping } from "./lib/wishlist.js";
+import { deckVersion, listDeckVersions } from "./lib/deckhistory.js";
 
 const VERSION = process.env.APP_VERSION || "dev";
 const DEFAULT_PROTOCOL = "2025-06-18";
@@ -285,6 +286,26 @@ const TOOLS = [
     },
     annotations: { title: "Show deck", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     run: getDeck,
+  },
+  {
+    name: "get_deck_history",
+    description:
+      "Read-only: the change history of one deck, newest first (time UTC, who changed it: app = the user in the app, claude = " +
+      "you, import = a ManaBox import, scan = the scanner; and what changed, e.g. '+2 −1 cards'). With `version` (an id from " +
+      "the list) it shows that version's changes per board. Going back to an older version is only possible in the app " +
+      "(Decks → History).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        deck: { type: ["string", "integer"], description: "Deck id, or (part of) the deck name." },
+        version: { type: "integer", description: "Optional: a version id to show its changes in detail." },
+        limit: { type: "integer", minimum: 1, maximum: 50, description: "How many versions to list (default 10)." },
+      },
+      required: ["deck"],
+      additionalProperties: false,
+    },
+    annotations: { title: "Deck history", readOnlyHint: true, openWorldHint: false },
+    run: getDeckHistory,
   },
   {
     name: "evaluate_deck",
@@ -772,6 +793,34 @@ async function getDeck(args) {
   const detail = await detailWithCombos(d, deck.id);
   const text = deckToText(detail);
   return target ? `${text}\n\n${bracketVerdict(detail.power, target)}` : text;
+}
+
+function getDeckHistory(args) {
+  const d = getDb();
+  const deck = findDeck(d, args.deck);
+  if (!deck) throw new ToolError(`No deck matches "${args.deck}".`);
+  const when = (at) => String(at).replace("T", " ").slice(0, 16);
+  if (args.version != null) {
+    let v;
+    try { v = deckVersion(d, deck.id, Number(args.version)); } catch { throw new ToolError(`Deck "${deck.name}" has no version ${args.version}.`); }
+    const lines = [`Version ${v.version.id} of deck #${deck.id} "${deck.name}" (${when(v.version.at)} UTC, ${v.version.actor}): ${v.version.summary}`];
+    if (!v.diff) lines.push("Oldest kept version: no earlier version to compare with.");
+    for (const b of v.diff?.boards ?? []) {
+      const parts = [...b.added.map((c) => `+${c.quantity} ${c.name}`), ...b.removed.map((c) => `−${c.quantity} ${c.name}`),
+        ...b.changed.map((c) => `${c.name} ${c.from}→${c.to}${c.printing ? " (printing)" : ""}`)];
+      lines.push(`${b.board}: ${parts.join("; ")}`);
+    }
+    for (const m of v.diff?.meta ?? []) lines.push(`${m.field}: ${m.from ?? "-"} → ${m.to ?? "-"}`);
+    return lines.join("\n");
+  }
+  const limit = Number.isInteger(args.limit) ? Math.min(50, Math.max(1, args.limit)) : 10;
+  const { versions } = listDeckVersions(d, deck.id);
+  const lines = [`History of deck #${deck.id} "${deck.name}" (${versions.length} version${versions.length === 1 ? "" : "s"} kept, newest first):`];
+  for (const v of versions.slice(0, limit)) {
+    lines.push(`- v${v.id} · ${when(v.at)} · ${v.actor} · ${v.summary} · ${v.card_count} cards${v.current ? " (current)" : ""}`);
+  }
+  if (versions.length > limit) lines.push(`... ${versions.length - limit} older`);
+  return lines.join("\n");
 }
 
 /** save_deck / evaluate_deck cards → deck items (ToolError on bad input). */
