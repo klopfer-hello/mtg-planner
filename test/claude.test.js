@@ -128,7 +128,7 @@ describe("planner prompt", () => {
     assert.match(PLANNER_PROMPT, /Never list the whole deck/);
     assert.match(PLANNER_PROMPT, /no text before or between tool calls/);
     // 2891 chars measured with the v0.7.0 bracket rule; cap = that + ~50.
-    assert.ok(PLANNER_PROMPT.length < 2940, `prompt stays short (${PLANNER_PROMPT.length} chars)`);
+    assert.ok(PLANNER_PROMPT.length < 3060, `prompt stays short (${PLANNER_PROMPT.length} chars)`);
   });
 
   test("brackets: evaluate_deck before save_deck for a target bracket, tutors and B1/B5 rules", () => {

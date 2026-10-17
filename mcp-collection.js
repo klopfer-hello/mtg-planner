@@ -348,7 +348,9 @@ const TOOLS = [
     name: "save_deck",
     description:
       "Save a deck so the user sees it in the app's Decks view (this is how you hand over a deck you built). " +
-      "Creates a new deck, or with deck_id replaces that deck's name/format/description and full card list. " +
+      "Creates a new deck, or with deck_id replaces that deck's name/format/description and full card list; the previous list is kept as a " +
+      "version in the deck's History (get_deck_history), so revise/upgrade/\"v2\" an existing deck with its deck_id instead of " +
+      "creating a copy, unless the user wants both decks side by side. " +
       "Cards are matched to printings the user owns automatically — just give names; set/collector_number are only " +
       "needed to force a specific printing. Cards the user does not own are looked up on Scryfall and shown as missing. " +
       "Put the commander (and partner/background) in board \"commander\", the 99 in \"main\", optional extras in " +
