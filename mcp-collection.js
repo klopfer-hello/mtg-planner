@@ -339,7 +339,7 @@ const TOOLS = [
     description:
       "What the user has to buy: every card the BUILT decks together need more of than the user owns (with the decks " +
       "competing for it and EUR prices), plus per deck (built and idea) how many cards are to buy (not owned at all) with their " +
-      "cost and how many are owned but in use in other built decks (can be moved over).",
+      "cost and how many are owned but in use in other built decks (can be moved over). The app shows it in Market → To buy.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { title: "Shopping list", readOnlyHint: true, openWorldHint: false },
     run: shoppingListTool,
@@ -347,7 +347,7 @@ const TOOLS = [
   {
     name: "save_deck",
     description:
-      "Save a deck so the user sees it in the app's Decks view (this is how you hand over a deck you built). " +
+      "Save a deck so the user sees it in the app's Decks tab (this is how you hand over a deck you built). " +
       "Creates a new deck, or with deck_id replaces that deck's name/format/description and full card list; the previous list is kept as a " +
       "version in the deck's History (get_deck_history), so revise/upgrade/\"v2\" an existing deck with its deck_id instead of " +
       "creating a copy, unless the user wants both decks side by side. " +
@@ -451,7 +451,7 @@ const TOOLS = [
     description:
       "Add a card to the user's wishlist (only when the user asks for it). Give the name; set + collector_number only when the " +
       "user wants that exact printing. Adding a card already on the list adds the quantity. Removing items is only possible " +
-      "in the app (Value tab → Wishlist).",
+      "in the app (Market tab → Wishlist).",
     inputSchema: {
       type: "object",
       properties: {
@@ -753,7 +753,7 @@ async function addToWishlistTool(args) {
       name, set: args.set || undefined, collector_number: args.collector_number ?? undefined, quantity: args.quantity,
       finish: args.finish, language: args.language, max_price_eur: args.max_price_eur, priority: args.priority, note: args.note,
     }, { source: "claude" });
-    return `${merged ? "Updated" : "Added"} wishlist item:\n${wishLine(item)}\nThe user sees it in the app (Value tab → Wishlist).`;
+    return `${merged ? "Updated" : "Added"} wishlist item:\n${wishLine(item)}\nThe user sees it in the app (Market tab → Wishlist).`;
   } catch (err) {
     if (err instanceof WishlistError) throw new ToolError(err.message);
     throw err;
@@ -891,7 +891,7 @@ async function saveDeckTool(args) {
     id, name, format: args.format || null, description: args.description || null, source: "claude", items,
     status: args.status ?? (id ? null : "idea"),
   });
-  const lines = [`${id ? "Updated" : "Created"} deck #${saved.id} "${name}". The user can open it in the app's Decks view.`];
+  const lines = [`${id ? "Updated" : "Created"} deck #${saved.id} "${name}". The user can open it in the app's Decks tab.`];
   if (saved.unresolved.length) {
     lines.push(`Could not resolve ${saved.unresolved.length} name(s) on Scryfall (kept as unknown cards — check spelling): ${saved.unresolved.join("; ")}`);
   }

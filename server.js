@@ -1,7 +1,7 @@
 // mtg-planner web server: JSON API, ManaBox CSV import, decks, Claude chat
 // (Server-Sent Events), the card scanner (identify + staging + commit, local
 // card index jobs), manual backup/restore of the app database, the wishlist,
-// the value history (Value tab) and the static single-page app. Node stdlib only.
+// the value history (Market tab) and the static single-page app. Node stdlib only.
 //
 // Unauthenticated by design: meant for a trusted LAN (see docs/backups-and-security.md).
 
@@ -1834,7 +1834,7 @@ async function handleWishlistApi(req, res, url) {
   throw new HttpError(405, "Method not allowed");
 }
 
-// Value tab, all GET: /api/finance/summary (live totals, today/7d/30d change split into added / removed /
+// Market tab (id value), all GET: /api/finance/summary (live totals, today/7d/30d change split into added / removed /
 // price changes, per binder + rarity), /history?days=90 (daily totals), /movers?days=7&limit=10 (risers and
 // fallers among cards held throughout), /top?limit=20 (most valuable printings + binders),
 // /card/:scryfall_id?finish= (one printing's stored price/quantity changes).
@@ -2003,7 +2003,7 @@ try {
 // First commit after boot creates the app DB's WAL file (one fsync, ~60 ms
 // on a spinning disk): pay it here instead of in the first scan's staging.
 try { setAppMeta(db, "last_start", new Date().toISOString()); } catch (err) { console.warn(`[db] ${err.message}`); }
-// Day 0 of the value history (Value tab): today's snapshot from the current prices when there is none.
+// Day 0 of the value history (Market tab): today's snapshot from the current prices when there is none.
 try {
   const seeded = ensureSnapshot(db);
   if (seeded) console.log(`[finance] value snapshot ${seeded.day}: €${seeded.value_eur.toFixed(2)}, ${seeded.copies} copies`);

@@ -1,6 +1,6 @@
 # Decks
 
-How decks, idea vs. built decks, conflicts, the shopping list, deck boxes,
+How decks, idea vs. built decks, conflicts, to-buy lists, deck boxes,
 the build list, the deck history, deck stats and the power level (bracket and
 score) work.
 
@@ -10,7 +10,7 @@ score) work.
 - [Bracket and power score](#bracket-and-power-score)
 - [Combo check (Commander Spellbook)](#combo-check-commander-spellbook)
 - [Idea vs. built decks](#idea-vs-built-decks)
-- [Shopping list](#shopping-list)
+- [To buy](#to-buy)
 - [Put into deck box](#put-into-deck-box)
 - [Build list](#build-list)
 - [Deck history](#deck-history)
@@ -172,10 +172,11 @@ ManaBox deck binders start as built).
 - Two built decks that need more copies than you own are flagged as a
   **conflict**.
 
-## Shopping list
+## To buy
 
-The **shopping list** shows what each deck still needs and, across all built
-decks, what to buy with a € total.
+Each deck shows its own **To buy** list. **Market → To buy** shows what each
+deck still needs and, across all built decks, what to buy with a € total (see
+[finance.md](finance.md#to-buy)).
 
 ## Put into deck box
 

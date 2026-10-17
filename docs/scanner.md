@@ -165,7 +165,7 @@ marked for review must get a printing picked first:
   offered, because the next ManaBox import rebuilds them from the CSV.
 
 You can also add cards by title search without the camera. Binders are
-managed in the Collection tab (see [collection.md](collection.md#binders)).
+managed in the Binders tab (see [collection.md](collection.md#binders)).
 
 **The scanner and ManaBox imports are separate.** Every collection row knows
 where it came from (`manabox`, `scan` or `app`). A ManaBox *replace* import

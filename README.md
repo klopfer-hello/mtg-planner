@@ -100,7 +100,7 @@ More: [how to scan](docs/guide.md#2-scanning) · [docs/scanner.md](docs/scanner.
 - **Import:** export a CSV in ManaBox, then upload it in **Settings**.
 - **Search:** find cards with short codes. Example: `t:creature eur>2` =
   creatures worth more than €2. [All codes](docs/collection.md#search-syntax)
-- **Binders:** the Collection tab starts with your binders (cover, copies,
+- **Binders:** the Binders tab starts with your binders (cover, copies,
   value), grouped by type. Tap one to open it. Move cards between them.
 - **Edit or delete** copies from a card's details. Every change can be
   **undone** in Settings → Recent changes.
@@ -115,8 +115,7 @@ More: [docs/collection.md](docs/collection.md)
 - Each card shows **owned**, **in another deck** or **to buy**, with prices.
 - Mark a deck as **built** when it exists for real. Built decks reserve their
   cards, so you see conflicts between decks.
-- The **shopping list** collects what all your decks still need.
-- **Value** tab: worth over time, top cards, price moves and a **wishlist** (♡ on any card). [Details](docs/finance.md)
+- **Market** tab: worth over time, top cards, price moves, a **wishlist** (♡ on any card) and **To buy** (what all your decks still need). [Details](docs/finance.md)
 - **Build list** ticks off a deck's cards binder by binder; **Put into deck box** moves them into their own binder. **History** saves every deck change, so you can go back.
 - Commander decks show a **bracket** (1-5) and a **power score** (1-10). Combos are checked at [Commander Spellbook](https://commanderspellbook.com/): only card names are sent, and you can turn it off. [Details](docs/decks.md#bracket-and-power-score)
 
@@ -161,8 +160,8 @@ More: [docs/backups-and-security.md](docs/backups-and-security.md)
 | Install, settings, HTTPS, nightly updates | [docs/setup.md](docs/setup.md) |
 | Scanner: how it works, foil, calibration | [docs/scanner.md](docs/scanner.md) |
 | Collection: imports, binders, editing, search | [docs/collection.md](docs/collection.md) |
-| Decks, conflicts, shopping list | [docs/decks.md](docs/decks.md) |
-| Value over time, wishlist | [docs/finance.md](docs/finance.md) |
+| Decks, conflicts, to-buy lists | [docs/decks.md](docs/decks.md) |
+| Market: value, wishlist, to buy | [docs/finance.md](docs/finance.md) |
 | Claude chat and token | [docs/claude.md](docs/claude.md) |
 | Backups and security | [docs/backups-and-security.md](docs/backups-and-security.md) |
 | For developers: code, tests, releases | [docs/development.md](docs/development.md) |

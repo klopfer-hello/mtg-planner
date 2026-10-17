@@ -191,7 +191,7 @@ container local time, so set `TZ`). It runs one job at a time:
 - the **prices** of owned, deck and wishlist cards are refreshed when the last
   refresh is older than `PRICE_REFRESH_DAYS` (default 1 = every night), within
   Scryfall's rate limits (about 2,300 printings take well under a minute);
-- the day's **collection value** is saved for the Value tab
+- the day's **collection value** is saved for the Market tab
   ([finance.md](finance.md)), also when the price refresh was skipped or failed.
 
 It runs at most once per night: later checks in the same hour, and restarts

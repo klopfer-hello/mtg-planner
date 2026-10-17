@@ -149,12 +149,9 @@ code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); 
 }
 .tab svg { width: 24px; height: 24px; }
 .tab > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; }
-.tab .tab-s { display: none; }
-/* Six tabs on a phone: "Collection" gets its short label below 420 px. */
+/* Six tabs on a phone: smaller labels below 420 px. */
 @media (max-width: 419px) {
   .tab { font-size: .68rem; letter-spacing: 0; }
-  .tab .tab-l.has-short { display: none; }
-  .tab .tab-s { display: inline; }
 }
 @media (max-width: 359px) {
   .tab { font-size: .62rem; }
@@ -233,6 +230,10 @@ label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; 
 .segmented button + button { border-left: 1px solid var(--border); }
 .segmented button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .segmented svg { width: 18px; height: 18px; }
+/* Market tab: three sub-views share the row (icons drop on narrow phones). */
+.segmented.market-views { display: flex; width: 100%; max-width: 520px; }
+.market-views button { flex: 1 1 0; min-width: 0; justify-content: center; padding: 0 8px; white-space: nowrap; }
+@media (max-width: 399px) { .market-views svg { display: none; } }
 .chip {
   appearance: none; display: inline-flex; align-items: center; gap: 6px;
   min-height: 36px; padding: 0 12px; border-radius: 999px; cursor: pointer;
@@ -2529,7 +2530,7 @@ function DeckNeedBadges({ d }) {
   );
 }
 
-function DeckList({ dataVersion, onOpen, onShopping, refreshKey }) {
+function DeckList({ dataVersion, onOpen, refreshKey }) {
   const [decks, setDecks] = useState(null);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -2544,7 +2545,6 @@ function DeckList({ dataVersion, onOpen, onShopping, refreshKey }) {
       <div className="page-title">
         <h1>Decks</h1>
         <div className="row">
-          {decks?.some((d) => d.status) && <button type="button" className="btn" onClick={onShopping}><Icon.cart /> Shopping list</button>}
           {!showForm && <button type="button" className="btn primary" onClick={() => setShowForm(true)}><Icon.plus /> Import decklist</button>}
         </div>
       </div>
@@ -3353,8 +3353,8 @@ function HistorySheet({ deck, onClose, onRestored }) {
   );
 }
 
-/** Everything short across all BUILT decks, plus what each deck still misses. */
-function ShoppingListView({ dataVersion, onBack, onOpenDeck, onOpenWishlist, onWishChanged }) {
+/** Market → To buy: everything short across all BUILT decks, plus what each deck still misses. */
+function ShoppingListView({ dataVersion, onOpenDeck, onOpenWishlist, onWishChanged }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const load = useCallback(() => {
@@ -3368,10 +3368,8 @@ function ShoppingListView({ dataVersion, onBack, onOpenDeck, onOpenWishlist, onW
   const wish = useWishAdd(() => { onWishChanged?.(); load(); });
   return (
     <div className="stack-lg">
-      <div><button type="button" className="btn ghost" onClick={onBack} style={{ marginLeft: -8 }}><Icon.back /> All decks</button></div>
-      <div className="page-title"><h1>Shopping list</h1></div>
       <ErrorNotice error={error} onRetry={load} />
-      {!data && !error && <Spinner label="Loading shopping list…" />}
+      {!data && !error && <Spinner label="Loading the to-buy list…" />}
       {data && (
         <>
           <section className="stack" aria-labelledby="shop-built-title">
@@ -3388,16 +3386,12 @@ function ShoppingListView({ dataVersion, onBack, onOpenDeck, onOpenWishlist, onW
                 </>
               )}
           </section>
-          <section className="stack" aria-labelledby="shop-wish-title">
-            <div className="row between">
-              <h2 id="shop-wish-title">Wishlist</h2>
-              {onOpenWishlist && <button type="button" className="btn sm" onClick={onOpenWishlist}><Icon.heart /> Open wishlist</button>}
+          {wishItems.length > 0 && onOpenWishlist && (
+            <div className="row between" style={{ gap: 8 }}>
+              <span className="small muted">Plus {plural(wishItems.length, "card")} on your wishlist{data.wishlist?.total_eur ? ` (${fmtEur(data.wishlist.total_eur)})` : ""}.</span>
+              <button type="button" className="btn sm" onClick={onOpenWishlist}><Icon.heart /> Wishlist</button>
             </div>
-            {wishItems.length === 0
-              ? <span className="small muted">Nothing on your wishlist to buy. Tap ♡ Wishlist on a card to add it.</span>
-              : <BuyList items={wishItems} qtyKey="need" total={data.wishlist?.total_eur}
-                  sub={(it) => (it.below_max || it.priority === "high") && <span className="sub">{[it.below_max ? "✓ below your max price" : null, it.priority === "high" ? "high priority" : null].filter(Boolean).join(" · ")}</span>} />}
-          </section>
+          )}
           {perDeck.length > 0 && (
             <section className="stack" aria-labelledby="shop-deck-title">
               <h2 id="shop-deck-title">Per deck</h2>
@@ -4207,22 +4201,15 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
   );
 }
 
-function DecksTab({ dataVersion, homeKey, deckId, deckNotice, onOpenDeck, onOpenCard, onAsk, onChanged, onCollectionChanged, onOpenWishlist, onWishChanged }) {
+function DecksTab({ dataVersion, deckId, deckNotice, onOpenDeck, onOpenCard, onAsk, onChanged, onCollectionChanged, onWishChanged }) {
   const [listKey, bumpList] = useReducer((x) => x + 1, 0);
-  // "Back" from a deck returns to where it was opened: the list or the shopping list.
-  const [shopping, setShopping] = useState(false);
-  useEffect(() => { setShopping(false); }, [homeKey]);
   if (deckId) {
     return (
       <DeckDetail key={deckId} id={deckId} dataVersion={dataVersion} initialNotice={deckNotice} onBack={() => { onOpenDeck(null); bumpList(); }}
         onOpenCard={onOpenCard} onOpenDeck={onOpenDeck} onAsk={onAsk} onChanged={onChanged} onCollectionChanged={onCollectionChanged} onWishChanged={onWishChanged} />
     );
   }
-  if (shopping) {
-    return <ShoppingListView dataVersion={dataVersion + listKey} onBack={() => { setShopping(false); window.scrollTo(0, 0); }} onOpenDeck={onOpenDeck}
-      onOpenWishlist={onOpenWishlist} onWishChanged={onWishChanged} />;
-  }
-  return <DeckList dataVersion={dataVersion} refreshKey={listKey} onOpen={onOpenDeck} onShopping={() => { setShopping(true); window.scrollTo(0, 0); }} />;
+  return <DeckList dataVersion={dataVersion} refreshKey={listKey} onOpen={onOpenDeck} />;
 }
 
 // ===========================================================================
@@ -7641,7 +7628,7 @@ function BinderOverview({ list, onOpen, onGoImport, onGoScan, onChanged }) {
   return (
     <div className="stack-lg">
       <div className="row between">
-        <h2>Collection</h2>
+        <h2>Binders</h2>
         <div className="row" style={{ gap: 6 }}>
           <button type="button" className="btn" onClick={() => setSheet("new")}><Icon.plus /> New binder</button>
           <button type="button" className="btn ghost" onClick={() => setSheet("manage")} disabled={!data || !binders.length}><Icon.edit /> Manage</button>
@@ -9101,19 +9088,28 @@ function WishlistView({ dataVersion, onChanged }) {
   );
 }
 
-function FinanceTab({ dataVersion, view, onView, onOpenCard, onChanged }) {
+/** Market tab sub-views; the hash is #value[/wishlist|/buy] (the tab id stays "value"). */
+const MARKET_VIEWS = ["overview", "wishlist", "buy"];
+const marketViewOf = (hash) => { const s = String(hash || "").replace(/^#/, "").split("/"); return s[0] === "value" && MARKET_VIEWS.includes(s[1]) ? s[1] : null; };
+const marketHash = (v) => (v === "overview" ? "#value" : `#value/${v}`);
+
+/** Market tab: collection value, the wishlist and the global To buy list (built decks). */
+function FinanceTab({ dataVersion, buyVersion, view, onView, onOpenCard, onOpenDeck, onChanged }) {
   return (
     <div className="stack-lg">
       <div className="page-title">
-        <h1>Value</h1>
-        <div className="segmented" role="group" aria-label="Show">
-          <button type="button" aria-pressed={view !== "wishlist"} onClick={() => onView("overview")}><Icon.chart /> Value</button>
+        <h1>Market</h1>
+        <div className="segmented market-views" role="group" aria-label="Show">
+          <button type="button" aria-pressed={view === "overview"} onClick={() => onView("overview")}><Icon.chart /> Value</button>
           <button type="button" aria-pressed={view === "wishlist"} onClick={() => onView("wishlist")}><Icon.heart /> Wishlist</button>
+          <button type="button" aria-pressed={view === "buy"} onClick={() => onView("buy")}><Icon.cart /> To buy</button>
         </div>
       </div>
       {view === "wishlist"
         ? <WishlistView dataVersion={dataVersion} onChanged={onChanged} />
-        : <ValueOverview dataVersion={dataVersion} onOpenCard={onOpenCard} />}
+        : view === "buy"
+          ? <ShoppingListView dataVersion={buyVersion} onOpenDeck={onOpenDeck} onOpenWishlist={() => onView("wishlist")} onWishChanged={onChanged} />
+          : <ValueOverview dataVersion={dataVersion} onOpenCard={onOpenCard} />}
     </div>
   );
 }
@@ -9124,11 +9120,11 @@ function FinanceTab({ dataVersion, view, onView, onOpenCard, onChanged }) {
 
 const TABS = [
   { id: "scan", label: "Scan", icon: Icon.scan },
-  // short: the label on narrow phones (six tabs share 320-419 px).
-  { id: "collection", label: "Collection", short: "Cards", icon: Icon.collection },
+  // Labels vs ids: "Binders" keeps the id "collection" and "Market" the id "value" (saved tabs, #links).
+  { id: "collection", label: "Binders", icon: Icon.collection },
   { id: "decks", label: "Decks", icon: Icon.decks },
-  // Collection value over time + the wishlist (lib/finance.js, lib/wishlist.js).
-  { id: "value", label: "Value", icon: Icon.chart },
+  // Market: collection value over time, the wishlist, the global To buy list (lib/finance.js, lib/wishlist.js).
+  { id: "value", label: "Market", icon: Icon.chart },
   { id: "planner", label: "Planner", icon: Icon.planner },
   // Settings (beta.4: was "Import"); the id stays "import" for saved tabs and #import links.
   { id: "import", label: "Settings", icon: Icon.gear },
@@ -9181,18 +9177,30 @@ function App() {
   }, [tab]);
 
   useEffect(() => {
-    const onHash = () => { const h = hashTab(); if (isTab(h)) { tabHash.current[h] = location.hash; switchTab(h); } };
+    const onHash = () => {
+      const h = hashTab();
+      if (!isTab(h)) return;
+      tabHash.current[h] = location.hash;
+      const v = marketViewOf(location.hash);
+      if (v) setValueView(v);
+      switchTab(h);
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, [switchTab]);
 
-  // Tapping the active Decks tab returns to the deck list (also from the shopping list).
-  const [decksHome, goDecksHome] = useReducer((x) => x + 1, 0);
-  // Value tab sub-view (overview | wishlist); wishVersion bumps after wishlist adds elsewhere.
-  const [valueView, setValueView] = useState(() => (store.get("mtg.value.view", "overview") === "wishlist" ? "wishlist" : "overview"));
-  useEffect(() => { store.set("mtg.value.view", valueView); }, [valueView]);
+  // Market tab sub-view (overview | wishlist | buy): #value/<view> wins over the saved one.
+  const [valueView, setValueView] = useState(() => {
+    const v = marketViewOf(location.hash) || store.get("mtg.value.view", "overview");
+    return MARKET_VIEWS.includes(v) ? v : "overview";
+  });
+  useEffect(() => {
+    store.set("mtg.value.view", valueView);
+    tabHash.current.value = marketHash(valueView);
+    if (hashTab() === "value" && location.hash !== marketHash(valueView)) history.replaceState(null, "", marketHash(valueView));
+  }, [valueView]);
+  // wishVersion bumps after wishlist adds elsewhere.
   const [wishVersion, bumpWish] = useReducer((x) => x + 1, 0);
-  const openWishlist = useCallback(() => { setValueView("wishlist"); switchTab("value"); window.scrollTo(0, 0); }, [switchTab]);
   // Tapping the active Collection tab returns to the binder overview.
   const [collectionHome, goCollectionHome] = useReducer((x) => x + 1, 0);
   const openDeck = useCallback((id, notice = null) => {
@@ -9239,14 +9247,12 @@ function App() {
             <button key={t.id} id={`tab-${t.id}`} ref={(el) => { tabRefs.current[t.id] = el; }} type="button" role="tab" className="tab"
               aria-selected={tab === t.id} aria-controls={`panel-${t.id}`} tabIndex={tab === t.id ? 0 : -1}
               onClick={() => {
-                if (t.id === "decks" && tab === "decks") { if (deck.id) openDeck(null); goDecksHome(); }
+                if (t.id === "decks" && tab === "decks" && deck.id) openDeck(null);
                 if (t.id === "collection" && tab === "collection") goCollectionHome();
                 switchTab(t.id);
               }}>
               <t.icon />
-              {t.short
-                ? <><span className="tab-l has-short">{t.label}</span><span className="tab-s" aria-hidden="true">{t.short}</span></>
-                : <span className="tab-l">{t.label}</span>}
+              <span className="tab-l">{t.label}</span>
             </button>
           ))}
         </nav>
@@ -9255,11 +9261,11 @@ function App() {
         {panel("scan", <ScanTab active={tab === "scan"} health={health} onCommitted={onImported} />)}
         {panel("collection", <CollectionTab dataVersion={dataVersion} homeKey={collectionHome} onOpenCard={setCardId} onOpenDeck={(id) => openDeck(id)} onGoImport={() => switchTab("import")}
           onGoScan={() => switchTab("scan")} onChanged={onImported} />)}
-        {panel("decks", <DecksTab dataVersion={deckVersion} homeKey={decksHome} deckId={deck.id} deckNotice={deck.notice} onOpenDeck={openDeck}
+        {panel("decks", <DecksTab dataVersion={deckVersion} deckId={deck.id} deckNotice={deck.notice} onOpenDeck={openDeck}
           onOpenCard={setCardId} onAsk={askAboutDeck} onChanged={bumpDecks} onCollectionChanged={onImported}
-          onOpenWishlist={openWishlist} onWishChanged={bumpWish} />)}
-        {panel("value", <FinanceTab dataVersion={dataVersion + wishVersion} view={valueView} onView={setValueView} onOpenCard={setCardId}
-          onChanged={bumpWish} />)}
+          onWishChanged={bumpWish} />)}
+        {panel("value", <FinanceTab dataVersion={dataVersion + wishVersion} buyVersion={dataVersion + deckVersion + wishVersion} view={valueView}
+          onView={(v) => { setValueView(v); window.scrollTo(0, 0); }} onOpenCard={setCardId} onOpenDeck={(id) => openDeck(id)} onChanged={bumpWish} />)}
         {panel("planner", <PlannerTab active={tab === "planner"} health={health} request={plannerRequest}
           onRequestHandled={() => setPlannerRequest(null)} onChanged={bumpDecks} />)}
         {panel("import", <ImportTab dataVersion={dataVersion} health={health} onImported={onImported} restored={restored}

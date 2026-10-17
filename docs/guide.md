@@ -25,9 +25,9 @@ Not set up yet? Start with the [Installation guide](install.md).
 | Tab | What it is for |
 | --- | --- |
 | **Scan** | Scan cards with your phone's camera. |
-| **Collection** | Your binders; see, search and sort the cards you own. On small phones it is called **Cards**. |
+| **Binders** | Your binders; see, search and sort the cards you own. |
 | **Decks** | Plan decks and see what you still need. |
-| **Value** | Your collection's value over time, and your wishlist. |
+| **Market** | Your collection's value, your wishlist, and what to buy for your decks. |
 | **Planner** | Chat with Claude about your cards. |
 | **Settings** | Import, backups, recent changes, scanner data. |
 
@@ -40,7 +40,7 @@ No ManaBox? Go straight to [Scanning](#2-scanning).
 
 **In ManaBox:**
 
-1. Open **Collection**.
+1. Open **Binders**.
 2. Tap the **⋯** menu.
 3. Tap **Export**, then **CSV** (a simple table file).
 4. Save the file to your phone.
@@ -55,7 +55,7 @@ No ManaBox? Go straight to [Scanning](#2-scanning).
 5. Tap **Import**.
 
 **You should now see:** "Import complete." and a short summary. Your cards
-are in the **Collection** tab, with prices.
+are in the **Binders** tab, with prices.
 
 **Good to know**
 
@@ -161,7 +161,7 @@ Still no luck? Tap **Find by name** and type the name. Red cards also have a
 6. Tap **Add**.
 
 **You should now see:** an empty scan list. The cards are in the
-**Collection** tab (binder) or on the deck list (deck).
+**Binders** tab (binder) or on the deck list (deck).
 
 > **If it doesn't work**
 >
@@ -179,7 +179,7 @@ Still no luck? Tap **Find by name** and type the name. Red cards also have a
 
 ## 3. Your collection
 
-Open the **Collection** tab. It starts with your binders: cover card, copies
+Open the **Binders** tab. It starts with your binders: cover card, copies
 and value, grouped by type. **All cards** and **Unsorted** sit there too.
 
 ### Binders
@@ -267,8 +267,8 @@ To switch:
 | **✗ n** | You don't own it. Buy it. |
 
 Basic lands never count as missing. The **To buy** list is below the cards.
-The **Shopping list** button (top of the Decks tab) collects what all built
-decks need.
+**Market → To buy** collects what all built decks need. Tap a deck there to
+open it.
 
 ### Put into deck box
 

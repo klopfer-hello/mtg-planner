@@ -1,12 +1,13 @@
-# Value and wishlist
+# Market: value, wishlist, to buy
 
-The **Value** tab has two parts: what your collection is worth over time, and
-your **wishlist**. All prices are in euros (Scryfall's Cardmarket prices; a
+The **Market** tab has three parts: **Value** (what your collection is worth
+over time), your **Wishlist**, and **To buy** (what your built decks need). All prices are in euros (Scryfall's Cardmarket prices; a
 foreign printing without its own price uses the English printing's). A card
 with only a USD price counts as "without € price", never as dollars.
 
 - [Collection value](#collection-value)
 - [Wishlist](#wishlist)
+- [To buy](#to-buy)
 - [How the history is stored](#how-the-history-is-stored)
 - [API](#api)
 
@@ -32,9 +33,9 @@ saves the value once a day, so the changes and the chart need a day or two.
 
 Cards you want to buy, outside your decks.
 
-- **Add a card:** in the Value tab tap **Add card** and search by name; or
+- **Add a card:** in Market → Wishlist tap **Add card** and search by name; or
   tap **♡ Wishlist** in a card's details; or tap ♡ next to a card in a deck's
-  **To buy** list (or **Add all to wishlist**), also in the shopping list.
+  **To buy** list (or **Add all to wishlist**), also in Market → To buy.
 - **Any printing or one printing:** "any printing" uses the cheapest price the
   app knows for that card and counts every copy you own. "Only this printing"
   counts and prices just that one.
@@ -42,12 +43,23 @@ Cards you want to buy, outside your decks.
   marked **✓ below your max**.
 - **Got it:** when you own as many copies as you want, the card moves to
   **Got it**. Tap **Remove, I have it** to clear it.
-- The global **shopping list** (Decks → Shopping list) shows the wishlist's
-  open cards in their own section.
+- **Market → To buy** shows how many wishlist cards are open, with a link
+  here.
 - **Claude** can read the wishlist and add cards when you ask (it cannot
   remove them).
 
 Wishlist cards get their prices refreshed every night, like your collection.
+
+## To buy
+
+**Market → To buy** is the shopping list for all your **built** decks:
+
+- **For your built decks:** every card they need together, minus what you
+  own, with € prices. Tap ♡ to put one on the wishlist.
+- **Per deck:** how many cards each deck still has to buy, and how many sit
+  in other built decks (you can move those). Tap a deck to open it.
+- Each deck also has its own **To buy** list in the deck view.
+- Links: `#value` (last view), `#value/wishlist`, `#value/buy`.
 
 ## How the history is stored
 

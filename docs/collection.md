@@ -59,7 +59,7 @@ fine.
 
 ## Browsing and searching
 
-The **Collection** tab opens on an overview of your binders (see
+The **Binders** tab opens on an overview of your binders (see
 [Binders](#binders)). **All cards** at the top shows the whole collection;
 tapping a binder opens just that binder. Both use Scryfall-style search syntax (`t:creature c<=bg
 cmc<=3 eur>2 -is:foil`, see [Search syntax](#search-syntax)). You can group by
@@ -74,7 +74,7 @@ English printing's EUR price, so values never fall back to USD.
 
 A binder is a named group of owned copies; copies without one are *Unsorted*.
 
-**Overview.** The **Collection** tab starts with one entry per binder: a cover
+**Overview.** The **Binders** tab starts with one entry per binder: a cover
 card, the number of copies and the value in EUR. On a phone this is a compact
 list, on a wide screen a grid of tiles. Binders are grouped by **type**:
 
@@ -103,7 +103,7 @@ returns to the overview, and a reload keeps you where you were. The page has:
   [Editing owned copies](#editing-owned-copies)).
 
 **New binder** and **Manage** (rename, type and delete for every binder) sit
-at the top of the overview. Tapping the Collection tab again returns there.
+at the top of the overview. Tapping the Binders tab again returns there.
 - a card's details list every owned copy with a **Move…** action: pick how
   many copies and the target binder (or a new one).
 - **Select** turns the grid or list into a selection; **Move to…** moves every
@@ -140,7 +140,7 @@ A card's details list every owned copy with **Move… / Edit… / Delete…**:
   (one the printing exists in) or the condition, for some or all copies of
   that row.
 - **Delete…** removes copies after a second confirmation. **Select** in the
-  Collection tab can delete many cards at once (you type the number of copies
+  Binders tab can delete many cards at once (you type the number of copies
   to confirm).
 - Every edit and delete shows a toast with **Undo**, and is listed under
   **Settings → Collection → Recent changes**, where it can be undone later
