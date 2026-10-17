@@ -5,7 +5,7 @@
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_VERSION, openDb } from "../lib/db.js";
+import { SCHEMA_VERSION, openDb, stats } from "../lib/db.js";
 import {
   addDays, cardHistory, ensureSnapshot, financeHistory, financeMovers, financeSummary, financeTop, localDay, snapshotValue, stateAt,
 } from "../lib/finance.js";
@@ -48,6 +48,30 @@ describe("snapshots", () => {
     // ensureSnapshot only seeds a day without one
     assert.equal(ensureSnapshot(ctx.db, { now: day(1, 20) }), null);
     assert.ok(ensureSnapshot(ctx.db, { now: day(2) }));
+  });
+
+  test("the Market total equals /api/stats value_eur (same prices, fallbacks, one rounding)", () => {
+    // Half-cent total (€19.585): float sums per collection row (stats) and per printing (finance)
+    // rounded it to different cents. Plus an English-twin price and a USD-only card (unpriced).
+    ctx.db.exec("DELETE FROM collection");
+    setPrices(ctx.db, ID.sol, { eur: "2.265" });
+    setPrices(ctx.db, ID.lightning, { eur: "1.628" });
+    setPrices(ctx.db, ID.serra, { eur: "2.053" });
+    setPrices(ctx.db, ID.counterspell, { eur_en: "1.90" });
+    setPrices(ctx.db, ID.atraxa, { usd: "10.00" });
+    seedCollection(ctx.db, [
+      [ID.sol, 2, { binder: "Box" }], [ID.lightning, 2, { binder: "Box" }], [ID.serra, 2, { binder: "Box" }],
+      [ID.sol, 1], [ID.lightning, 1], [ID.counterspell, 2, { language: "de", binder: "Box" }], [ID.atraxa, 1],
+    ]);
+    const s = stats(ctx.db);
+    const sum = financeSummary(ctx.db, { now: day(1) });
+    const snap = snapshotValue(ctx.db, { now: day(1) });
+    assert.equal(s.value_eur, 19.59); // old: stats 19.59, Market 19.58
+    assert.equal(sum.value_eur, s.value_eur);
+    assert.equal(snap.value_eur, s.value_eur);
+    assert.equal(sum.unpriced_copies, 1);
+    for (const b of sum.binders) assert.equal(b.value_eur, stats(ctx.db, { binder: b.binder }).value_eur, `binder "${b.binder}"`);
+    assert.equal(financeHistory(ctx.db, { now: day(1) }).points.at(-1).value_eur, s.value_eur);
   });
 
   test("change split: added copies, removed copies and price changes add up", () => {
