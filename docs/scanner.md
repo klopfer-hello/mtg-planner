@@ -10,6 +10,7 @@ scans, and tools for tuning.
 - [Avoiding double scans](#avoiding-double-scans)
 - [Scan list → binder or deck](#scan-list--binder-or-deck)
 - [Record session](#record-session)
+- [Scanner learning](#scanner-learning)
 - [Calibration mode](#calibration-mode)
 - [Limits](#limits)
 
@@ -99,6 +100,11 @@ flowchart LR
    staged, tap to confirm) or **review** (red, staged with the top candidates
    to pick from, and never committed until you pick). A low-confidence guess
    is never accepted silently. A probe stages only auto and suggest results.
+   **Scanning on confirms a suggest card:** when the next card of the same
+   camera session is staged, or you tap +1 on another card of it, the
+   suggest card turns **✓ confirmed** (no extra tap). A next card with the
+   same name doesn't count, since that may be the same card read as another
+   printing. Undo of that next card (or +1) makes it a suggest card again.
 6. **Claude (optional).** Only for a shutter scan or an automatic ask whose
    local result is uncertain, the card goes to Claude vision through the same
    Claude Code CLI and subscription token as the chat. The default model is
@@ -214,6 +220,41 @@ Android, else 4k).
 The perf beacon's `grab_mode` says which source ran (`path`, `why` when the
 copy failed, `clone` with its size and `rot`, how far it was turned).
 
+## Scanner learning
+
+Every card whose printing gets settled is kept as a **labelled example**: the
+scores and OCR reads of the scan together with the right printing and where
+that answer came from (`source`):
+
+| source | how |
+| --- | --- |
+| `implicit` | you scanned on past a suggest card |
+| `user` | you tapped **Confirm**, or kept the printing in the picker |
+| `correction` | you picked another printing |
+| `calibration` | calibration mode's truth sheet |
+| `commit` | the card went into a binder or deck as it was |
+
+A commit updates the example to the card's final printing and finish. Only
+calibration scans keep their photos after a commit; the other examples are
+small text records.
+
+**Settings → Scanner & data → Scanner learning** shows a short summary: how
+many examples there are, how many unsure cards turned out right, how many you
+fixed, how often a sure (auto) card was right, and the most common reason a
+card stayed unsure. `GET /api/scans/learning` has the full numbers: counts by
+source and outcome, which AUTO thresholds the confirmed suggest cards missed,
+and per measure (title similarity, art distance, fingerprint distance and gap,
+collector line confidence) a histogram of confirmed cards against wrongly
+detected ones, plus the `relax` value: how far that one threshold could move
+without letting a wrong detection through.
+
+The scanner **never changes its thresholds on its own**. AUTO needs several
+measures at once, so a `relax` value is only a candidate: with enough examples
+(the report says when, about 30 confirmed unsure cards), try it with
+`SCAN_THRESHOLDS` (see below) on a test install against your own recorded
+sessions before using it for real. `GET /api/calibration/export` lists every
+example with its `source` (`?source=implicit,correction` filters).
+
 ## Calibration mode
 
 The default thresholds are deliberately **conservative**: they were tuned on
@@ -224,8 +265,8 @@ your own phone and cards:
    own cards, a mix of eras, languages and foils.
 2. After each scan, confirm or correct the true printing and finish. All
    scores and OCR outputs are recorded along with your answer.
-3. Download **Calibration export** (Settings tab, `GET /api/calibration/export`)
-   and derive new values. Set them as JSON in `SCAN_THRESHOLDS`, for example
+3. Download **Export examples** (Settings tab, `GET /api/calibration/export`;
+   `?source=calibration` for these scans only) and derive new values. Set them as JSON in `SCAN_THRESHOLDS`, for example
    `SCAN_THRESHOLDS={"fpAuto":0.27}`. Unknown keys are ignored with a warning.
 
 ## Limits
