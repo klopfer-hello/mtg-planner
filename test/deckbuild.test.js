@@ -44,7 +44,7 @@ describe("build checklist", () => {
       ["binder", "Unsorted", "2 Forest, 1 Lightning Bolt"],
       ["binder", "Box A", "1 Sol Ring"],
       ["binder", "Trade", "1 Lightning Bolt"],
-      ["other", "In other decks", "1 Serra Angel"],
+      ["other", "In other decks or boxes", "1 Serra Angel"],
       ["basics", "Basic lands", "3 Forest"],
       ["buy", "To buy", "1 Counterspell"],
     ]);

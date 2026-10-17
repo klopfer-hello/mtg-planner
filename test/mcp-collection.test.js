@@ -550,3 +550,30 @@ describe("mcp-collection.js deck power", () => {
     setSpellbookSettings(ctx.db, { enabled: true });
   });
 });
+
+describe("collection MCP server: deck boxes are reserved", () => {
+  let ctx;
+  let mcp;
+  before(async () => {
+    ctx = tempDb();
+    seedCards(ctx.db);
+    seedCollection(ctx.db, [[ID.sol, 2, { binder: "Commander Deck: Rin and Seri" }], [ID.sol, 1], [ID.lightning, 1]]);
+    mcp = startServer(ctx.file);
+    await mcp.request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
+  });
+  after(async () => {
+    await mcp?.stop();
+    ctx?.cleanup();
+  });
+
+  test("check_owned, search_collection, get_card and list_binders name the reserved box", async () => {
+    const owned = await mcp.call("check_owned", { names: ["Sol Ring", "Lightning Bolt"] });
+    assert.match(owned.text, /Sol Ring: 3 owned, 1 free — .*in deck box Commander Deck: Rin and Seri \(reserved\) 2x/);
+    assert.match(owned.text, /Lightning Bolt: 1 owned, 1 free/);
+    const search = await mcp.call("search_collection", { query: "avail>=1" });
+    assert.match(search.text, /Sol Ring .*\| free 1 \(2 in deck boxes, reserved\)/);
+    assert.equal((await mcp.call("search_collection", { query: "avail>=2" })).text.split("\n")[0], "0 matches");
+    assert.match((await mcp.call("get_card", { name: "Sol Ring" })).text, /in deck box Commander Deck: Rin and Seri \(reserved\) 2x; free: 1/);
+    assert.match((await mcp.call("list_binders")).text, /Commander Deck: Rin and Seri \[deck box, reserved\].*box of no deck/);
+  });
+});

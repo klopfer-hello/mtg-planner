@@ -128,8 +128,8 @@ const SEARCH_EXAMPLES = [
   'o:"draw a card" mv=2 c<=ub       two-drops that draw, castable in Dimir',
   's:mh3 is:foil                    foils from Modern Horizons 3',
   'qty>=4 t:land                    lands owned in 4+ copies',
-  'avail>=1 t:creature              creatures with free copies (not claimed by a built deck)',
-  'used>=1                          cards a built deck uses (avail<0 = built decks need more than owned)',
+  'avail>=1 t:creature              creatures with free copies (not claimed by a built deck, not in a deck box)',
+  'used>=1                          cards a built deck uses or a deck box holds (avail<0 = built decks need more than owned)',
   'b:"trade binder"                 everything in a binder (see list_binders)',
   'src:scan                         copies added with the in-app scanner (src:manabox = synced from ManaBox)',
   'lightning                        names containing "lightning"',
@@ -180,10 +180,10 @@ const TOOLS = [
       "Notes: c: is the card's colors (c:wu = at least white and blue, c=wu exactly, c<=wu within); id: is color " +
       "identity and means 'within' (what fits a commander of that identity); f:<format> = legal in that format " +
       "(commander, modern, standard, pioneer, legacy, pauper, ...); is:commander = can be a commander; eur/usd are per-copy " +
-      "prices; qty counts owned copies; avail = owned copies minus those claimed by BUILT decks (free to use); used = copies built decks claim; b: matches the binder name; src: is manabox (synced from ManaBox), scan (added with the app's scanner) or app (organised into a binder in the app).\n" +
+      "prices; qty counts owned copies; avail = owned copies minus those claimed by BUILT decks and those lying in deck boxes (reserved for that box; free to use); used = copies built decks claim or deck boxes hold; b: matches the binder name; src: is manabox (synced from ManaBox), scan (added with the app's scanner) or app (organised into a binder in the app).\n" +
       `Examples:\n${SEARCH_EXAMPLES.map((e) => `  ${e}`).join("\n")}\n` +
       "Output: header 'N matches (showing a-b)' then one line per card: " +
-      "'<qty>x <name> | <mana cost> | <type line> | <SET #number, or N printings> | <price> | <finishes> | free N (when built decks use it) | binders: ... | source: ...'. " +
+      "'<qty>x <name> | <mana cost> | <type line> | <SET #number, or N printings> | <price> | <finishes> | free N (when built decks use it or deck boxes hold it; '(n in deck boxes, reserved)') | binders: ... | source: ...'. " +
       "Page through large results with offset. Set include_text to also get oracle text (costs more tokens).",
     inputSchema: {
       type: "object",
@@ -247,7 +247,8 @@ const TOOLS = [
   {
     name: "list_binders",
     description:
-      "List the user's binders (storage groups of owned cards): name, type [binder | deck box | bulk | trade | other], number " +
+      "List the user's binders (storage groups of owned cards): name, type [binder | deck box | bulk | trade | other; deck boxes " +
+      "are reserved: their copies are free only for the deck that owns the box], number " +
       "of printings, total copies, EUR value, linked decks, and where " +
       "the copies came from (manabox = synced from the ManaBox app, scan = added with the app's camera scanner, app = moved " +
       "into the binder in the app). Empty binders are listed too; Unsorted = copies without a binder. " +
@@ -273,7 +274,8 @@ const TOOLS = [
     description:
       "Show one deck with its status (idea/built), every card, its board, and ownership against the collection: TO BUY n = " +
       "copies the user does not own at all; IN USE n in other deck(s) = owned copies claimed by other built decks (can be moved " +
-      "over, not a purchase) on an idea deck; on a BUILT deck the same copies show as SHARED n with <deck> (CONFLICT: both " +
+      "over, not a purchase) on an idea deck; IN USE n in deck box X (reserved) = owned copies lying in another deck's box (or a " +
+      "box no deck owns), can be moved too; on a BUILT deck the same copies show as SHARED n with <deck> (CONFLICT: both " +
       "built decks need them, buy extra to play both); basic. Per-card prices, the deck value in EUR, its shopping list and the in-use list. " +
       POWER_TEXT_HELP,
     inputSchema: {
@@ -562,7 +564,8 @@ function searchTool(args) {
     const finishes = String(r.finishes || "normal").split(",");
     const price = cardPrice(r, r.finish || "normal"); // most valuable owned printing
     const where = group === "card" && r.printing_count > 1 ? `${r.printing_count} printings` : setNum(r);
-    const extra = `${r.used ? ` | free ${r.avail}` : ""}${r.binders ? ` | binders: ${r.binders}` : ""}${r.sources ? ` | source: ${r.sources}` : ""}`;
+    const boxed = r.boxed && !isBasicLand(r.name) ? ` (${r.boxed} in deck boxes, reserved)` : "";
+    const extra = `${r.used ? ` | free ${r.avail}${boxed}` : ""}${r.binders ? ` | binders: ${r.binders}` : ""}${r.sources ? ` | source: ${r.sources}` : ""}`;
     lines.push(`${r.qty}x ${r.name} | ${r.mana_cost || ""} | ${r.type_line || ""} | ${where} | ${formatPrice(price)} | ${finishes.join(",")}${extra}`);
     if (args.include_text && r.oracle_text) lines.push(`    ${oneLine(r.oracle_text)}`);
   }
@@ -601,13 +604,20 @@ function checkOwned(args) {
     const label = rows[0].name.toLowerCase() === name.toLowerCase() ? rows[0].name : `${name} (${rows[0].name})`;
     const key = cardKey(rows[0].oracle_id, rows[0].name);
     const demand = alloc.built.get(key)?.demand ?? 0;
-    const free = isBasicLand(rows[0].name) ? total : total - demand;
-    const use = demand ? `; used in built decks: ${builtUse(key)} (can be moved)` : "";
+    const basic = isBasicLand(rows[0].name);
+    const boxes = basic ? [] : alloc.reserve(key, rows[0].name).boxes;
+    const boxed = boxes.reduce((a, b) => a + b.quantity, 0);
+    const free = basic ? total : total - demand - boxed;
+    const use = (demand ? `; used in built decks: ${builtUse(key)} (can be moved)` : "") + (boxed ? `; ${boxText(boxes)}` : "");
     lines.push(`${label}: ${total} owned, ${free} free${free < 0 ? " (SHORT)" : ""} — ${detail.join(", ")}${use}`);
   }
-  return [`${ownedCount} of ${names.length} owned. "free" = owned minus copies claimed by built decks; claimed copies are ` +
-    "still owned (in use in another deck, can be moved), only NOT OWNED cards are to buy.", ...lines].join("\n");
+  return [`${ownedCount} of ${names.length} owned. "free" = owned minus copies claimed by built decks and copies in deck ` +
+    "boxes (reserved for that box); those are still owned (in use in another deck or box, can be moved), only NOT OWNED " +
+    "cards are to buy.", ...lines].join("\n");
 }
+
+/** "in deck box X (reserved) 2x, ..." for allocation reserve().boxes. */
+const boxText = (boxes) => boxes.map((b) => `in deck box ${b.binder}${b.deck_name ? ` of #${b.deck_id} ${b.deck_name}` : ""} (reserved) ${b.quantity}x`).join(", ");
 
 const COMMON_FORMATS = ["standard", "pioneer", "modern", "legacy", "vintage", "pauper", "commander", "brawl"];
 
@@ -664,7 +674,11 @@ function getCard(args) {
     lines.push(`  ${r.quantity}x ${setNum(r)} ${r.finish} ${r.language} ${r.condition}${r.binder ? ` [binder: ${r.binder}]` : ""}${r.source === "scan" ? " (scanned)" : r.source === "app" ? " (organised in app)" : ""}`);
   }
   const usage = cardUsage(d, { oracle_id: card.oracle_id, name: card.name });
-  if (usage.built_demand) lines.push(`Built decks claim ${usage.built_demand}; free: ${usage.available}${usage.available < 0 ? " (SHORT)" : ""}`);
+  if (usage.built_demand || (usage.boxed && !usage.basic)) {
+    const claim = usage.built_demand ? `Built decks claim ${usage.built_demand}` : "";
+    const boxed = usage.boxed && !usage.basic ? `${boxText(usage.in_boxes)}` : "";
+    lines.push(`${[claim, boxed].filter(Boolean).join("; ")}; free: ${usage.available}${usage.available < 0 ? " (SHORT)" : ""}`);
+  }
   if (usage.decks.length) {
     lines.push(`In decks: ${usage.decks.map((k) => `#${k.id} ${k.name} [${k.status}] (${k.quantity}x ${k.board})`).join(", ")}`);
   }
@@ -675,9 +689,10 @@ function getCard(args) {
 function listBindersTool() {
   const { binders, unsorted, collection_master: master } = listBinders(getDb());
   if (!binders.length && !unsorted.copies) return "The user has no binders and no cards in the collection yet.";
-  const line = (name, b) => `${name}${b.type ? ` [${b.type.replace("_", " ")}]` : ""}: ${b.cards} printings, ${b.copies} copies` +
+  const line = (name, b) => `${name}${b.type ? ` [${b.type.replace("_", " ")}${b.reserved ? ", reserved" : ""}]` : ""}: ${b.cards} printings, ${b.copies} copies` +
     `${b.copies ? `, value €${(b.value_eur ?? 0).toFixed(2)}` : ""}${b.sources.length ? `, source ${b.sources.join("+")}` : " (empty)"}` +
-    `${b.decks?.length ? `, deck ${b.decks.map((d) => `#${d.id} ${d.name}`).join(", ")}` : ""}`;
+    `${b.box_deck ? `, box of deck #${b.box_deck.id} ${b.box_deck.name}` : b.reserved ? ", box of no deck (reserved for nobody)" : ""}` +
+    `${b.decks?.length && !b.box_deck ? `, deck ${b.decks.map((d) => `#${d.id} ${d.name}`).join(", ")}` : ""}`;
   const lines = binders.map((b) => line(b.name, b));
   if (unsorted.copies) lines.push(line("(Unsorted, no binder)", unsorted));
   lines.push(`Collection master: ${master === "app" ? "mtg-planner (ManaBox imports add cards)" : "ManaBox (imports replace ManaBox cards)"}`);
@@ -1173,8 +1188,9 @@ async function handle(msg) {
           "Read access to the user's Magic: The Gathering collection (synced from ManaBox) and decks, plus save_deck " +
           "to hand decks over to the app and edit_copies to correct owned copies (state the exact change first, ask when " +
           "unclear; no deleting, that is app-only). Check ownership with check_owned / search_collection before recommending cards; " +
-          "built decks claim their cards, so 'free' copies (avail) are what is left for new decks; claimed copies are still " +
-          "owned (in use in another deck, can be moved), not purchases.",
+          "built decks claim their cards and deck boxes (precons, boxed decks) reserve theirs, so 'free' copies (avail) are " +
+          "what is left for new decks; claimed or boxed copies are still owned (in use in another deck or deck box, can be " +
+          "moved), not purchases.",
       });
     case "ping":
       return reply(id, {});

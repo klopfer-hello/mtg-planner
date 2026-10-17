@@ -116,6 +116,23 @@ describe("binder API", () => {
     assert.equal(r.body.binders.find((b) => b.name === "Box").type_set, false);
   });
 
+  test("PATCH /api/binders/:name {deck_id} links the deck that owns the box (null unlinks)", async () => {
+    const db = openDb(path.join(dir, "app.db"));
+    const deckId = Number(db.prepare("INSERT INTO decks (name, status) VALUES ('Boxed', 'idea')").run().lastInsertRowid);
+    db.close();
+    let r = await call("PATCH", `/api/binders/${enc("Scans")}`, { deck_id: deckId });
+    assert.equal(r.status, 200);
+    const scans = r.body.binders.find((b) => b.name === "Scans");
+    assert.deepEqual([scans.type, scans.reserved, scans.box_deck?.id], ["deck_box", true, deckId]);
+    assert.equal((await call("PATCH", `/api/binders/${enc("Scans")}`, { deck_id: "x" })).status, 400);
+    assert.equal((await call("PATCH", `/api/binders/${enc("Scans")}`, { deck_id: 9999 })).status, 404);
+    r = await call("PATCH", `/api/binders/${enc("Scans")}`, { deck_id: null });
+    assert.deepEqual(["type", "reserved", "box_deck"].map((k) => r.body.binders.find((b) => b.name === "Scans")[k]), ["binder", false, null]);
+    const again = openDb(path.join(dir, "app.db"));
+    again.prepare("DELETE FROM decks WHERE id = ?").run(deckId);
+    again.close();
+  });
+
   test("GET /api/collection/sections + section filter on /api/collection", async () => {
     let r = await call("GET", "/api/collection/sections?by=type");
     assert.equal(r.status, 200);

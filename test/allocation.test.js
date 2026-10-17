@@ -103,7 +103,7 @@ describe("allocation", () => {
     assert.deepEqual(a.shopping.items.map((i) => [i.name, i.need, i.price_eur, i.cost_eur]), [["Atraxa, Praetors' Voice", 1, 20, 20]]);
     assert.equal(a.shopping.total_eur, 20);
     assert.equal(a.shopping.total_eur, a.missing_cost_eur);
-    assert.deepEqual(a.shopping.in_use, [{ name: "Sol Ring", oracle_id: "o-solring", quantity: 1, decks: [{ id: B, name: "B" }], conflict: true, price_eur: 1.5, cost_eur: 1.5 }]);
+    assert.deepEqual(a.shopping.in_use, [{ name: "Sol Ring", oracle_id: "o-solring", quantity: 1, decks: [{ id: B, name: "B" }], boxes: [], in_box: 0, conflict: true, price_eur: 1.5, cost_eur: 1.5 }]);
     assert.equal(a.shopping.in_use_eur, 1.5);
     const text = deckToText(a);
     assert.match(text, /status: BUILT/);
@@ -244,8 +244,8 @@ describe("to buy vs in use (idea deck sharing cards with a built deck)", () => {
     assert.deepEqual(o.shopping.items.map((i) => [i.name, i.need, i.cost_eur]), [["Atraxa, Praetors' Voice", 1, 20], ["Lightning Bolt", 1, 2]]);
     assert.equal(o.shopping.total_eur, 22);
     assert.deepEqual(o.shopping.in_use, [
-      { name: "Lightning Bolt", oracle_id: "o-bolt", quantity: 1, decks: [{ id: T, name: "Turtle" }], conflict: false, price_eur: 2, cost_eur: 2 },
-      { name: "Sol Ring", oracle_id: "o-solring", quantity: 1, decks: [{ id: T, name: "Turtle" }], conflict: false, price_eur: 1.5, cost_eur: 1.5 },
+      { name: "Lightning Bolt", oracle_id: "o-bolt", quantity: 1, decks: [{ id: T, name: "Turtle" }], boxes: [], in_box: 0, conflict: false, price_eur: 2, cost_eur: 2 },
+      { name: "Sol Ring", oracle_id: "o-solring", quantity: 1, decks: [{ id: T, name: "Turtle" }], boxes: [], in_box: 0, conflict: false, price_eur: 1.5, cost_eur: 1.5 },
     ]);
     assert.equal(o.shopping.in_use_eur, 3.5);
     assert.equal(o.conflict_count, 0);
