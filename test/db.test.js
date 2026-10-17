@@ -87,8 +87,8 @@ describe("migration v9", () => {
 
     for (let i = 0; i < 2; i++) {
       const db = openDb(ctx.file);
-      assert.equal(SCHEMA_VERSION, 9);
-      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 9);
+      assert.ok(SCHEMA_VERSION >= 9);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
       for (const c of ["game_changer", "produced_mana", "layout"]) assert.ok(cols(db, "cards").includes(c), c);
       assert.ok(cols(db, "decks").includes("bracket_declared"));
       assert.ok(cols(db, "deck_cards").includes("companion"));

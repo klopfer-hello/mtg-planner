@@ -8,7 +8,8 @@ import { SCHEMA_VERSION, openDb, migrate } from "../lib/db.js";
 import { importManaBoxCsv } from "../lib/manabox.js";
 import { searchCollection } from "../lib/query.js";
 import {
-  collectionMaster, createBinder, defaultImportMode, deleteBinder, listBinders, moveCopies, renameBinder, setCollectionMaster,
+  BULK_SUGGEST_COPIES, autoBinderType, collectionMaster, createBinder, defaultImportMode, deleteBinder, listBinders, moveCopies, renameBinder,
+  setBinderProps, setCollectionMaster,
 } from "../lib/binders.js";
 import { ID, seedCards, stubScryfall, tempDb } from "./fixtures.js";
 
@@ -237,5 +238,74 @@ describe("ManaBox import and the master setting", () => {
     assert.equal(r.mode, "replace");
     assert.equal(r.kept_app_copies, 2);
     assert.deepEqual(summary().named, [["Box", 1, "manabox"], ["Mine", 2, "app"]], "app rows survive an explicit replace and are not loaded twice");
+  });
+});
+
+describe("types and covers (migration v14)", () => {
+  const entry = (name) => listBinders(ctx.db).binders.find((b) => b.name === name);
+
+  test("v13 -> v14 adds binders.type / cover_scryfall_id (NULL = auto), keeps rows, idempotent", () => {
+    seed([[ID.sol, 2, { binder: "Trade" }]]);
+    createBinder(ctx.db, "Empty");
+    ctx.db.exec("ALTER TABLE binders DROP COLUMN type; ALTER TABLE binders DROP COLUMN cover_scryfall_id; PRAGMA user_version = 13");
+    migrate(ctx.db);
+    assert.equal(ctx.db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
+    const cols = ctx.db.prepare("PRAGMA table_info(binders)").all().map((c) => c.name);
+    assert.deepEqual(cols, ["name", "origin", "created_at", "type", "cover_scryfall_id"]);
+    assert.deepEqual(ctx.db.prepare("SELECT name, type, cover_scryfall_id FROM binders ORDER BY name").all().map((r) => ({ ...r })),
+      [{ name: "Empty", type: null, cover_scryfall_id: null }]);
+    ctx.db.exec("PRAGMA user_version = 13");
+    migrate(ctx.db);
+    assert.equal(entry("Trade").copies, 2);
+  });
+
+  test("auto type: deck-box names and binders linked to decks; big binders only suggested as bulk", () => {
+    assert.equal(autoBinderType("Deck box: Elves"), "deck_box");
+    assert.equal(autoBinderType("Commander Deck: Rin and Seri"), "deck_box");
+    assert.equal(autoBinderType("Foundation Commander: X"), "deck_box");
+    assert.equal(autoBinderType("Pauper: Mono White"), "binder");
+    assert.equal(autoBinderType("Trade"), "binder");
+    assert.equal(autoBinderType("Elves", true), "deck_box");
+    seed([[ID.sol, 1, { binder: "Shelf" }], [ID.serra, BULK_SUGGEST_COPIES + 1, { binder: "Pile" }], [ID.forest, 1, { binder: "Deck box: Elves" }]]);
+    ctx.db.prepare("INSERT INTO decks (name, source, status, box_binder) VALUES ('Elves', 'manual', 'built', 'shelf')").run();
+    const shelf = entry("Shelf");
+    assert.deepEqual([shelf.type, shelf.type_auto, shelf.type_set], ["deck_box", "deck_box", false]);
+    assert.deepEqual(shelf.decks, [{ id: 1, name: "Elves", status: "built" }]);
+    assert.equal(entry("Deck box: Elves").type, "deck_box");
+    const pile = entry("Pile");
+    assert.deepEqual([pile.type, pile.type_suggest], ["binder", "bulk"]);
+    setBinderProps(ctx.db, "pile", { type: "binder" });
+    assert.deepEqual([entry("Pile").type_set, entry("Pile").type_suggest], [true, null], "answering keeps it from asking again");
+    setBinderProps(ctx.db, "Pile", { type: "bulk" });
+    assert.equal(entry("Pile").type, "bulk");
+    assert.throws(() => setBinderProps(ctx.db, "Pile", { type: "box" }), (e) => e.status === 400);
+    assert.throws(() => setBinderProps(ctx.db, "Pile", {}), (e) => e.status === 400);
+    assert.throws(() => setBinderProps(ctx.db, "Nope", { type: "bulk" }), (e) => e.status === 404);
+  });
+
+  test("value and cover: most valuable card unless chosen; a chosen cover that left the binder falls back", () => {
+    seed([[ID.sol, 2, { binder: "A", source: "scan" }], [ID.atraxa, 1, { binder: "A", source: "scan" }], [ID.lightning, 1, { binder: "A", source: "scan", finish: "foil" }]]);
+    let a = entry("A");
+    assert.equal(a.value_eur, 2 * 1.5 + 20 + 5);
+    assert.deepEqual([a.top.name, a.top.price_eur, a.cover.scryfall_id, a.cover.chosen], ["Atraxa, Praetors' Voice", 20, ID.atraxa, false]);
+    setBinderProps(ctx.db, "A", { cover_scryfall_id: ID.sol });
+    a = entry("A");
+    assert.deepEqual([a.cover.scryfall_id, a.cover.chosen], [ID.sol, true]);
+    assert.throws(() => setBinderProps(ctx.db, "A", { cover_scryfall_id: ID.serra }), (e) => e.status === 400);
+    moveCopies(ctx.db, { items: [{ printing_id: ID.sol }], to_binder: "B", create: true });
+    assert.deepEqual([entry("A").cover.scryfall_id, entry("A").cover.chosen], [ID.atraxa, false]);
+    setBinderProps(ctx.db, "A", { cover_scryfall_id: null });
+    assert.equal(ctx.db.prepare("SELECT cover_scryfall_id FROM binders WHERE name = 'A'").get().cover_scryfall_id, null);
+  });
+
+  test("rename carries type and cover; a merge keeps the target's", () => {
+    seed([[ID.sol, 1, { binder: "A", source: "scan" }], [ID.serra, 1, { binder: "B", source: "scan" }]]);
+    setBinderProps(ctx.db, "A", { type: "trade", cover_scryfall_id: ID.sol });
+    renameBinder(ctx.db, "A", "Trades");
+    assert.deepEqual([entry("Trades").type, entry("Trades").cover.chosen], ["trade", true]);
+    setBinderProps(ctx.db, "B", { type: "other" });
+    renameBinder(ctx.db, "Trades", "B");
+    const b = entry("B");
+    assert.deepEqual([b.type, b.cover.scryfall_id, b.cover.chosen], ["other", ID.sol, true], "B had no cover: the merged one's comes along");
   });
 });

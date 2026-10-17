@@ -12,7 +12,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 
 import { SCHEMA_VERSION, cardPrice, getAppMeta, openDb, setAppMeta, stats } from "./lib/db.js";
-import { QUERY_HELP, searchCollection } from "./lib/query.js";
+import { QUERY_HELP, SECTION_BYS, collectionSections, searchCollection } from "./lib/query.js";
 import { CARD_FACTS_META, IMPORT_MODES, backfillCardFacts, cardFactsPending, importManaBoxCsv, refreshOwnedCards } from "./lib/manabox.js";
 import { syncEnglishPrices } from "./lib/prices.js";
 import {
@@ -46,7 +46,7 @@ import {
 } from "./lib/scans.js";
 import {
   BinderError, MAX_BINDER_NAME, collectionMaster, createBinder, deckToBinder, defaultImportMode, deleteBinder, findBinder, listBinders,
-  moveCopies, renameBinder, setCollectionMaster,
+  moveCopies, renameBinder, setBinderProps, setCollectionMaster,
 } from "./lib/binders.js";
 import { deleteCopies, editCopies, listEdits, relanguageScans, undoEdit } from "./lib/edits.js";
 
@@ -203,7 +203,9 @@ function collectionRows(query) {
   let result;
   try {
     const binder = query.has("binder") ? query.get("binder").slice(0, 200) : null;
-    result = searchCollection(db, { q: query.get("q") || "", group, sort: query.get("sort") || "name", dir, limit, offset, binder });
+    // ?section_by=set|color|rarity|type&section=<key>: one section of GET /api/collection/sections.
+    const section = query.has("section_by") ? { by: query.get("section_by"), key: (query.get("section") || "").slice(0, 200) } : null;
+    result = searchCollection(db, { q: query.get("q") || "", group, sort: query.get("sort") || "name", dir, limit, offset, binder, section });
   } catch (err) {
     throw new HttpError(400, err.message);
   }
@@ -1115,8 +1117,14 @@ async function handleScanApi(req, res, url) {
     let name;
     try { name = decodeURIComponent(m[1]); } catch { throw new HttpError(400, "Bad binder name"); }
     if (method === "PATCH") {
+      // {name?} renames (merge); {type?, cover_scryfall_id?} set the type / cover (null = auto), after a rename.
       const body = await readJson(req);
-      return sendJson(res, 200, await exclusive(async () => scanCall(() => renameBinder(db, name, body.name, { confirm_master: body.confirm_master === true }))));
+      const props = body.type !== undefined || body.cover_scryfall_id !== undefined;
+      return sendJson(res, 200, await exclusive(async () => scanCall(() => {
+        if (body.name === undefined && props) return setBinderProps(db, name, body);
+        const r = renameBinder(db, name, body.name, { confirm_master: body.confirm_master === true });
+        return props ? { ...setBinderProps(db, r.name, body), renamed: r.renamed, merged: r.merged, converted_copies: r.converted_copies } : r;
+      })));
     }
     if (method === "DELETE") {
       // ?cards=unsort|delete. The legacy ?source=scan (unlogged delete of the scanned rows) answers 400.
@@ -1474,6 +1482,18 @@ async function handleApi(req, res, url) {
   }
   if (pathname === "/api/query-help" && method === "GET") return sendJson(res, 200, { help: QUERY_HELP });
   if (pathname === "/api/collection" && method === "GET") return sendJson(res, 200, collectionRows(query));
+  if (pathname === "/api/collection/sections" && method === "GET") {
+    // Section headers (binder detail page): ?by=set|color|rarity|type plus the q/group/binder of /api/collection.
+    const by = query.get("by") || "set";
+    if (!SECTION_BYS.includes(by)) throw new HttpError(400, `by must be one of ${SECTION_BYS.join(", ")}`);
+    const group = query.get("group") === "printing" ? "printing" : "card";
+    const binder = query.has("binder") ? query.get("binder").slice(0, 200) : null;
+    try {
+      return sendJson(res, 200, collectionSections(db, { q: query.get("q") || "", group, binder, by }));
+    } catch (err) {
+      throw new HttpError(400, err.message);
+    }
+  }
   if ((m = /^\/api\/cards\/([0-9a-f-]{36})$/i.exec(pathname)) && method === "GET") {
     return sendJson(res, 200, cardDetail(m[1].toLowerCase()));
   }
