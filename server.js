@@ -40,10 +40,11 @@ import {
   BackupError, backupConfig, backupPath, createBackup, dbCounts, deleteBackup, gunzipToFile, listBackups, swapDatabase, validateBackupDb,
 } from "./lib/backups.js";
 import {
-  CONDITIONS, PROBE_SESSION_RE, ProbeRunner, ScanError, probeKey, captureLog, commitScans, createScanSlots, defaultImageDir, normFinish,
+  CONDITIONS, LABEL_SOURCES, PROBE_SESSION_RE, ProbeRunner, ScanError, probeKey, captureLog, commitScans, createScanSlots, defaultImageDir, normFinish,
   deleteScan, exportCalibration, getScan, incrementScan, listScans, priceScans, recordTruth, scanImagePath, scanStripPath, stageScan, undoLast,
   updateScan,
 } from "./lib/scans.js";
+import { learningReport } from "./lib/learning.js";
 import {
   BinderError, MAX_BINDER_NAME, collectionMaster, createBinder, deckToBinder, defaultImportMode, deleteBinder, findBinder, listBinders,
   moveCopies, renameBinder, setCollectionMaster,
@@ -855,6 +856,16 @@ function scanSettings(raw = {}) {
   return { storageLang, foil, setHint, condition, precise: raw.precise === true };
 }
 
+/** ?source=a,b of the calibration export: label sources to include (null = all; unknown names 400). */
+function calibrationSources(query) {
+  const raw = query.get("source");
+  if (!raw) return null;
+  const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const bad = list.filter((s) => !LABEL_SOURCES.includes(s));
+  if (bad.length) throw new HttpError(400, `source must be one of ${LABEL_SOURCES.join(", ")}`);
+  return list;
+}
+
 /** Optional capture-controller fields of a scan request: {capture, dupOf}. */
 function captureFields(body) {
   const capture = body.capture ?? null;
@@ -935,7 +946,7 @@ async function postScan(req, res) {
   if (gone.signal.aborted) throw new HttpError(499, "Scan cancelled: the client closed the request");
   const staged = stageScan(db, result, {
     image: result.upright?.card ?? card, strip: result.upright?.strip ?? strip, force: body.force === true, condition: settings.condition, calibration: body.calibration === true, replaceId,
-    dupOf, capture,
+    dupOf, capture, session,
   });
   // A shutter scan inside a probe session: the next probe compares against it.
   prober.noteScan(session, result, staged.scan);
@@ -943,7 +954,8 @@ async function postScan(req, res) {
   const price = await scanPriceEur(result, {
     db, lookupEn: (p) => indexLookup("storagePrinting", p, "en").catch(() => null),
   });
-  return { scan: staged.scan, duplicate: staged.duplicate, result: { ...resultSummary(result), ...price } };
+  // implicitly_confirmed: the session's SUGGEST rows this new card settled (lib/scans.js confirmImplicitly).
+  return { scan: staged.scan, duplicate: staged.duplicate, implicitly_confirmed: staged.confirmed ?? [], result: { ...resultSummary(result), ...price } };
 }
 
 /**
@@ -971,6 +983,7 @@ async function postProbe(body, { gone, session, capture }) {
   const response = {
     probe: true, outcome: out.outcome, ...(out.reason ? { reason: out.reason } : {}), ...(out.scan ? { scan: out.scan } : {}),
     ...(out.finish_upgraded ? { finish_upgraded: true } : {}),
+    ...(out.confirmed?.length ? { implicitly_confirmed: out.confirmed } : {}),
   };
   const r = out.result;
   if (!r) return { ...response, result: null };
@@ -1044,6 +1057,7 @@ async function handleScanApi(req, res, url) {
   }
   if (pathname === "/api/scans/undo" && method === "POST") return sendJson(res, 200, undoLast(db));
   if (pathname === "/api/scans/capture-log" && method === "GET") return sendJson(res, 200, captureLog(db));
+  if (pathname === "/api/scans/learning" && method === "GET") return sendJson(res, 200, learningReport(db));
   if (pathname === "/api/scans/manual" && method === "POST") return sendJson(res, 201, await postManualScan(req));
   if (pathname === "/api/scans/commit" && method === "POST") {
     const body = await readJson(req);
@@ -1143,7 +1157,7 @@ async function handleScanApi(req, res, url) {
   if (pathname === "/api/index/fingerprints" && method === "POST") return sendJson(res, 202, { started: startIndexJob("fingerprints") });
 
   if (pathname === "/api/calibration/export" && method === "GET") {
-    const data = JSON.stringify({ exported_at: new Date().toISOString(), version: VERSION, scans: exportCalibration(db) }, null, 1);
+    const data = JSON.stringify({ exported_at: new Date().toISOString(), version: VERSION, scans: exportCalibration(db, { sources: calibrationSources(query) }) }, null, 1);
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
       "Content-Disposition": 'attachment; filename="scanner-calibration.json"',

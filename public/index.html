@@ -5889,7 +5889,7 @@ function ScanRow({ s, status, selected, onSelect, onPatch, onDelete, onIncrement
       <div className="info">
         <div className="top">
           <span className="nm" title={s.name}>{s.name || "Unidentified card"}</span>
-          <span className={`badge st-chip ${status}`}>{STATUS_LABEL[status] || status}</span>
+          <span className={`badge st-chip ${status}`}>{status === "auto" && s.match_status === "confirmed" ? "✓ confirmed" : STATUS_LABEL[status] || status}</span>
         </div>
         <div className="sub">
           {s.set_code && <span>{String(s.set_code).toUpperCase()} #{s.collector_number}</span>}
@@ -6075,6 +6075,13 @@ function ScanTab({ active, health, onCommitted }) {
     return "auto";
   }, [statusById]);
   const markStatus = (id, st) => setStatusById((m) => ({ ...m, [id]: st }));
+  // Scanning on settles the session's earlier "? confirm" rows (server: lib/scans.js confirmImplicitly);
+  // their chips turn "✓ confirmed", a short toast says so (never over another toast). No extra taps.
+  const noteConfirmed = (list) => {
+    if (!Array.isArray(list) || !list.length) return;
+    setStatusById((m) => { const n = { ...m }; for (const c of list) if (c?.id) n[c.id] = "auto"; return n; });
+    setToast((t) => t || { text: list.length === 1 ? `✓ ${list[0].name || "Previous card"} confirmed` : `✓ ${list.length} cards confirmed`, ms: 2500 });
+  };
 
   // kind: a scan status (auto|suggest|review|failed|duplicate|error) or "increment" (+1);
   // res: the /api/scan answer {scan, duplicate, result}, or {increment:true, price_eur} for +1.
@@ -6162,6 +6169,7 @@ function ScanTab({ active, health, onCommitted }) {
     }
     const status = ["auto", "suggest", "review", "failed"].includes(r.status) ? r.status : scan ? statusOf(scan) : "failed";
     if (scan?.id) markStatus(scan.id, status);
+    noteConfirmed(res?.implicitly_confirmed);
     setLast({ kind: status, scan, result: r, payload, preview });
     feedback(status, res);
     loadScans();
@@ -6291,6 +6299,7 @@ function ScanTab({ active, health, onCommitted }) {
       replaceRef.current = null;
       if (sameTrack && replaced !== scan.id) api(`/api/scans/${replaced}`, { method: "DELETE" }).catch(() => {}).finally(loadScans);
     }
+    noteConfirmed(res.implicitly_confirmed);
     setLast({ kind: status, scan, result: r, payload: { ...body, allowClaude: false }, preview, probe: true });
     feedback(status, res);
     loadScans();
@@ -6349,8 +6358,9 @@ function ScanTab({ active, health, onCommitted }) {
   };
   const increment = async (id) => {
     try {
-      await api(`/api/scans/${id}/increment`, { method: "POST", json: {} });
+      const res = await api(`/api/scans/${id}/increment`, { method: "POST", json: {} });
       setToast({ text: "+1 copy" });
+      noteConfirmed(res?.implicitly_confirmed);
       feedback("increment", { increment: true, price_eur: priceRef.current.get(id) ?? null });
       await loadScans();
     } catch (e) { showError(e.message); }
@@ -6360,6 +6370,8 @@ function ScanTab({ active, health, onCommitted }) {
       // Discarded rows go first: Undo then acts on the newest VISIBLE scan, not on a hidden one.
       await flushDiscards();
       const r = await api("/api/scans/undo", { method: "POST", json: {} });
+      // an undone stage / +1 takes back the implicit confirmations it caused
+      for (const id of r?.unconfirmed || []) markStatus(id, "suggest");
       setLast(null);
       setToast({ text: r?.scan?.name || r?.name ? `Removed ${r.scan?.name || r.name}` : "Last scan undone" });
       await loadScans();
@@ -7586,11 +7598,48 @@ function SchedulerInfo({ st }) {
   );
 }
 
+// GET /api/scans/learning (lib/learning.js): plain words for what kept a confirmed card below "sure".
+const LEARN_REASON = {
+  titleAuto: "the title read was not clear enough", collectorConf: "the collector line was hard to read",
+  fpVerify: "the art match was not close enough", fpAuto: "the art fingerprint was not sure", fpGap: "the art looked like another card too",
+  "no title read": "no title could be read", "no collector line": "no collector line was found", "no fingerprint": "the art was not compared",
+  "competing card": "another card scored almost as high", "printings share this art": "several printings share this art",
+  "collector read uncertain": "the collector line was uncertain", "same number in another set": "the number exists in another set too",
+};
+
+/** Compact learning summary (Settings → Scanner & data). */
+function ScannerLearning() {
+  const [rep, setRep] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => { api("/api/scans/learning").then(setRep, (e) => setError(e.message)); }, []);
+  if (error) return <p className="small muted" style={{ margin: 0 }}>{error}</p>;
+  if (!rep) return <Spinner />;
+  const o = rep.outcomes || {};
+  const corrected = (o.auto_corrected || 0) + (o.suggest_corrected || 0) + (o.review_corrected || 0);
+  const prec = rep.rates?.auto_precision;
+  const top = rep.top_reason;
+  return (
+    <div className="stack">
+      <div className="summary-grid">
+        <div className="stat"><div className="v">{fmtInt(rep.labelled)}</div><div className="k">Examples</div></div>
+        <div className="stat"><div className="v">{fmtInt(o.suggest_confirmed)}</div><div className="k">Unsure, then right</div></div>
+        <div className="stat"><div className="v">{fmtInt(corrected)}</div><div className="k">Fixed by you</div></div>
+        <div className="stat"><div className="v">{prec == null ? "–" : `${Math.round(prec * 100)}%`}</div><div className="k">Sure &amp; right</div></div>
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>
+        {top ? `Most common reason a card stayed unsure: ${LEARN_REASON[top.key] || top.key} (${fmtInt(top.count)}×).` : "No unsure card confirmed yet."}
+        {rep.enough_data ? "" : ` Tuning needs about ${rep.min_examples} confirmed unsure cards.`}
+      </p>
+    </div>
+  );
+}
+
 function ScannerIndexPanel({ health }) {
   const [st, setSt] = useState(null);
   const [error, setError] = useState(null);
   const [missing, setMissing] = useState(false);
   const [busy, setBusy] = useState(null);
+  const [learnOpen, setLearnOpen] = useState(false);
   const load = useCallback(async () => {
     try { setSt(await api("/api/index/status")); setError(null); }
     catch (e) { if (e.status === 404) setMissing(true); else setError(e.message); }
@@ -7642,11 +7691,12 @@ function ScannerIndexPanel({ health }) {
           {busy === "fp" ? <><span className="spinner" aria-hidden="true" /> Starting…</> : <><Icon.sparkle /> Build fingerprints</>}
         </button>
       </div>
-      <details className="disclosure">
-        <summary>Calibration data</summary>
+      <details className="disclosure" onToggle={(e) => setLearnOpen(e.currentTarget.open)}>
+        <summary>Scanner learning</summary>
         <div className="stack" style={{ marginTop: 6 }}>
-          <p className="small muted" style={{ margin: 0 }}>Scans made in calibration mode keep their scores, OCR output and the printing you confirmed. Export them to tune the scanner thresholds.</p>
-          <a className="btn" href="/api/calibration/export" download="mtg-scan-calibration.json" style={{ justifySelf: "start" }}><Icon.download /> Export calibration (JSON)</a>
+          <p className="small muted" style={{ margin: 0 }}>Every card you confirm, fix or add keeps its scores and OCR output with the right printing. Scanning on past a "? confirm" card confirms it. Export the examples to tune the scanner thresholds.</p>
+          {learnOpen && <ScannerLearning />}
+          <a className="btn" href="/api/calibration/export" download="mtg-scan-calibration.json" style={{ justifySelf: "start" }}><Icon.download /> Export examples (JSON)</a>
         </div>
       </details>
     </section>

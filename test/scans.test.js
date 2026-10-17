@@ -131,7 +131,7 @@ describe("staging", () => {
   });
 
   test("failed results are not staged", () => {
-    assert.deepEqual(stage({ status: "failed", printing: null }), { scan: null, duplicate: false });
+    assert.deepEqual(stage({ status: "failed", printing: null }), { scan: null, duplicate: false, confirmed: [] });
     assert.equal(listScans(ctx.db).length, 0);
   });
 
@@ -197,7 +197,7 @@ describe("staging", () => {
     assert.equal(existsSync(path.join(imageDir, `scan-${a.id}.jpg`)), false);
     u = undoLast(ctx.db, { imageDir });
     assert.equal(u.scan.id, b.id);
-    assert.deepEqual(undoLast(ctx.db, { imageDir }), { undone: null, scan: null });
+    assert.deepEqual(undoLast(ctx.db, { imageDir }), { undone: null, scan: null, unconfirmed: [] });
   });
 
   test("undo reverts an edit (quantity via '-') instead of deleting the scan", () => {
