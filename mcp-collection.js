@@ -3,7 +3,8 @@
 // collection and decks (incl. what built decks claim: owned vs free copies,
 // conflicts, shopping list), plus two write tools: save_deck (decks the user then
 // sees in the app) and edit_copies (fix language / printing / finish / condition
-// of owned copies; lib/edits.js, actor 'claude', logged and undoable in the app).
+// of owned copies; lib/edits.js, actor 'claude', logged and undoable in the app),
+// plus list_wishlist / add_to_wishlist (lib/wishlist.js; Claude may add, never remove).
 // evaluate_deck is a dry run: stats, Commander bracket and 1-10 score of a draft
 // list (lib/power.js) without saving it. Its combo check (Commander Spellbook,
 // lib/spellbook.js) uses this process's own DB connection but the server's
@@ -32,6 +33,7 @@ import { BinderError, listBinders } from "./lib/binders.js";
 import { EDIT_CONDITIONS, editCopies } from "./lib/edits.js";
 import { getPrinting, openIndex } from "./lib/cardindex.js";
 import { fetchCollectionPolitely } from "./lib/manabox.js";
+import { WishlistError, addWishlistItem, listWishlist, wishlistShopping } from "./lib/wishlist.js";
 
 const VERSION = process.env.APP_VERSION || "dev";
 const DEFAULT_PROTOCOL = "2025-06-18";
@@ -410,6 +412,41 @@ const TOOLS = [
     annotations: { title: "Edit owned copies", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     run: editCopiesTool,
   },
+  {
+    name: "list_wishlist",
+    description:
+      "The user's wishlist (cards they want to buy, outside decks): per item the wanted copies, how many they own already " +
+      "(got it = owned >= wanted), the current EUR price (cheapest known printing when any printing will do), the user's max " +
+      "price and whether the price is below it, priority and note, plus the total EUR to buy.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { title: "Wishlist", readOnlyHint: true, openWorldHint: false },
+    run: listWishlistTool,
+  },
+  {
+    name: "add_to_wishlist",
+    description:
+      "Add a card to the user's wishlist (only when the user asks for it). Give the name; set + collector_number only when the " +
+      "user wants that exact printing. Adding a card already on the list adds the quantity. Removing items is only possible " +
+      "in the app (Value tab → Wishlist).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        card: { type: "string", description: "Card name." },
+        set: { type: "string", description: "Set code, only for one specific printing." },
+        collector_number: { type: "string", description: "Collector number (with set)." },
+        quantity: { type: "integer", minimum: 1, maximum: 99, description: "Copies wanted (default 1)." },
+        finish: { type: "string", enum: ["any", "normal", "foil", "etched"], description: "Default any." },
+        language: { type: "string", description: "Language code (en, de, ja, ...); default any." },
+        max_price_eur: { type: "number", minimum: 0, description: "The most the user wants to pay per copy, in EUR." },
+        priority: { type: "string", enum: ["high", "normal", "low"] },
+        note: { type: "string", description: "Short note (why, for which deck)." },
+      },
+      required: ["card"],
+      additionalProperties: false,
+    },
+    annotations: { title: "Add to wishlist", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    run: addToWishlistTool,
+  },
 ];
 const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
@@ -651,7 +688,50 @@ function shoppingListTool() {
           : `; ${k.in_use_count} in other decks (buying instead ${eur(k.in_use_eur)})`) : ""}`);
     }
   }
+  const wish = wishlistShopping(getDb());
+  if (wish.items.length) {
+    lines.push("", `Wishlist (not for a deck): ${wish.items.length} cards, ${eur(wish.total_eur)} (details: list_wishlist):`);
+    for (const it of wish.items.slice(0, 50)) {
+      lines.push(`  ${it.need}x ${it.name} | ${eur(it.price_eur)} each${it.below_max ? " (below the user's max price)" : ""}`);
+    }
+  }
   return lines.join("\n");
+}
+
+// --- wishlist (lib/wishlist.js): list + add only; deleting is app-only ----------
+
+const eurText = (v) => (v == null ? "no EUR price" : `€${v.toFixed(2)}`);
+function wishLine(i) {
+  const printing = i.any_printing ? "any printing" : `${String(i.set_code || "").toUpperCase()} #${i.collector_number}`;
+  const extra = [i.finish === "normal" ? "non-foil" : i.finish, i.language ? i.language.toUpperCase() : null].filter(Boolean);
+  return `  #${i.id} ${i.quantity}x ${i.name} (${printing}${extra.length ? `, ${extra.join(", ")}` : ""}) | owned ${i.owned}` +
+    `${i.got_it ? " | GOT IT" : ` | to buy ${i.to_buy}, ${eurText(i.price_eur)} each`}` +
+    `${i.max_price_eur != null ? ` | max €${i.max_price_eur.toFixed(2)}${i.below_max ? " (price is below max)" : ""}` : ""}` +
+    `${i.priority !== "normal" ? ` | ${i.priority} priority` : ""}${i.note ? ` | note: ${i.note}` : ""}`;
+}
+
+function listWishlistTool() {
+  const { items, totals } = listWishlist(getDb());
+  if (!items.length) return "The wishlist is empty.";
+  return [`Wishlist: ${totals.items} items, ${totals.to_buy} copies to buy for ${eurText(totals.to_buy_eur)}` +
+    `${totals.unpriced ? ` (${totals.unpriced} without EUR price)` : ""}${totals.got_it ? `; ${totals.got_it} already owned (got it)` : ""}:`,
+  ...items.slice(0, 200).map(wishLine), ...(items.length > 200 ? [`  ... ${items.length - 200} more`] : [])].join("\n");
+}
+
+async function addToWishlistTool(args) {
+  const name = String(args.card ?? "").trim();
+  if (!name) throw new ToolError("card is required.");
+  if (args.collector_number != null && !args.set) throw new ToolError("collector_number needs set.");
+  try {
+    const { item, merged } = await addWishlistItem(getDb(), {
+      name, set: args.set || undefined, collector_number: args.collector_number ?? undefined, quantity: args.quantity,
+      finish: args.finish, language: args.language, max_price_eur: args.max_price_eur, priority: args.priority, note: args.note,
+    }, { source: "claude" });
+    return `${merged ? "Updated" : "Added"} wishlist item:\n${wishLine(item)}\nThe user sees it in the app (Value tab → Wishlist).`;
+  } catch (err) {
+    if (err instanceof WishlistError) throw new ToolError(err.message);
+    throw err;
+  }
 }
 
 function listDecksTool() {

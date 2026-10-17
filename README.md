@@ -17,7 +17,7 @@ find out which cards a deck still needs.
 - **Scans cards** with your phone's camera, one after another.
 - **Sorts cards into binders**, right on your phone.
 - **Plans decks** and shows what you own and what you still need to buy.
-- **Shows prices** in euros, for single cards, binders and decks.
+- **Shows prices** in euros and **tracks your collection's value** over time.
 - **Lets you chat with Claude** about your cards and decks.
 - **Makes backups** of everything with one tap.
 
@@ -72,15 +72,13 @@ docker compose pull
 docker compose up -d
 ```
 
-Your data stays. Changed `.env`? Run `docker compose up -d` again.
-**Stop:** `docker compose down`.
+Your data stays. Changed `.env`? Run `docker compose up -d` again. **Stop:** `docker compose down`.
 
 **On the first start** the app downloads card data. Cards printed since 2014
 scan after a few minutes; older cards are recognised well after about two
 hours (until then you may pick them by hand).
 
-**There is no login.** Keep the app on your home network
-([why](#good-to-know)).
+**There is no login.** Keep the app on your home network ([why](#good-to-know)).
 
 ## Scan cards
 
@@ -118,6 +116,8 @@ More: [docs/collection.md](docs/collection.md)
   cards, so you see conflicts between decks.
 - The **shopping list** collects what all your decks still need.
 - **Put into deck box** moves a deck's cards into their own binder.
+- **Value** tab: your collection's worth over time, top cards, price moves,
+  and a **wishlist** (♡ on any card) with max prices. [Details](docs/finance.md)
 - Commander decks show a **bracket** (1-5) and a **power score** (1-10). Combos are checked at [Commander Spellbook](https://commanderspellbook.com/): only card names are sent, and you can turn it off. [Details](docs/decks.md#bracket-and-power-score)
 
 More: [docs/decks.md](docs/decks.md)
@@ -162,6 +162,7 @@ More: [docs/backups-and-security.md](docs/backups-and-security.md)
 | Scanner: how it works, foil, calibration | [docs/scanner.md](docs/scanner.md) |
 | Collection: imports, binders, editing, search | [docs/collection.md](docs/collection.md) |
 | Decks, conflicts, shopping list | [docs/decks.md](docs/decks.md) |
+| Value over time, wishlist | [docs/finance.md](docs/finance.md) |
 | Claude chat and token | [docs/claude.md](docs/claude.md) |
 | Backups and security | [docs/backups-and-security.md](docs/backups-and-security.md) |
 | For developers: code, tests, releases | [docs/development.md](docs/development.md) |

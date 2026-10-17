@@ -136,7 +136,7 @@ code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); 
 .brand img { width: 28px; height: 28px; border-radius: 7px; }
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
   height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   background: var(--surface);
@@ -148,6 +148,18 @@ code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); 
   min-height: 44px; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .01em;
 }
 .tab svg { width: 24px; height: 24px; }
+.tab > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; }
+.tab .tab-s { display: none; }
+/* Six tabs on a phone: "Collection" gets its short label below 420 px. */
+@media (max-width: 419px) {
+  .tab { font-size: .68rem; letter-spacing: 0; }
+  .tab .tab-l.has-short { display: none; }
+  .tab .tab-s { display: inline; }
+}
+@media (max-width: 359px) {
+  .tab { font-size: .62rem; }
+  .tab > span { padding: 0; }
+}
 .tab[aria-selected="true"] { color: var(--accent); }
 .tab[aria-selected="true"] svg { transform: translateY(-1px); }
 main {
@@ -937,6 +949,36 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 .buy-row .nm .sub { font-size: .78rem; color: var(--muted); overflow-wrap: anywhere; }
 .buy-row .p { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .buy-total { display: flex; justify-content: space-between; gap: 8px; padding: 10px; border-top: 1px solid var(--border); font-weight: 700; }
+/* Value tab + wishlist */
+.value-hero { display: grid; gap: 2px; }
+.value-hero .k { font-size: .76rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.value-hero .v { font-size: 2rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.15; overflow-wrap: anywhere; }
+.change-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.change-tile { appearance: none; text-align: left; cursor: pointer; font: inherit; color: inherit; min-height: 56px; }
+.change-tile .v { font-size: 1rem; }
+.change-tile[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.change-tile:disabled { cursor: default; opacity: .7; }
+.gain { color: var(--ok); }
+.loss { color: var(--bad); }
+.change-split { padding: 10px 12px; gap: 8px; }
+.value-chart svg { width: 100%; height: auto; display: block; touch-action: pan-y; }
+.value-chart text { font-family: var(--font); }
+.bar-list { display: grid; gap: 10px; }
+.bar-row { display: grid; gap: 4px; min-width: 0; }
+.bar-row .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; flex: 1; }
+.bar-row .v { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+.bar-row .bar { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.bar-row .bar > span { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+.wish-row { display: grid; }
+.wish-row + .wish-row { border-top: 1px solid var(--border); }
+.wish-row > .btn { justify-self: start; margin: 0 12px 10px 58px; }
+.wish-row.done .list-row b { color: var(--muted); }
+.wish-thumb { width: 36px; height: 50px; object-fit: cover; border-radius: 4px; background: var(--surface-2); }
+.radio-row { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+.radio-row input { width: 20px; height: 20px; accent-color: var(--accent); }
+.buy-row.has-act { grid-template-columns: 34px minmax(0, 1fr) auto 36px; }
+.buy-row .wish-btn { width: 36px; min-height: 36px; color: var(--accent); }
+.buy-row .wish-btn:disabled { opacity: 1; }
 .usage-line { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: .9rem; }
 .conflict-list { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; font-size: .86rem; }
 .delta-list { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: .86rem; max-height: 40vh; overflow: auto; }
@@ -1283,6 +1325,9 @@ const Icon = {
   zoomOut: () => <Svg><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5M8 11h6" /></Svg>,
   cart: () => <Svg><path d="M3 4h2l2.4 11h10.2L20 8H6.2" /><circle cx="9" cy="19.5" r="1.3" /><circle cx="17" cy="19.5" r="1.3" /></Svg>,
   box: () => <Svg><path d="M3 8l9-4 9 4v9l-9 4-9-4z" /><path d="M3 8l9 4 9-4M12 12v9" /></Svg>,
+  chart: () => <Svg><path d="M4 4v16h16" /><path d="M7 15l4-4 3 3 5-6" /></Svg>,
+  heart: () => <Svg><path d="M12 20s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 10c0 5.65-7 10-7 10z" /></Svg>,
+  heartFull: () => <Svg><path d="M12 20s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 10c0 5.65-7 10-7 10z" fill="currentColor" /></Svg>,
   gear: () => <Svg><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></Svg>,
 };
 
@@ -1444,7 +1489,9 @@ const PRICE_KEYS = [
 // Own price, else (EUR only) the English twin's `*_en` key the server copies in.
 const priceOf = (prices, k) => prices?.[k] ?? (k.startsWith("eur") ? prices?.[`${k}_en`] : null) ?? null;
 
-function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged }) {
+function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged, onWishChanged }) {
+  const [wishing, setWishing] = useState(false); // WishSheet open
+  const [wished, setWished] = useState(null); // confirmation text
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [attempt, setAttempt] = useState(0);
@@ -1518,6 +1565,10 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged }) {
                   </span>
                 ))}
                 {!PRICE_KEYS.some(([k]) => priceOf(card.prices, k) != null) && <span className="muted">No price data.</span>}
+              </div>
+              <div className="row">
+                <button type="button" className="btn sm" onClick={() => { setWished(null); setWishing(true); }}><Icon.heart /> Wishlist</button>
+                {wished && <span className="small" role="status" style={{ color: "var(--ok)" }}>♥ {wished}</span>}
               </div>
             </section>
 
@@ -1616,6 +1667,11 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged }) {
       {deleteRow && card && (
         <DeleteCopySheet card={card} row={deleteRow} onClose={() => setDeleteRow(null)}
           onDone={(res, n) => afterEdit(`Deleted ${plural(res?.deleted_copies ?? n, "copy", "copies")}.`, res?.edit_id)} />
+      )}
+      {wishing && card && (
+        <WishSheet card={{ scryfall_id: card.scryfall_id, oracle_id: card.oracle_id, name: card.name, set_code: card.set_code, collector_number: card.collector_number }}
+          onClose={() => setWishing(false)}
+          onDone={(res) => { setWishing(false); setWished(res?.merged ? `On your wishlist: ${res.item.quantity} wanted` : "Added to your wishlist"); onWishChanged?.(); }} />
       )}
       {masterDialog}
       {toastEl}
@@ -2414,18 +2470,25 @@ function lineEurOf(qtyKey) {
   return (it) => (it.cost_eur != null ? Number(it.cost_eur) : it.price_eur == null ? null : Number(it.price_eur) * qty(it));
 }
 
-function BuyList({ items, qtyKey, total, sub, label = "Total" }) {
+function BuyList({ items, qtyKey, total, sub, label = "Total", onWish = null, isWished = null }) {
   const lineEur = lineEurOf(qtyKey);
   return (
     <div className="deck-section" style={{ padding: 0, gap: 0 }}>
       <div className="buy-list">
         {items.map((it, i) => {
           const eur = lineEur(it);
+          const wished = isWished?.(it);
           return (
-            <div key={`${it.name}-${i}`} className="buy-row">
+            <div key={`${it.name}-${i}`} className={`buy-row${onWish ? " has-act" : ""}`}>
               <span className="q">{it[qtyKey] ?? 1}×</span>
               <span className="nm"><b>{it.name}</b>{sub && sub(it)}</span>
               <span className="p">{eur == null ? <span className="muted">no €</span> : fmtEur(eur)}</span>
+              {onWish && (
+                <button type="button" className="btn ghost icon sm wish-btn" aria-pressed={Boolean(wished)} disabled={wished}
+                  aria-label={wished ? `${it.name} is on your wishlist` : `Add ${it.name} to your wishlist`} onClick={() => onWish(it)}>
+                  {wished ? <Icon.heartFull /> : <Icon.heart />}
+                </button>
+              )}
             </div>
           );
         })}
@@ -2536,9 +2599,40 @@ function DeckLinks({ decks, onOpenDeck, shared = false }) {
   );
 }
 
+/**
+ * Add shopping rows ({oracle_id?, name, qty}) to the wishlist: POST /api/wishlist by oracle id + name
+ * (the server knows the deck printing's card row). Remembers which rows were added this time.
+ */
+function useWishAdd(onWishChanged) {
+  const [added, setAdded] = useState(() => new Set());
+  const [msg, setMsg] = useState(null);
+  const keyOf = (it) => it.oracle_id || `name:${it.name}`;
+  const add = async (list) => {
+    let n = 0;
+    const fails = [];
+    const done = new Set(added);
+    for (const it of list) {
+      if (done.has(keyOf(it))) continue;
+      try {
+        await api("/api/wishlist", { method: "POST", json: { oracle_id: it.oracle_id || undefined, name: it.name, quantity: Math.max(1, Math.min(99, Number(it.qty) || 1)) } });
+        done.add(keyOf(it));
+        n++;
+      } catch (e) { fails.push(`${it.name}: ${e.message}`); }
+    }
+    setAdded(done);
+    setMsg(fails.length ? { error: `Could not add ${fails.join("; ")}` } : { text: n === 1 ? `Added ${list[0].name} to your wishlist.` : `Added ${plural(n, "card")} to your wishlist.` });
+    if (n) onWishChanged?.();
+  };
+  const el = msg ? (msg.error ? <ErrorNotice error={msg.error} onDismiss={() => setMsg(null)} />
+    : <div className="notice ok" role="status"><span aria-hidden="true">♥</span><div className="grow">{msg.text}</div>
+      <button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setMsg(null)}><Icon.close /></button></div>) : null;
+  return { add, isAdded: (it) => added.has(keyOf(it)), el };
+}
+
 /** What to buy for this deck (copies you don't own), plus the owned copies
  *  that sit in other built decks (move them, or buy extra). */
-function DeckShopping({ deck, onOpenDeck }) {
+function DeckShopping({ deck, onOpenDeck, onWishChanged }) {
+  const wish = useWishAdd(onWishChanged);
   const shopping = deck?.shopping;
   const items = asList(shopping?.items).filter((x) => x && x.name)
     .map((x) => ({ ...x, qty: x.to_buy ?? x.need ?? x.quantity ?? 1 }));
@@ -2553,7 +2647,13 @@ function DeckShopping({ deck, onOpenDeck }) {
     <section className="stack" style={{ gap: 8 }} aria-labelledby="deck-shop-title">
       <h3 id="deck-shop-title" className="row" style={{ gap: 8 }}>To buy <span className="muted small">{items.length ? plural(items.reduce((a, x) => a + (Number(x.qty) || 1), 0), "card") : "nothing"}</span></h3>
       {items.length > 0
-        ? <BuyList items={items} qtyKey="qty" total={shopping?.total_eur} />
+        ? <>
+          <BuyList items={items} qtyKey="qty" total={shopping?.total_eur} onWish={(it) => wish.add([it])} isWished={wish.isAdded} />
+          {items.length > 1 && !items.every(wish.isAdded) && (
+            <button type="button" className="btn sm" style={{ justifySelf: "start" }} onClick={() => wish.add(items)}><Icon.heart /> Add all to wishlist</button>
+          )}
+          {wish.el}
+        </>
         : <span className="small muted">You own every card. {built ? "Some copies are also claimed by other built decks." : "Some copies are in other decks."}</span>}
       {inUse.length > 0 && (
         <details className="disclosure inuse-list">
@@ -2636,7 +2736,7 @@ function DeckBoxSheet({ deck, onClose, onDone }) {
 }
 
 /** Everything short across all BUILT decks, plus what each deck still misses. */
-function ShoppingListView({ dataVersion, onBack, onOpenDeck }) {
+function ShoppingListView({ dataVersion, onBack, onOpenDeck, onOpenWishlist, onWishChanged }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const load = useCallback(() => {
@@ -2646,6 +2746,8 @@ function ShoppingListView({ dataVersion, onBack, onOpenDeck }) {
   useEffect(load, [load, dataVersion]);
   const items = asList(data?.built?.items).filter((x) => x && x.name);
   const perDeck = asList(data?.per_deck).filter((d) => d && d.id != null);
+  const wishItems = asList(data?.wishlist?.items).filter((x) => x && x.name);
+  const wish = useWishAdd(() => { onWishChanged?.(); load(); });
   return (
     <div className="stack-lg">
       <div><button type="button" className="btn ghost" onClick={onBack} style={{ marginLeft: -8 }}><Icon.back /> All decks</button></div>
@@ -2662,9 +2764,21 @@ function ShoppingListView({ dataVersion, onBack, onOpenDeck }) {
                 <>
                   <span className="small muted">Cards your built decks need together, minus what you own.</span>
                   <BuyList items={items} qtyKey="short" total={data.built?.total_eur}
+                    onWish={(it) => wish.add([{ ...it, qty: it.short }])} isWished={wish.isAdded}
                     sub={(it) => asList(it.decks).length > 0 && <span className="sub">{asList(it.decks).map(refName).join(", ")}</span>} />
+                  {wish.el}
                 </>
               )}
+          </section>
+          <section className="stack" aria-labelledby="shop-wish-title">
+            <div className="row between">
+              <h2 id="shop-wish-title">Wishlist</h2>
+              {onOpenWishlist && <button type="button" className="btn sm" onClick={onOpenWishlist}><Icon.heart /> Open wishlist</button>}
+            </div>
+            {wishItems.length === 0
+              ? <span className="small muted">Nothing on your wishlist to buy. Tap ♡ Wishlist on a card to add it.</span>
+              : <BuyList items={wishItems} qtyKey="need" total={data.wishlist?.total_eur}
+                  sub={(it) => (it.below_max || it.priority === "high") && <span className="sub">{[it.below_max ? "✓ below your max price" : null, it.priority === "high" ? "high priority" : null].filter(Boolean).join(" · ")}</span>} />}
           </section>
           {perDeck.length > 0 && (
             <section className="stack" aria-labelledby="shop-deck-title">
@@ -3193,7 +3307,7 @@ function SpellbookPanel({ health, dataVersion }) {
   );
 }
 
-function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpenDeck, onAsk, onChanged, onCollectionChanged = onChanged }) {
+function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpenDeck, onAsk, onChanged, onCollectionChanged = onChanged, onWishChanged }) {
   const [deck, setDeck] = useState(null);
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
@@ -3430,7 +3544,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
             {notice && <div className="notice warn" role="status"><div className="grow">{notice}</div><button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setNotice(null)}><Icon.close /></button></div>}
           </header>
 
-          <DeckShopping deck={deck} onOpenDeck={onOpenDeck} />
+          <DeckShopping deck={deck} onOpenDeck={onOpenDeck} onWishChanged={onWishChanged} />
 
           {deck.cards.length > 0 && (counts.toBuy > 0 || counts.inUse > 0) && (
             <label className="row" style={{ minHeight: 44, cursor: "pointer" }}>
@@ -3467,7 +3581,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
   );
 }
 
-function DecksTab({ dataVersion, homeKey, deckId, deckNotice, onOpenDeck, onOpenCard, onAsk, onChanged, onCollectionChanged }) {
+function DecksTab({ dataVersion, homeKey, deckId, deckNotice, onOpenDeck, onOpenCard, onAsk, onChanged, onCollectionChanged, onOpenWishlist, onWishChanged }) {
   const [listKey, bumpList] = useReducer((x) => x + 1, 0);
   // "Back" from a deck returns to where it was opened: the list or the shopping list.
   const [shopping, setShopping] = useState(false);
@@ -3475,11 +3589,12 @@ function DecksTab({ dataVersion, homeKey, deckId, deckNotice, onOpenDeck, onOpen
   if (deckId) {
     return (
       <DeckDetail key={deckId} id={deckId} dataVersion={dataVersion} initialNotice={deckNotice} onBack={() => { onOpenDeck(null); bumpList(); }}
-        onOpenCard={onOpenCard} onOpenDeck={onOpenDeck} onAsk={onAsk} onChanged={onChanged} onCollectionChanged={onCollectionChanged} />
+        onOpenCard={onOpenCard} onOpenDeck={onOpenDeck} onAsk={onAsk} onChanged={onChanged} onCollectionChanged={onCollectionChanged} onWishChanged={onWishChanged} />
     );
   }
   if (shopping) {
-    return <ShoppingListView dataVersion={dataVersion + listKey} onBack={() => { setShopping(false); window.scrollTo(0, 0); }} onOpenDeck={onOpenDeck} />;
+    return <ShoppingListView dataVersion={dataVersion + listKey} onBack={() => { setShopping(false); window.scrollTo(0, 0); }} onOpenDeck={onOpenDeck}
+      onOpenWishlist={onOpenWishlist} onWishChanged={onWishChanged} />;
   }
   return <DeckList dataVersion={dataVersion} refreshKey={listKey} onOpen={onOpenDeck} onShopping={() => { setShopping(true); window.scrollTo(0, 0); }} />;
 }
@@ -7704,13 +7819,426 @@ function ScannerIndexPanel({ health }) {
 }
 
 // ===========================================================================
+// Value tab: collection value over time (GET /api/finance/*) and the wishlist
+// (/api/wishlist). The server keeps one snapshot per day (lib/finance.js); the
+// tab only shows it. EUR only. Gains/losses use the ok/bad colours AND a +/−
+// sign, never colour alone.
+// ===========================================================================
+
+const fmtSigned = (n) => (n == null ? "—" : `${n > 0 ? "+" : n < 0 ? "−" : "±"}${fmtEur(Math.abs(n))}`);
+const signClass = (n) => (n > 0 ? "gain" : n < 0 ? "loss" : "");
+const fmtDay = (day) => {
+  const [y, m, d] = String(day).split("-").map(Number);
+  try { return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: "numeric", month: "short" }); } catch { return day; }
+};
+const WISH_FINISH = [["", "Any finish"], ["normal", "Non-foil"], ["foil", "Foil"], ["etched", "Etched"]];
+const WISH_PRIORITY = [["high", "High"], ["normal", "Normal"], ["low", "Low"]];
+
+/** Value over time: area + 2 px line, crosshair on hover/tap; the readout line above names the picked day. */
+function ValueChart({ points }) {
+  const [pick, setPick] = useState(null);
+  const pts = asList(points);
+  if (pts.length < 2) return null;
+  const W = 320, H = 150, top = 10, bottom = 128;
+  const vals = pts.map((p) => Number(p.value_eur) || 0);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 1) { lo -= 0.5; hi += 0.5; }
+  const pad = (hi - lo) * 0.08;
+  lo = Math.max(0, lo - pad); hi += pad;
+  const x = (i) => (i / (pts.length - 1)) * W;
+  const y = (v) => bottom - ((v - lo) / (hi - lo)) * (bottom - top);
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(vals[i]).toFixed(1)}`).join("");
+  const area = `${line}L${W},${bottom}L0,${bottom}Z`;
+  const i = pick ?? pts.length - 1;
+  const onMove = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    if (!r.width) return;
+    setPick(Math.max(0, Math.min(pts.length - 1, Math.round(((e.clientX - r.left) / r.width) * (pts.length - 1)))));
+  };
+  return (
+    <figure className="stack value-chart" style={{ margin: 0, gap: 6 }}>
+      <div className="row between small" aria-live="polite">
+        <span className="muted">{fmtDay(pts[i].day)}{i === pts.length - 1 ? " (now)" : ""}</span>
+        <b>{fmtEur(vals[i])}</b>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Collection value from ${fmtDay(pts[0].day)} (${fmtEur(vals[0])}) to ${fmtDay(pts.at(-1).day)} (${fmtEur(vals.at(-1))})`}
+        onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={() => setPick(null)}>
+        <line x1="0" x2={W} y1={top + 0.5} y2={top + 0.5} stroke="var(--border)" strokeDasharray="2 4" />
+        <line x1="0" x2={W} y1={bottom + 0.5} y2={bottom + 0.5} stroke="var(--border)" />
+        <path d={area} fill="var(--accent-soft)" />
+        <path d={line} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        <line x1={x(i)} x2={x(i)} y1={top} y2={bottom} stroke="var(--muted)" strokeWidth="1" />
+        <circle cx={x(i)} cy={y(vals[i])} r="4.5" fill="var(--accent)" stroke="var(--surface)" strokeWidth="2" />
+        <text x="2" y={top + 13} fontSize="11" fill="var(--muted)">{fmtEur(hi)}</text>
+        <text x="2" y={bottom - 4} fontSize="11" fill="var(--muted)">{fmtEur(lo)}</text>
+        <text x="0" y={H - 4} fontSize="11" fill="var(--muted)">{fmtDay(pts[0].day)}</text>
+        <text x={W} y={H - 4} fontSize="11" fill="var(--muted)" textAnchor="end">{fmtDay(pts.at(-1).day)}</text>
+      </svg>
+    </figure>
+  );
+}
+
+/** Horizontal bar list (binders, rarities): one colour, value at the end. */
+function BarList({ rows, label }) {
+  const max = Math.max(0, ...rows.map((r) => r.value));
+  if (!rows.length) return <p className="small muted" style={{ margin: 0 }}>Nothing yet.</p>;
+  return (
+    <div className="bar-list" role="list" aria-label={label}>
+      {rows.map((r) => (
+        <div key={r.key} className="bar-row" role="listitem">
+          <div className="row between"><span className="nm">{r.name}</span><span className="v">{fmtEur(r.value)}</span></div>
+          <div className="bar" aria-hidden="true"><span style={{ width: `${max ? Math.max(1, (r.value / max) * 100) : 0}%` }} /></div>
+          {r.sub && <span className="small muted">{r.sub}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const CHANGE_PERIODS = [["today", "Today"], ["d7", "7 days"], ["d30", "30 days"]];
+
+function ValueOverview({ dataVersion, onOpenCard }) {
+  const [sum, setSum] = useState(null);
+  const [error, setError] = useState(null);
+  const [range, setRange] = useState(() => store.get("mtg.value.range", 90));
+  const [hist, setHist] = useState(null);
+  const [period, setPeriod] = useState(null);
+  const [moverDays, setMoverDays] = useState(7);
+  const [movers, setMovers] = useState(null);
+  const [top, setTop] = useState(null);
+  const load = useCallback(() => {
+    setError(null);
+    Promise.all([api("/api/finance/summary"), api("/api/finance/top?limit=20")])
+      .then(([s, t]) => { setSum(s); setTop(t); })
+      .catch((e) => setError(`Could not load the collection value: ${e.message}`));
+  }, []);
+  useEffect(load, [load, dataVersion]);
+  useEffect(() => {
+    store.set("mtg.value.range", range);
+    api(`/api/finance/history?days=${range}`).then(setHist).catch(() => setHist(null));
+  }, [range, dataVersion]);
+  useEffect(() => {
+    api(`/api/finance/movers?days=${moverDays}&limit=8`).then(setMovers).catch(() => setMovers(null));
+  }, [moverDays, dataVersion]);
+
+  if (error) return <ErrorNotice error={error} onRetry={load} />;
+  if (!sum) return <Spinner label="Loading value…" />;
+  const ch = sum.changes || {};
+  const sel = period && ch[period] ? period : CHANGE_PERIODS.map(([k]) => k).find((k) => ch[k]) || null;
+  const c = sel ? ch[sel] : null;
+  const pts = asList(hist?.points);
+  const noHistory = !CHANGE_PERIODS.some(([k]) => ch[k]);
+  return (
+    <div className="stack-lg">
+      <section className="stack" aria-labelledby="value-total">
+        <div className="value-hero">
+          <span className="k" id="value-total">Collection value</span>
+          <span className="v">{fmtEur(sum.value_eur)}</span>
+          <span className="small muted">{plural(sum.copies, "copy", "copies")}{sum.unpriced_copies ? ` · ${plural(sum.unpriced_copies, "copy", "copies")} without € price` : ""}</span>
+        </div>
+        <div className="change-tiles" role="group" aria-label="Value change">
+          {CHANGE_PERIODS.map(([k, label]) => (
+            <button key={k} type="button" className="stat change-tile" aria-pressed={sel === k} disabled={!ch[k]} onClick={() => setPeriod(k)}>
+              <div className={`v ${ch[k] ? signClass(ch[k].change_eur) : ""}`}>{ch[k] ? fmtSigned(ch[k].change_eur) : "—"}</div>
+              <div className="k">{label}</div>
+            </button>
+          ))}
+        </div>
+        {noHistory && (
+          <div className="notice ok"><span aria-hidden="true">📈</span><div className="grow">
+            <b>History starts {sum.history_start && sum.history_start !== sum.today ? fmtDay(sum.history_start) : "today"}.</b> The app saves your collection value once a day. Come back tomorrow to see what changed.
+          </div></div>
+        )}
+        {c && (
+          <div className="deck-section change-split" aria-label={`What changed since ${fmtDay(c.from_day)}`}>
+            <span className="small muted">Since {fmtDay(c.from_day)} ({fmtEur(c.value_from_eur)})</span>
+            <div className="row between"><span>Added cards <span className="muted small">({plural(c.added_copies, "copy", "copies")})</span></span><b className={signClass(c.added_eur)}>{fmtSigned(c.added_eur)}</b></div>
+            <div className="row between"><span>Removed cards <span className="muted small">({plural(c.removed_copies, "copy", "copies")})</span></span><b className={signClass(-c.removed_eur)}>{fmtSigned(-c.removed_eur)}</b></div>
+            <div className="row between"><span>Price changes <span className="muted small">(cards you kept)</span></span><b className={signClass(c.price_eur)}>{fmtSigned(c.price_eur)}</b></div>
+          </div>
+        )}
+      </section>
+
+      {pts.length >= 2 && (
+        <section className="stack" aria-labelledby="value-chart-title">
+          <div className="row between">
+            <h2 id="value-chart-title">Over time</h2>
+            <div className="segmented" role="group" aria-label="Time range">
+              {[[30, "30d"], [90, "90d"], [365, "1y"], [3650, "All"]].map(([d, l]) => (
+                <button key={d} type="button" aria-pressed={range === d} onClick={() => setRange(d)}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <ValueChart points={pts} />
+        </section>
+      )}
+
+      {movers?.available && (movers.risers.length > 0 || movers.fallers.length > 0) && (
+        <section className="stack" aria-labelledby="movers-title">
+          <div className="row between">
+            <h2 id="movers-title">Price moves</h2>
+            <div className="segmented" role="group" aria-label="Period">
+              {[[7, "7 days"], [30, "30 days"]].map(([d, l]) => <button key={d} type="button" aria-pressed={moverDays === d} onClick={() => setMoverDays(d)}>{l}</button>)}
+            </div>
+          </div>
+          {[["Risers", movers.risers], ["Fallers", movers.fallers]].filter(([, l]) => l.length).map(([title, list]) => (
+            <div key={title} className="stack" style={{ gap: 6 }}>
+              <h3>{title}</h3>
+              <div className="list">
+                {list.map((m) => (
+                  <button key={`${m.scryfall_id}-${m.finish}`} type="button" className="list-row" onClick={() => onOpenCard(m.scryfall_id)}>
+                    <span className="q">{m.held}×</span>
+                    <span className="main">
+                      <span className="nm"><b>{m.name}</b>{m.finish !== "normal" && <span className="badge accent">✦ {m.finish}</span>}</span>
+                      <span className="sub">{(m.set_code || "").toUpperCase()} #{m.collector_number} · {fmtEur(m.from_eur)} → {fmtEur(m.to_eur)}</span>
+                    </span>
+                    <span className="end">
+                      <b className={signClass(m.change_total_eur)}>{fmtSigned(m.change_total_eur)}</b>
+                      {m.change_pct != null && <span className="muted">{m.change_pct > 0 ? "+" : "−"}{Math.abs(m.change_pct).toFixed(0)}%</span>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      <section className="stack" aria-labelledby="top-title">
+        <h2 id="top-title">Most valuable</h2>
+        {asList(top?.cards).length === 0
+          ? <p className="small muted" style={{ margin: 0 }}>No priced cards yet.</p>
+          : (
+            <div className="list">
+              {top.cards.map((t, i) => (
+                <button key={`${t.scryfall_id}-${t.finish}`} type="button" className="list-row" onClick={() => onOpenCard(t.scryfall_id)}>
+                  <span className="q">{i + 1}</span>
+                  <span className="main">
+                    <span className="nm"><b>{t.name}</b>{t.finish !== "normal" && <span className="badge accent">✦ {t.finish}</span>}</span>
+                    <span className="sub">{(t.set_code || "").toUpperCase()} #{t.collector_number} · {asList(t.binders).map((b) => `${b.binder || UNSORTED}${t.binders.length > 1 ? ` ${b.quantity}×` : ""}`).join(", ")}</span>
+                  </span>
+                  <span className="end">
+                    <b>{fmtEur(t.price_eur)}</b>
+                    {t.quantity > 1 && <span className="muted">{t.quantity}× = {fmtEur(t.value_eur)}</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+      </section>
+
+      <section className="stack" aria-labelledby="binder-value-title">
+        <h2 id="binder-value-title">Value per binder</h2>
+        <BarList label="Value per binder" rows={asList(sum.binders).map((b) => ({ key: `b:${b.binder}`, name: b.binder || UNSORTED, value: b.value_eur, sub: plural(b.copies, "copy", "copies") }))} />
+      </section>
+      {asList(sum.rarities).length > 1 && (
+        <section className="stack" aria-labelledby="rarity-value-title">
+          <h2 id="rarity-value-title">Value per rarity</h2>
+          <BarList label="Value per rarity" rows={sum.rarities.map((r) => ({ key: `r:${r.rarity}`, name: cap(r.rarity), value: r.value_eur, sub: plural(r.copies, "copy", "copies") }))} />
+        </section>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Add or edit a wishlist item. `card` = {scryfall_id?, oracle_id?, name, set_code?, collector_number?} for a new
+ * item (no scryfall_id = any printing only), `item` = an existing item (GET /api/wishlist row).
+ */
+function WishSheet({ card = null, item = null, onClose, onDone }) {
+  const editing = Boolean(item);
+  const exactLabel = item ? `${(item.set_code || "").toUpperCase()} #${item.collector_number}` : card?.set_code ? `${String(card.set_code).toUpperCase()} #${card.collector_number}` : null;
+  const canExact = editing || Boolean(card?.scryfall_id);
+  const [any, setAny] = useState(item ? item.any_printing : true);
+  const [qty, setQty] = useState(item?.quantity ?? card?.quantity ?? 1);
+  const [finish, setFinish] = useState(item?.finish ?? "");
+  const [maxPrice, setMaxPrice] = useState(item?.max_price_eur != null ? String(item.max_price_eur) : "");
+  const [priority, setPriority] = useState(item?.priority ?? "normal");
+  const [note, setNote] = useState(item?.note ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const priceNum = maxPrice.trim() === "" ? null : Number(maxPrice.replace(",", "."));
+  const priceBad = priceNum != null && !(priceNum >= 0);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy || priceBad) return;
+    setBusy(true); setError(null);
+    const fields = { quantity: qty, finish: finish || null, max_price_eur: priceNum, priority, note: note.trim() || null, any_printing: any };
+    try {
+      const res = editing
+        ? await api(`/api/wishlist/${item.id}`, { method: "PATCH", json: fields })
+        : await api("/api/wishlist", { method: "POST", json: { ...fields, ...(card.scryfall_id ? { scryfall_id: card.scryfall_id } : { oracle_id: card.oracle_id, name: card.name }) } });
+      onDone?.(editing ? { item: res } : res);
+    } catch (err) { setError(err.message); setBusy(false); }
+  };
+  const remove = async () => {
+    setBusy(true); setError(null);
+    try { await api(`/api/wishlist/${item.id}`, { method: "DELETE" }); onDone?.({ removed: item }); }
+    catch (err) { setError(err.message); setBusy(false); }
+  };
+  return (
+    <Sheet title={editing ? item.name : `Wishlist: ${card.name}`} onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
+        {canExact && (
+          <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, gap: 6 }}>
+            <legend className="label">Which printing?</legend>
+            <label className="radio-row"><input type="radio" name="wish-any" checked={any} onChange={() => setAny(true)} /> Any printing <span className="small muted">(cheapest)</span></label>
+            <label className="radio-row"><input type="radio" name="wish-any" checked={!any} onChange={() => setAny(false)} /> Only {exactLabel || "this printing"}</label>
+          </fieldset>
+        )}
+        <QtyStepper label="Copies wanted" value={qty} max={99} onChange={setQty} />
+        <div className="field">
+          <label htmlFor="wish-finish">Finish</label>
+          <select id="wish-finish" className="select" value={finish} onChange={(e) => setFinish(e.target.value)}>
+            {WISH_FINISH.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="wish-max">Max price per copy (€, optional)</label>
+          <input id="wish-max" className="input" style={{ fontSize: 16 }} inputMode="decimal" autoComplete="off" placeholder="e.g. 5" value={maxPrice}
+            aria-invalid={priceBad || undefined} onChange={(e) => setMaxPrice(e.target.value)} />
+          {priceBad && <span className="small" style={{ color: "var(--bad)" }}>Enter a price like 4.50</span>}
+        </div>
+        <div className="field">
+          <span className="label" id="wish-prio">Priority</span>
+          <div className="segmented" role="group" aria-labelledby="wish-prio">
+            {WISH_PRIORITY.map(([k, l]) => <button key={k} type="button" aria-pressed={priority === k} onClick={() => setPriority(k)}>{l}</button>)}
+          </div>
+        </div>
+        <div className="field">
+          <label htmlFor="wish-note">Note (optional)</label>
+          <input id="wish-note" className="input" style={{ fontSize: 16 }} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} placeholder="for which deck, where to buy…" />
+        </div>
+        <ErrorNotice error={error} />
+        <button type="submit" className="btn primary" disabled={busy || priceBad}>{busy ? "Saving…" : editing ? <><Icon.check /> Save</> : <><Icon.heart /> Add to wishlist</>}</button>
+        {editing && <button type="button" className="btn danger" disabled={busy} onClick={remove}><Icon.trash /> Remove from wishlist</button>}
+      </form>
+    </Sheet>
+  );
+}
+
+function WishRow({ it, onEdit, onRemove }) {
+  const printing = it.any_printing ? "any printing" : `${(it.set_code || "").toUpperCase()} #${it.collector_number}`;
+  const bits = [printing, it.finish ? (it.finish === "normal" ? "non-foil" : it.finish) : null, `own ${it.owned}`,
+    it.max_price_eur != null ? `max ${fmtEur(it.max_price_eur)}` : null].filter(Boolean);
+  return (
+    <div className={`wish-row${it.got_it ? " done" : ""}`}>
+      <button type="button" className="list-row" onClick={() => onEdit(it)} aria-label={`Edit ${it.name} on the wishlist`}>
+        {it.image_small ? <img className="wish-thumb" src={it.image_small} alt="" loading="lazy" /> : <span className="q">{it.quantity}×</span>}
+        <span className="main">
+          <span className="nm"><b>{it.image_small ? `${it.quantity}× ` : ""}{it.name}</b></span>
+          <span className="sub">{bits.join(" · ")}</span>
+          <span className="row" style={{ gap: 4 }}>
+            {it.got_it && <span className="badge ok">✓ got it</span>}
+            {!it.got_it && it.below_max && <span className="badge ok">✓ below your max</span>}
+            {it.priority === "high" && <span className="badge accent">high</span>}
+            {it.priority === "low" && <span className="badge">low</span>}
+            {it.source === "claude" && <span className="badge accent">✦ claude</span>}
+          </span>
+          {it.note && <span className="sub">{it.note}</span>}
+        </span>
+        <span className="end">
+          {it.price_eur == null ? <span className="muted">no €</span> : <b>{fmtEur(it.price_eur)}</b>}
+          {!it.got_it && it.to_buy > 1 && it.cost_eur != null && <span className="muted">{it.to_buy}× = {fmtEur(it.cost_eur)}</span>}
+        </span>
+      </button>
+      {it.got_it && <button type="button" className="btn sm" onClick={() => onRemove(it)}><Icon.check /> Remove, I have it</button>}
+    </div>
+  );
+}
+
+function WishlistView({ dataVersion, onChanged }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [picking, setPicking] = useState(false);
+  const [sheet, setSheet] = useState(null); // {card} | {item}
+  const [notice, setNotice] = useState(null);
+  const load = useCallback(() => {
+    setError(null);
+    api("/api/wishlist").then(setData).catch((e) => setError(`Could not load the wishlist: ${e.message}`));
+  }, []);
+  useEffect(load, [load, dataVersion]);
+  const done = (res) => {
+    setSheet(null);
+    setNotice(res?.removed ? `Removed ${res.removed.name}.` : res?.merged ? `${res.item.name}: now ${res.item.quantity} wanted.` : res?.item ? `Saved ${res.item.name}.` : null);
+    load();
+    onChanged?.();
+  };
+  const remove = async (it) => {
+    try { await api(`/api/wishlist/${it.id}`, { method: "DELETE" }); done({ removed: it }); } catch (e) { setError(e.message); }
+  };
+  const items = asList(data?.items);
+  const open = items.filter((i) => !i.got_it);
+  const got = items.filter((i) => i.got_it);
+  const t = data?.totals;
+  return (
+    <div className="stack-lg">
+      <div className="row between">
+        <h2>Wishlist</h2>
+        <button type="button" className="btn primary" onClick={() => { setNotice(null); setPicking(true); }}><Icon.plus /> Add card</button>
+      </div>
+      <ErrorNotice error={error} onRetry={load} />
+      {notice && <div className="notice ok" role="status"><span aria-hidden="true">✓</span><div className="grow">{notice}</div></div>}
+      {!data && !error && <Spinner label="Loading wishlist…" />}
+      {data && items.length === 0 && (
+        <div className="empty">
+          <h3>Nothing on your wishlist</h3>
+          <span>Add cards here, from a card's page (♡ Wishlist) or from a deck's To-buy list.</span>
+        </div>
+      )}
+      {t && items.length > 0 && (
+        <div className="summary-grid">
+          <div className="stat"><div className="v">{fmtEur(t.to_buy_eur)}</div><div className="k">To buy ({fmtInt(t.to_buy)})</div></div>
+          <div className="stat"><div className="v">{fmtInt(t.below_max)}</div><div className="k">Below your max</div></div>
+        </div>
+      )}
+      {open.length > 0 && <div className="stack" style={{ gap: 6 }}>
+        {t?.unpriced > 0 && <span className="small muted">{plural(t.unpriced, "card")} without a € price (not in the total).</span>}
+        <div className="list">{open.map((it) => <WishRow key={it.id} it={it} onEdit={(x) => setSheet({ item: x })} onRemove={remove} />)}</div>
+      </div>}
+      {got.length > 0 && (
+        <section className="stack" style={{ gap: 6 }} aria-labelledby="wish-got">
+          <h3 id="wish-got">Got it <span className="muted small">(you own enough copies now)</span></h3>
+          <div className="list">{got.map((it) => <WishRow key={it.id} it={it} onEdit={(x) => setSheet({ item: x })} onRemove={remove} />)}</div>
+        </section>
+      )}
+      {picking && (
+        <PrintingPicker title="Add to wishlist" startInSearch onClose={() => setPicking(false)}
+          onPick={(p) => { setPicking(false); setSheet({ card: { scryfall_id: p.id, oracle_id: p.oracle_id, name: p.en_name || p.name, set_code: p.set, collector_number: p.cn } }); }} />
+      )}
+      {sheet && <WishSheet card={sheet.card} item={sheet.item} onClose={() => setSheet(null)} onDone={done} />}
+    </div>
+  );
+}
+
+function FinanceTab({ dataVersion, view, onView, onOpenCard, onChanged }) {
+  return (
+    <div className="stack-lg">
+      <div className="page-title">
+        <h1>Value</h1>
+        <div className="segmented" role="group" aria-label="Show">
+          <button type="button" aria-pressed={view !== "wishlist"} onClick={() => onView("overview")}><Icon.chart /> Value</button>
+          <button type="button" aria-pressed={view === "wishlist"} onClick={() => onView("wishlist")}><Icon.heart /> Wishlist</button>
+        </div>
+      </div>
+      {view === "wishlist"
+        ? <WishlistView dataVersion={dataVersion} onChanged={onChanged} />
+        : <ValueOverview dataVersion={dataVersion} onOpenCard={onOpenCard} />}
+    </div>
+  );
+}
+
+// ===========================================================================
 // App shell
 // ===========================================================================
 
 const TABS = [
   { id: "scan", label: "Scan", icon: Icon.scan },
-  { id: "collection", label: "Collection", icon: Icon.collection },
+  // short: the label on narrow phones (six tabs share 320-419 px).
+  { id: "collection", label: "Collection", short: "Cards", icon: Icon.collection },
   { id: "decks", label: "Decks", icon: Icon.decks },
+  // Collection value over time + the wishlist (lib/finance.js, lib/wishlist.js).
+  { id: "value", label: "Value", icon: Icon.chart },
   { id: "planner", label: "Planner", icon: Icon.planner },
   // Settings (beta.4: was "Import"); the id stays "import" for saved tabs and #import links.
   { id: "import", label: "Settings", icon: Icon.gear },
@@ -7766,6 +8294,11 @@ function App() {
 
   // Tapping the active Decks tab returns to the deck list (also from the shopping list).
   const [decksHome, goDecksHome] = useReducer((x) => x + 1, 0);
+  // Value tab sub-view (overview | wishlist); wishVersion bumps after wishlist adds elsewhere.
+  const [valueView, setValueView] = useState(() => (store.get("mtg.value.view", "overview") === "wishlist" ? "wishlist" : "overview"));
+  useEffect(() => { store.set("mtg.value.view", valueView); }, [valueView]);
+  const [wishVersion, bumpWish] = useReducer((x) => x + 1, 0);
+  const openWishlist = useCallback(() => { setValueView("wishlist"); switchTab("value"); window.scrollTo(0, 0); }, [switchTab]);
   const openDeck = useCallback((id, notice = null) => {
     setDeck({ id, notice });
     setCardId(null);
@@ -7814,7 +8347,9 @@ function App() {
                 switchTab(t.id);
               }}>
               <t.icon />
-              <span>{t.label}</span>
+              {t.short
+                ? <><span className="tab-l has-short">{t.label}</span><span className="tab-s" aria-hidden="true">{t.short}</span></>
+                : <span className="tab-l">{t.label}</span>}
             </button>
           ))}
         </nav>
@@ -7824,14 +8359,18 @@ function App() {
         {panel("collection", <CollectionTab dataVersion={dataVersion} onOpenCard={setCardId} onGoImport={() => switchTab("import")}
           onGoScan={() => switchTab("scan")} onChanged={onImported} />)}
         {panel("decks", <DecksTab dataVersion={deckVersion} homeKey={decksHome} deckId={deck.id} deckNotice={deck.notice} onOpenDeck={openDeck}
-          onOpenCard={setCardId} onAsk={askAboutDeck} onChanged={bumpDecks} onCollectionChanged={onImported} />)}
+          onOpenCard={setCardId} onAsk={askAboutDeck} onChanged={bumpDecks} onCollectionChanged={onImported}
+          onOpenWishlist={openWishlist} onWishChanged={bumpWish} />)}
+        {panel("value", <FinanceTab dataVersion={dataVersion + wishVersion} view={valueView} onView={setValueView} onOpenCard={setCardId}
+          onChanged={bumpWish} />)}
         {panel("planner", <PlannerTab active={tab === "planner"} health={health} request={plannerRequest}
           onRequestHandled={() => setPlannerRequest(null)} onChanged={bumpDecks} />)}
         {panel("import", <ImportTab dataVersion={dataVersion} health={health} onImported={onImported} restored={restored}
           onDismissRestored={() => setRestored(null)}
           onRestored={(r) => { setRestored(r); setCardId(null); setDeck({ id: null, notice: null }); bumpEpoch(); onImported(); window.scrollTo(0, 0); }} />)}
       </main>
-      {cardId && <CardSheet id={cardId} onClose={() => setCardId(null)} onOpenCard={setCardId} onOpenDeck={(id) => openDeck(id)} onChanged={onImported} />}
+      {cardId && <CardSheet id={cardId} onClose={() => setCardId(null)} onOpenCard={setCardId} onOpenDeck={(id) => openDeck(id)} onChanged={onImported}
+        onWishChanged={bumpWish} />}
     </>
   );
 }

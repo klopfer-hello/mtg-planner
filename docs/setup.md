@@ -156,7 +156,7 @@ Set these in `.env`, which `docker-compose.yml` loads if it exists:
 | `SCHEDULER_ENABLED` | `true` | Nightly maintenance (see [Index and price refresh](#index-and-price-refresh)). `false` turns it off. |
 | `INDEX_REFRESH_HOUR` | `4` | Hour of day (0-23, container local time) of the maintenance window. |
 | `INDEX_REFRESH_DAYS` | `7` | Minimum age of the card index before it is refreshed (only when Scryfall has newer bulk data). |
-| `PRICE_REFRESH_DAYS` | `7` | Minimum age of the last price refresh of owned and deck cards. |
+| `PRICE_REFRESH_DAYS` | `1` | Minimum age in days of the last price refresh of owned, deck and wishlist cards (1 = every night). |
 | `TZ` | *(UTC)* | Container time zone (IANA name, e.g. `Europe/Berlin`), used for `INDEX_REFRESH_HOUR`. |
 | `BACKUP_DIR` | `<database dir>/backups` (`/data/backups`) | Where manual backups and pre-restore safety backups are stored (see [Backups](backups-and-security.md#backups)). |
 | `BACKUP_KEEP` | `20` | Manual backups kept; older ones are deleted when a new one is made. Pre-restore safety backups are kept separately (the last 5). |
@@ -188,8 +188,11 @@ container local time, so set `TZ`). It runs one job at a time:
   `INDEX_REFRESH_DAYS` (default 7) **and** Scryfall's bulk data is newer than
   the local copy (one small request to Scryfall's bulk-data list), followed by
   the incremental fingerprint job, which skips already-hashed cards;
-- the **prices** of owned and deck cards are refreshed when the last refresh is
-  older than `PRICE_REFRESH_DAYS` (default 7), within Scryfall's rate limits.
+- the **prices** of owned, deck and wishlist cards are refreshed when the last
+  refresh is older than `PRICE_REFRESH_DAYS` (default 1 = every night), within
+  Scryfall's rate limits (about 2,300 printings take well under a minute);
+- the day's **collection value** is saved for the Value tab
+  ([finance.md](finance.md)), also when the price refresh was skipped or failed.
 
 It runs at most once per night: later checks in the same hour, and restarts
 inside it, skip once the run is done (a failed price refresh is retried within

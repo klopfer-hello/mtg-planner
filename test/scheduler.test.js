@@ -37,11 +37,11 @@ function harness({ now = at(4, 0), info = {}, remote = "2026-10-13T09:00:00.000Z
 
 describe("schedulerConfig", () => {
   test("defaults and env overrides; invalid values fall back", () => {
-    assert.deepEqual(schedulerConfig({}), { enabled: true, hour: 4, indexDays: 7, priceDays: 7 });
+    assert.deepEqual(schedulerConfig({}), { enabled: true, hour: 4, indexDays: 7, priceDays: 1 });
     assert.deepEqual(schedulerConfig({ SCHEDULER_ENABLED: "false", INDEX_REFRESH_HOUR: "23", INDEX_REFRESH_DAYS: "3", PRICE_REFRESH_DAYS: "1.5" }),
       { enabled: false, hour: 23, indexDays: 3, priceDays: 1.5 });
     assert.deepEqual(schedulerConfig({ INDEX_REFRESH_HOUR: "24", INDEX_REFRESH_DAYS: "-1", PRICE_REFRESH_DAYS: "x" }),
-      { enabled: true, hour: 4, indexDays: 7, priceDays: 7 });
+      { enabled: true, hour: 4, indexDays: 7, priceDays: 1 });
   });
 
   test("nextWindow is the next local HH:00", () => {

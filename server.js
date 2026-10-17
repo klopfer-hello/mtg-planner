@@ -1,7 +1,7 @@
 // mtg-planner web server: JSON API, ManaBox CSV import, decks, Claude chat
 // (Server-Sent Events), the card scanner (identify + staging + commit, local
-// card index jobs), manual backup/restore of the app database and the static
-// single-page app. Node stdlib only.
+// card index jobs), manual backup/restore of the app database, the wishlist,
+// the value history (Value tab) and the static single-page app. Node stdlib only.
 //
 // Unauthenticated by design: meant for a trusted LAN (see docs/backups-and-security.md).
 
@@ -50,6 +50,8 @@ import {
   moveCopies, renameBinder, setCollectionMaster,
 } from "./lib/binders.js";
 import { deleteCopies, editCopies, listEdits, relanguageScans, undoEdit } from "./lib/edits.js";
+import { cardHistory, ensureSnapshot, financeHistory, financeMovers, financeSummary, financeTop, snapshotValue } from "./lib/finance.js";
+import { WishlistError, addWishlistItem, deleteWishlistItem, getWishlistItem, listWishlist, updateWishlistItem, wishlistShopping } from "./lib/wishlist.js";
 
 const PORT = Number(process.env.PORT) || 8080;
 const STATIC_DIR = path.resolve(process.env.STATIC_DIR || "/app/public");
@@ -277,7 +279,27 @@ async function runEnglishPrices() {
     console.warn(`[prices] English twin prices: ${err.message}`);
   } finally {
     englishPricesRunning = false;
+    scheduleSnapshot(); // values follow the (twin) prices
   }
+}
+
+// Value history (lib/finance.js): today's snapshot is rewritten after every
+// collection write (via the English price sync above, which every exclusive()
+// write, chat turn, index job and restore triggers), after wishlist changes and
+// by the nightly scheduler; seeded at boot. Debounced, never during an import
+// or a restore; one grouped query + one transaction (~10-50 ms for a few
+// thousand printings).
+let snapshotTimer = null;
+function scheduleSnapshot(delay = 1500) {
+  if (shuttingDown) return;
+  clearTimeout(snapshotTimer);
+  snapshotTimer = setTimeout(runSnapshot, delay);
+  snapshotTimer.unref?.();
+}
+function runSnapshot() {
+  if (shuttingDown) return;
+  if (importBusy || restoring) return scheduleSnapshot(5000);
+  try { snapshotValue(db); } catch (err) { console.warn(`[finance] snapshot: ${err.message}`); }
 }
 
 // v9 card facts (game_changer, produced_mana, layout) for owned and deck cards
@@ -1611,7 +1633,10 @@ async function handleApi(req, res, url) {
     if (method !== "POST") throw new HttpError(405, "Method not allowed");
     return sendJson(res, 200, await evaluateDeck(req));
   }
-  if (pathname === "/api/shopping-list" && method === "GET") return sendJson(res, 200, shoppingList(db));
+  // Global shopping list: built decks' shortage + per deck (lib/decks.js) + the wishlist's open items.
+  if (pathname === "/api/shopping-list" && method === "GET") return sendJson(res, 200, { ...shoppingList(db), wishlist: wishlistShopping(db) });
+  if (pathname === "/api/wishlist" || pathname.startsWith("/api/wishlist/")) return handleWishlistApi(req, res, url);
+  if (pathname.startsWith("/api/finance/")) return handleFinanceApi(req, res, url);
   if ((m = /^\/api\/decks\/(\d+)\/(cards|commander|to-binder|status-preview|combos)$/.exec(pathname))) {
     const id = Number(m[1]);
     if (m[2] === "combos" && method === "POST") return sendJson(res, 202, postDeckCombos(id));
@@ -1681,6 +1706,73 @@ async function handleApi(req, res, url) {
   }
   if (pathname.startsWith("/api/debug/")) return handleDebugApi(req, res, url);
 
+  throw new HttpError(404, "Not found");
+}
+
+// ---------------------------------------------------------------------------
+// Wishlist (lib/wishlist.js) and value history (lib/finance.js)
+
+const wishCall = async (fn) => {
+  try { return await fn(); } catch (err) { throw err instanceof WishlistError ? new HttpError(err.status, err.message) : err; }
+};
+
+// GET /api/wishlist → {items, totals}; POST {scryfall_id|oracle_id|name, set?, collector_number?, any_printing?, finish?,
+// language?, quantity?, max_price_eur?, note?, priority?} → 201 {item, merged} (200 when merged into an existing item);
+// PATCH /api/wishlist/:id {quantity?, max_price_eur?, note?, priority?, finish?, language?, any_printing?} → item;
+// DELETE /api/wishlist/:id → 204. Not inside exclusive(): no collection rows change (a missing card row is fetched).
+async function handleWishlistApi(req, res, url) {
+  const { pathname } = url;
+  const method = req.method;
+  if (pathname === "/api/wishlist") {
+    if (method === "GET") return sendJson(res, 200, listWishlist(db));
+    if (method === "POST") {
+      const body = await readJson(req);
+      if (body.source !== undefined && body.source !== "app") throw new HttpError(400, 'source must be "app"');
+      const out = await wishCall(() => addWishlistItem(db, body, { source: "app" }));
+      scheduleSnapshot();
+      return sendJson(res, out.merged ? 200 : 201, out);
+    }
+    throw new HttpError(405, "Method not allowed");
+  }
+  const m = /^\/api\/wishlist\/(\d+)$/.exec(pathname);
+  if (!m) throw new HttpError(404, "Wishlist item not found");
+  const id = Number(m[1]);
+  if (method === "GET") {
+    const item = getWishlistItem(db, id);
+    if (!item) throw new HttpError(404, "Wishlist item not found");
+    return sendJson(res, 200, item);
+  }
+  if (method === "PATCH") {
+    const body = await readJson(req);
+    const item = await wishCall(() => updateWishlistItem(db, id, body));
+    scheduleSnapshot();
+    return sendJson(res, 200, item);
+  }
+  if (method === "DELETE") {
+    if (!deleteWishlistItem(db, id)) throw new HttpError(404, "Wishlist item not found");
+    scheduleSnapshot();
+    return sendEmpty(res);
+  }
+  throw new HttpError(405, "Method not allowed");
+}
+
+// Value tab, all GET: /api/finance/summary (live totals, today/7d/30d change split into added / removed /
+// price changes, per binder + rarity), /history?days=90 (daily totals), /movers?days=7&limit=10 (risers and
+// fallers among cards held throughout), /top?limit=20 (most valuable printings + binders),
+// /card/:scryfall_id?finish= (one printing's stored price/quantity changes).
+function handleFinanceApi(req, res, url) {
+  const { pathname, searchParams: query } = url;
+  if (req.method !== "GET") throw new HttpError(405, "Method not allowed");
+  if (pathname === "/api/finance/summary") return sendJson(res, 200, financeSummary(db));
+  if (pathname === "/api/finance/history") return sendJson(res, 200, financeHistory(db, { days: query.get("days") || 90 }));
+  if (pathname === "/api/finance/movers") return sendJson(res, 200, financeMovers(db, { days: query.get("days") || 7, limit: query.get("limit") || 10 }));
+  if (pathname === "/api/finance/top") return sendJson(res, 200, financeTop(db, { limit: query.get("limit") || 20 }));
+  const m = /^\/api\/finance\/card\/([0-9a-f-]{36})$/i.exec(pathname);
+  if (m) {
+    const finish = query.get("finish") || "normal";
+    if (!["normal", "foil", "etched"].includes(finish)) throw new HttpError(400, "finish must be normal, foil or etched");
+    return sendJson(res, 200, { scryfall_id: m[1].toLowerCase(), finish, points: cardHistory(db, m[1].toLowerCase(), finish) });
+  }
   throw new HttpError(404, "Not found");
 }
 
@@ -1813,6 +1905,11 @@ const scheduler = createScheduler({
   remoteBulkUpdatedAt: async () => (await fetchBulkInfo()).updated_at,
   runIndexRefresh: async () => { await startIndexJob("refresh", { then: "fingerprints" })[JOB_DONE]; },
   runPriceRefresh: () => exclusive(() => refreshOwnedCards(db)),
+  // Daily value snapshot (after the prices); waits out an import like the debounced one.
+  runSnapshot: async () => {
+    for (let i = 0; (importBusy || restoring) && i < 60; i++) await new Promise((r) => setTimeout(r, 5000));
+    return snapshotValue(db);
+  },
   checkpoint: () => { if (idx && !indexJob.running) checkpointIndex(idx); },
 });
 
@@ -1828,6 +1925,11 @@ try {
 // First commit after boot creates the app DB's WAL file (one fsync, ~60 ms
 // on a spinning disk): pay it here instead of in the first scan's staging.
 try { setAppMeta(db, "last_start", new Date().toISOString()); } catch (err) { console.warn(`[db] ${err.message}`); }
+// Day 0 of the value history (Value tab): today's snapshot from the current prices when there is none.
+try {
+  const seeded = ensureSnapshot(db);
+  if (seeded) console.log(`[finance] value snapshot ${seeded.day}: €${seeded.value_eur.toFixed(2)}, ${seeded.copies} copies`);
+} catch (err) { console.warn(`[finance] ${err.message}`); }
 autoIndex();
 scheduler.start();
 server.listen(PORT, () => {
@@ -1856,6 +1958,7 @@ function shutdown(signal) {
   scheduler.stop();
   spellbook.close();
   clearTimeout(cardFactsTimer);
+  clearTimeout(snapshotTimer);
   for (const controller of runs.values()) controller.abort();
   indexJob.controller?.abort();
   killAll();
