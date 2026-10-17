@@ -22,7 +22,8 @@ with exactly two MCP servers:
   `evaluate_deck` checks a draft list (stats, bracket, score, combos) without
   saving it, and `save_deck`/`evaluate_deck` take a `target_bracket` and answer
   OK, OVER (with the cards that push it up) or UNDER. See
-  [decks.md](decks.md#bracket-and-power-score).
+  [decks.md](decks.md#bracket-and-power-score). `get_deck_history` reads a
+  deck's [history](decks.md#deck-history) (read-only).
 - **[bmurdock/scryfall-mcp](https://github.com/bmurdock/scryfall-mcp)** gives
   access to every card ever printed, prices, the comprehensive rules, staple
   and synergy searches, and deck and mana-base analysis.
