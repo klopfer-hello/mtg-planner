@@ -86,7 +86,7 @@ describe("mcp-collection.js", () => {
   test("lists exactly the documented, non-destructive tools", async () => {
     const { result } = await mcp.request("tools/list", {});
     const names = result.tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["check_owned", "collection_overview", "edit_copies", "evaluate_deck", "get_card", "get_deck", "list_binders", "list_decks", "save_deck", "search_collection", "shopping_list"]);
+    assert.deepEqual(names, ["check_owned", "collection_overview", "edit_copies", "evaluate_deck", "get_card", "get_deck", "get_deck_history", "list_binders", "list_decks", "save_deck", "search_collection", "shopping_list"]);
     for (const t of result.tools) {
       assert.equal(typeof t.description, "string");
       assert.equal(t.inputSchema?.type, "object", `${t.name} needs an object inputSchema`);
