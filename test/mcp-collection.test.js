@@ -16,6 +16,8 @@ import { gzipSync } from "node:zlib";
 import { openIndex, refreshIndex } from "../lib/cardindex.js";
 import { listEdits, undoEdit } from "../lib/edits.js";
 import { setSpellbookSettings } from "../lib/spellbook.js";
+import { setBinderProps } from "../lib/binders.js";
+import { saveDeckRows } from "../lib/decks.js";
 import { ID, seedCards, seedCollection, tempDb } from "./fixtures.js";
 
 const SERVER = fileURLToPath(new URL("../mcp-collection.js", import.meta.url));
@@ -551,7 +553,7 @@ describe("mcp-collection.js deck power", () => {
   });
 });
 
-describe("collection MCP server: deck boxes are reserved", () => {
+describe("collection MCP server: locked binders", () => {
   let ctx;
   let mcp;
   before(async () => {
@@ -566,14 +568,25 @@ describe("collection MCP server: deck boxes are reserved", () => {
     ctx?.cleanup();
   });
 
-  test("check_owned, search_collection, get_card and list_binders name the reserved box", async () => {
+  test("check_owned, search_collection, get_card and list_binders name the locked binder", async () => {
     const owned = await mcp.call("check_owned", { names: ["Sol Ring", "Lightning Bolt"] });
-    assert.match(owned.text, /Sol Ring: 3 owned, 1 free — .*in deck box Commander Deck: Rin and Seri \(reserved\) 2x/);
+    assert.match(owned.text, /Sol Ring: 3 owned, 1 free — .*in locked binder Commander Deck: Rin and Seri \(no deck\) 2x/);
     assert.match(owned.text, /Lightning Bolt: 1 owned, 1 free/);
     const search = await mcp.call("search_collection", { query: "avail>=1" });
-    assert.match(search.text, /Sol Ring .*\| free 1 \(2 in deck boxes, reserved\)/);
+    assert.match(search.text, /Sol Ring .*\| free 1 \(2 in locked binders\)/);
     assert.equal((await mcp.call("search_collection", { query: "avail>=2" })).text.split("\n")[0], "0 matches");
-    assert.match((await mcp.call("get_card", { name: "Sol Ring" })).text, /in deck box Commander Deck: Rin and Seri \(reserved\) 2x; free: 1/);
-    assert.match((await mcp.call("list_binders")).text, /Commander Deck: Rin and Seri \[deck box, reserved\].*box of no deck/);
+    assert.match((await mcp.call("get_card", { name: "Sol Ring" })).text, /in locked binder Commander Deck: Rin and Seri \(no deck\) 2x; free: 1/);
+    assert.match((await mcp.call("list_binders")).text, /Commander Deck: Rin and Seri \[deck box, locked\].*locked for every deck/);
+  });
+
+  test("a binder the user locked: list_binders [locked], get_deck IN USE in locked binder", async () => {
+    ctx.db.prepare("UPDATE collection SET binder = 'Foundation' WHERE scryfall_id = ? AND binder = ''").run(ID.lightning);
+    setBinderProps(ctx.db, "Foundation", { locked: true });
+    const id = saveDeckRows(ctx.db, { name: "Plan", status: "idea", rows: [{ name: "Lightning Bolt", scryfall_id: ID.lightning, quantity: 1, board: "main" }] });
+    assert.match((await mcp.call("list_binders")).text, /Foundation \[binder, locked\]/);
+    assert.match((await mcp.call("get_deck", { deck: id })).text, /IN USE 1 in locked binder Foundation \(can be moved\)/);
+    assert.match((await mcp.call("check_owned", { names: ["Lightning Bolt"] })).text, /Lightning Bolt: 1 owned, 0 free .*in locked binder Foundation \(no deck\) 1x/);
+    setBinderProps(ctx.db, "Foundation", { locked: false });
+    assert.match((await mcp.call("list_binders")).text, /Foundation \[binder\]/);
   });
 });

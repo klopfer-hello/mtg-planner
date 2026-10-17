@@ -1,16 +1,18 @@
-// Deck boxes are reserved (lib/deckboxes.js + lib/decks.js allocation): copies in a
-// deck-box binder are free only for the deck that owns the box; every other deck sees
-// them in use ("in deck box X"), never free and never to buy. Covers the owner rules,
-// the built deck's own box (no double count), user-set types, "Put into deck box", the
-// build checklist, the avail:/used: search keys, the box link and the name suggestion.
+// Locked binders (lib/deckboxes.js + lib/decks.js allocation): copies in a locked binder
+// (the user's lock, else auto = deck boxes) are free only for the deck that owns it; every
+// other deck sees them in use ("in locked binder X"), never free and never to buy. Covers the
+// migration (v16), the owner rules, the built deck's own box (no double count), the lock
+// override, "Put into deck box", the build checklist, the avail:/used: search keys, the box
+// link and the name suggestion.
 
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { cardUsage, deckDetail, deckToText, listDecks, saveDeckRows } from "../lib/decks.js";
-import { deckToBinder, listBinders, setBinderProps } from "../lib/binders.js";
+import { createBinder, deckToBinder, listBinders, renameBinder, setBinderProps } from "../lib/binders.js";
+import { SCHEMA_VERSION, migrate, openDb } from "../lib/db.js";
 import { buildChecklist } from "../lib/deckbuild.js";
 import { searchCollection } from "../lib/query.js";
-import { boxNameSimilarity, boxNameWords, boxSuggestion, deckBoxes } from "../lib/deckboxes.js";
+import { boxNameSimilarity, boxNameWords, boxSuggestion, deckBoxes, effectiveLock, lockedBinders } from "../lib/deckboxes.js";
 import { ID, seedCards, tempDb } from "./fixtures.js";
 
 let ctx;
@@ -29,7 +31,42 @@ const deck = (name, status, rows) => saveDeckRows(ctx.db, { name, status, rows }
 const pick = (detail, name) => detail.cards.find((c) => c.name === name);
 const PRECON = "Commander Deck: Rin and Seri";
 
-describe("deck boxes are reserved", () => {
+describe("migration v16: binders.locked", () => {
+  const cols = (db) => db.prepare("PRAGMA table_info(binders)").all().map((c) => c.name);
+
+  test("fresh database has the column; nothing is locked by hand", () => {
+    assert.equal(SCHEMA_VERSION, 16);
+    assert.ok(cols(ctx.db).includes("locked"));
+    createBinder(ctx.db, "Fresh");
+    assert.equal(ctx.db.prepare("SELECT locked FROM binders WHERE name = 'Fresh'").get().locked, null);
+  });
+
+  test("v15 -> v16: deck boxes start locked (auto), other binders unlocked; a user choice survives a re-run", () => {
+    seed([[ID.sol, 1, PRECON], [ID.lightning, 1, "Deck box: Elves"], [ID.serra, 1, "Foundation"], [ID.counterspell, 1, "Trade"]]);
+    setBinderProps(ctx.db, "Trade", { type: "deck_box" });
+    ctx.db.exec("ALTER TABLE binders DROP COLUMN locked; PRAGMA user_version = 15");
+    ctx.db.close();
+    for (let i = 0; i < 2; i++) {
+      const db = openDb(ctx.file);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
+      assert.ok(cols(db).includes("locked"));
+      const locks = listBinders(db).binders.map((b) => [b.name, b.locked, b.locked_set]);
+      assert.deepEqual(locks, i === 0
+        ? [[PRECON, true, false], ["Deck box: Elves", true, false], ["Foundation", false, false], ["Trade", true, false]]
+        : [[PRECON, false, true], ["Deck box: Elves", true, false], ["Foundation", true, true], ["Trade", true, false]]);
+      if (i === 0) {
+        setBinderProps(db, "Foundation", { locked: true });
+        setBinderProps(db, PRECON, { locked: false });
+      }
+      db.exec("PRAGMA user_version = 15"); // re-run v16 on a migrated DB
+      migrate(db);
+      db.close();
+    }
+    ctx.db = openDb(ctx.file);
+  });
+});
+
+describe("locked binders (deck boxes are locked by default)", () => {
   test("an unlinked precon box: its copies are in use for an idea deck, not free and not to buy", () => {
     seed([[ID.sol, 1, PRECON], [ID.lightning, 1, PRECON], [ID.lightning, 1]]);
     const idea = deck("Plan", "idea", [row("Sol Ring", ID.sol, 1), row("Lightning Bolt", ID.lightning, 2), row("Counterspell", ID.counterspell, 1)]);
@@ -41,9 +78,11 @@ describe("deck boxes are reserved", () => {
     assert.deepEqual([bolt.available_for_this, bolt.in_use, bolt.to_buy], [1, 1, 0], "the Unsorted copy is free");
     assert.deepEqual([d.in_use_count, d.in_use_box_count, d.to_buy_count, d.conflict_count], [2, 2, 1, 0]);
     assert.deepEqual(d.shopping.in_use.find((x) => x.name === "Sol Ring").boxes, [{ binder: PRECON, deck_id: null, deck_name: null }]);
-    assert.match(deckToText(d), /IN USE 1 in deck box Commander Deck: Rin and Seri \(reserved, can be moved\)/);
-    assert.match(deckToText(d), /In other deck boxes: 2 cards/);
-    assert.equal(listDecks(ctx.db).find((x) => x.id === idea).in_use_box_count, 2);
+    assert.deepEqual([sol.in_locked, sol.in_use_locked, d.in_use_locked_count], [sol.in_boxes, 1, 2], "lock aliases");
+    assert.match(deckToText(d), /IN USE 1 in locked binder Commander Deck: Rin and Seri \(can be moved\)/);
+    assert.match(deckToText(d), /In locked binders: 2 cards/);
+    const listed = listDecks(ctx.db).find((x) => x.id === idea);
+    assert.deepEqual([listed.in_use_box_count, listed.in_use_locked_count], [2, 2]);
     const u = cardUsage(ctx.db, { oracle_id: "o-solring", name: "Sol Ring" });
     assert.deepEqual([u.owned, u.built_demand, u.boxed, u.available], [1, 0, 1, 0]);
   });
@@ -53,7 +92,8 @@ describe("deck boxes are reserved", () => {
     const owner = deck("Odds", "idea", [row("Sol Ring", ID.sol, 1)]);
     const other = deck("Other", "idea", [row("Sol Ring", ID.sol, 1)]);
     setBinderProps(ctx.db, "Odds Box", { deck_id: owner });
-    assert.equal(deckBoxes(ctx.db).get("odds box").owners[0].id, owner, "the link makes it a deck box");
+    assert.equal(lockedBinders(ctx.db).get("odds box").owners[0].id, owner, "the link makes it a deck box: locked (auto)");
+    assert.equal(deckBoxes, lockedBinders, "old name kept");
     const mine = deckDetail(ctx.db, owner, { power: false });
     assert.deepEqual([pick(mine, "Sol Ring").available_for_this, pick(mine, "Sol Ring").in_use], [1, 0]);
     assert.deepEqual(mine.box, { binder: "Odds Box", via: "link" });
@@ -84,14 +124,14 @@ describe("deck boxes are reserved", () => {
     assert.equal(cardUsage(ctx.db, { oracle_id: "o-bolt", name: "Lightning Bolt" }).available, 1);
   });
 
-  test("boxes never make a conflict; built decks still do", () => {
+  test("locks never make a conflict; built decks still do", () => {
     seed([[ID.sol, 1, PRECON]]);
     const a = deck("A", "built", [row("Sol Ring", ID.sol, 1)]);
     const d = deckDetail(ctx.db, a, { power: false });
     assert.deepEqual([pick(d, "Sol Ring").in_use, pick(d, "Sol Ring").conflict, d.conflict_count], [1, false, 0]);
   });
 
-  test("the user's type wins: a precon retyped as binder is free, any binder typed deck_box is reserved", () => {
+  test("auto lock follows the effective type: a precon retyped as binder is free, a binder typed deck_box is locked", () => {
     seed([[ID.sol, 1, PRECON], [ID.lightning, 1, "Stuff"]]);
     const idea = deck("Plan", "idea", [row("Sol Ring", ID.sol, 1), row("Lightning Bolt", ID.lightning, 1)]);
     let d = deckDetail(ctx.db, idea, { power: false });
@@ -101,7 +141,55 @@ describe("deck boxes are reserved", () => {
     d = deckDetail(ctx.db, idea, { power: false });
     assert.deepEqual([pick(d, "Sol Ring").in_use, pick(d, "Lightning Bolt").in_use], [0, 1]);
     const b = listBinders(ctx.db).binders;
-    assert.deepEqual(b.map((x) => [x.name, x.reserved]), [[PRECON, false], ["Stuff", true]]);
+    assert.deepEqual(b.map((x) => [x.name, x.locked, x.reserved, x.locked_set]), [[PRECON, false, false, false], ["Stuff", true, true, false]]);
+  });
+
+  test("the user's lock wins over the type, both ways; null goes back to auto", () => {
+    seed([[ID.sol, 1, PRECON], [ID.lightning, 1, "Foundation"]]);
+    const idea = deck("Plan", "idea", [row("Sol Ring", ID.sol, 1), row("Lightning Bolt", ID.lightning, 1)]);
+    const uses = () => { const d = deckDetail(ctx.db, idea, { power: false }); return [pick(d, "Sol Ring").in_use, pick(d, "Lightning Bolt").in_use]; };
+    assert.deepEqual(uses(), [1, 0]);
+    let r = setBinderProps(ctx.db, "Foundation", { locked: true });
+    const f = r.binders.find((x) => x.name === "Foundation");
+    assert.deepEqual([f.type, f.locked, f.locked_set, f.locked_auto, f.box_deck], ["binder", true, true, false, null], "a plain binder, locked, no owner");
+    setBinderProps(ctx.db, PRECON, { locked: false });
+    assert.deepEqual(uses(), [0, 1]);
+    const bolt = pick(deckDetail(ctx.db, idea, { power: false }), "Lightning Bolt");
+    assert.deepEqual([bolt.available_for_this, bolt.to_buy, bolt.in_locked], [0, 0, [{ binder: "Foundation", deck_id: null, deck_name: null, quantity: 1 }]]);
+    assert.equal(listBinders(ctx.db).binders.find((x) => x.name === PRECON).type, "deck_box", "the type stays");
+    r = setBinderProps(ctx.db, "Foundation", { locked: null });
+    setBinderProps(ctx.db, PRECON, { locked: null });
+    assert.deepEqual(uses(), [1, 0], "back to automatic");
+    assert.equal(r.binders.find((x) => x.name === "Foundation").locked_set, false);
+    assert.throws(() => setBinderProps(ctx.db, "Foundation", { locked: "yes" }), (e) => e.status === 400);
+    assert.throws(() => setBinderProps(ctx.db, "", { locked: true }), (e) => e.status === 400, "Unsorted can't be locked");
+    assert.equal(effectiveLock(null, "deck_box"), true);
+    assert.equal(effectiveLock(0, "deck_box"), false);
+    assert.equal(effectiveLock(1, "trade"), true);
+  });
+
+  test("a locked plain binder is free for its owner deck only (name match or link)", () => {
+    seed([[ID.sol, 1, "Elves"], [ID.lightning, 1, "Shelf"]]);
+    const elves = deck("Elves", "idea", [row("Sol Ring", ID.sol, 1), row("Lightning Bolt", ID.lightning, 1)]);
+    const other = deck("Other", "idea", [row("Sol Ring", ID.sol, 1), row("Lightning Bolt", ID.lightning, 1)]);
+    setBinderProps(ctx.db, "Elves", { type: "binder", locked: true });
+    setBinderProps(ctx.db, "Shelf", { locked: true, deck_id: elves });
+    const mine = deckDetail(ctx.db, elves, { power: false });
+    assert.deepEqual([pick(mine, "Sol Ring").in_use, pick(mine, "Lightning Bolt").in_use], [0, 0]);
+    const theirs = deckDetail(ctx.db, other, { power: false });
+    assert.deepEqual(theirs.cards.map((c) => [c.name, c.in_use, c.in_use_locked, c.to_buy]), [["Lightning Bolt", 1, 1, 0], ["Sol Ring", 1, 1, 0]]);
+    assert.deepEqual(pick(theirs, "Sol Ring").in_locked, [{ binder: "Elves", deck_id: elves, deck_name: "Elves", quantity: 1 }]);
+    assert.equal(theirs.conflict_count, 0);
+  });
+
+  test("the lock follows a rename; a merge keeps the target's own choice", () => {
+    seed([[ID.sol, 1, "A"], [ID.lightning, 1, "B"]]);
+    setBinderProps(ctx.db, "A", { locked: true });
+    renameBinder(ctx.db, "A", "A2", { confirm_master: true });
+    assert.equal(lockedBinders(ctx.db).has("a2"), true);
+    setBinderProps(ctx.db, "B", { locked: false });
+    renameBinder(ctx.db, "A2", "B", { confirm_master: true });
+    assert.equal(lockedBinders(ctx.db).has("b"), false);
   });
 
   test("basics stay free in a box", () => {
@@ -112,8 +200,8 @@ describe("deck boxes are reserved", () => {
   });
 });
 
-describe("Put into deck box and the build list never take from other boxes", () => {
-  test("deckToBinder skips every other deck box (unlinked, idea-owned, built-owned)", () => {
+describe("Put into deck box and the build list never take from locked binders", () => {
+  test("deckToBinder skips every other locked binder (unlinked, idea-owned, built-owned)", () => {
     seed([[ID.sol, 1, PRECON], [ID.lightning, 1, "Deck box: Idea"], [ID.serra, 1, "Deck box: Built"], [ID.counterspell, 1]]);
     deck("Idea", "idea", [row("Lightning Bolt", ID.lightning, 1)]);
     deck("Built", "built", [row("Atraxa, Praetors' Voice", ID.atraxa, 1)]);
@@ -129,21 +217,39 @@ describe("Put into deck box and the build list never take from other boxes", () 
     assert.equal(ctx.db.prepare("SELECT SUM(quantity) AS q FROM collection WHERE binder = ?").get(PRECON).q, 1, "precon untouched");
   });
 
-  test("build list: copies in other boxes go to 'In other decks or boxes', never to a binder group", () => {
+  test("deckToBinder: a locked plain binder is skipped, unlocked it is a source again", () => {
+    seed([[ID.counterspell, 1, "Foundation"]]);
+    const id = deck("Plan", "built", [row("Counterspell", ID.counterspell, 1)]);
+    setBinderProps(ctx.db, "Foundation", { locked: true });
+    let r = deckToBinder(ctx.db, id, { confirm_master: true });
+    assert.deepEqual([r.moved_copies, r.missing.map((m) => m.name)], [0, ["Counterspell"]]);
+    setBinderProps(ctx.db, "Foundation", { locked: false });
+    r = deckToBinder(ctx.db, id, { confirm_master: true });
+    assert.deepEqual(r.moved.map((m) => [m.name, m.from]), [["Counterspell", [{ binder: "Foundation", quantity: 1 }]]]);
+  });
+
+  test("build list: copies in locked binders go to 'In other decks or locked binders', never to a binder group", () => {
     seed([[ID.sol, 1, PRECON], [ID.lightning, 1, "Trade"], [ID.lightning, 1, PRECON]]);
     const id = deck("Plan", "idea", [row("Sol Ring", ID.sol, 1), row("Lightning Bolt", ID.lightning, 2)]);
     const list = buildChecklist(ctx.db, id);
     assert.deepEqual(list.groups.map((g) => [g.kind, g.title, g.lines.map((l) => `${l.quantity} ${l.name}`).join(", ")]), [
       ["binder", "Trade", "1 Lightning Bolt"],
-      ["other", "In other decks or boxes", "1 Lightning Bolt, 1 Sol Ring"],
+      ["other", "In other decks or locked binders", "1 Lightning Bolt, 1 Sol Ring"],
     ]);
     const sol = list.groups[1].lines.find((l) => l.name === "Sol Ring");
-    assert.deepEqual([sol.binder, sol.box, sol.decks], [PRECON, true, []]);
+    assert.deepEqual([sol.binder, sol.box, sol.locked, sol.decks], [PRECON, true, true, []]);
+    // Locking Trade moves its Bolt out of the binder groups; unlocking the precon frees its copies.
+    setBinderProps(ctx.db, "Trade", { locked: true });
+    setBinderProps(ctx.db, PRECON, { locked: false });
+    assert.deepEqual(buildChecklist(ctx.db, id).groups.map((g) => [g.kind, g.title, g.lines.map((l) => `${l.quantity} ${l.name}`).join(", ")]), [
+      ["binder", PRECON, "1 Lightning Bolt, 1 Sol Ring"],
+      ["other", "In other decks or locked binders", "1 Lightning Bolt"],
+    ]);
   });
 });
 
 describe("search: avail / used", () => {
-  test("avail leaves out copies in deck boxes; used counts them", () => {
+  test("avail leaves out copies in locked binders; used counts them", () => {
     seed([[ID.sol, 2, PRECON], [ID.sol, 1], [ID.lightning, 1, "Trade"]]);
     const names = (q) => searchCollection(ctx.db, { q }).rows.map((r) => r.name);
     const sol = searchCollection(ctx.db, { q: "sol" }).rows[0];
@@ -159,6 +265,12 @@ describe("search: avail / used", () => {
     // A built owner claiming the copies: claim and box count once.
     ctx.db.prepare("UPDATE decks SET status = 'built' WHERE id = ?").run(owner);
     assert.deepEqual(["used", "boxed", "avail"].map((k) => searchCollection(ctx.db, { q: "sol" }).rows[0][k]), [2, 0, 1]);
+    // A locked plain binder counts; unlocked again it doesn't.
+    setBinderProps(ctx.db, "Trade", { locked: true });
+    assert.deepEqual(names("avail>=1"), ["Sol Ring"]);
+    assert.deepEqual(names("is:used"), ["Lightning Bolt", "Sol Ring"]);
+    setBinderProps(ctx.db, "Trade", { locked: false });
+    assert.deepEqual(names("used:no"), ["Lightning Bolt"]);
   });
 });
 

@@ -1234,9 +1234,9 @@ async function handleScanApi(req, res, url) {
     try { name = decodeURIComponent(m[1]); } catch { throw new HttpError(400, "Bad binder name"); }
     if (method === "PATCH") {
       // {name?} renames (merge); {type?, cover_scryfall_id?} set the type / cover (null = auto), {deck_id?} links the
-      // deck that owns this deck box (decks.box_binder; null = none), after a rename.
+      // deck that owns this deck box (decks.box_binder; null = none), {locked?} true/false/null (auto), after a rename.
       const body = await readJson(req);
-      const props = body.type !== undefined || body.cover_scryfall_id !== undefined || body.deck_id !== undefined;
+      const props = body.type !== undefined || body.cover_scryfall_id !== undefined || body.deck_id !== undefined || body.locked !== undefined;
       return sendJson(res, 200, await exclusive(async () => scanCall(() => {
         if (body.name === undefined && props) return setBinderProps(db, name, body);
         const r = renameBinder(db, name, body.name, { confirm_master: body.confirm_master === true });

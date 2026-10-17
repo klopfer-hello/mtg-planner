@@ -168,8 +168,8 @@ describe("schema v15 + data", () => {
     setAppMeta(db, CARD_FACTS_META, JSON.stringify({ done_at: "x", refreshed: 1, skipped: [] }));
     db.exec("PRAGMA user_version = 14");
     migrate(db);
-    assert.equal(SCHEMA_VERSION, 15);
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 15);
+    assert.ok(SCHEMA_VERSION >= 15);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
     assert.equal(getAppMeta(db, CARD_FACTS_META), null);
     migrate(db); // idempotent
     assert.deepEqual(cardFactsPending(db).sort(), [SCREECH.id, INSPECTOR.id].sort());

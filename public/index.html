@@ -1041,6 +1041,8 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 .bulk-ask, .box-ask { flex-wrap: wrap; align-items: center; }
 .deck-box-line { overflow-wrap: anywhere; }
 .deck-box-line svg { width: 14px; height: 14px; vertical-align: -2px; }
+.lock-btn[aria-pressed="true"] { color: var(--accent); }
+.badge.lock { padding: 0 4px; }
 .bulk-ask .grow, .box-ask .grow { flex: 1 1 220px; }
 .binder-title .switch { position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; border-radius: 8px; }
 .binder-title .switch .t { font-size: 1.25rem; font-weight: 750; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -1476,6 +1478,8 @@ const Icon = {
   zoomOut: () => <Svg><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5M8 11h6" /></Svg>,
   cart: () => <Svg><path d="M3 4h2l2.4 11h10.2L20 8H6.2" /><circle cx="9" cy="19.5" r="1.3" /><circle cx="17" cy="19.5" r="1.3" /></Svg>,
   box: () => <Svg><path d="M3 8l9-4 9 4v9l-9 4-9-4z" /><path d="M3 8l9 4 9-4M12 12v9" /></Svg>,
+  lock: () => <Svg><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></Svg>,
+  unlock: () => <Svg><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 7.6-1.8" /></Svg>,
   chart: () => <Svg><path d="M4 4v16h16" /><path d="M7 15l4-4 3 3 5-6" /></Svg>,
   heart: () => <Svg><path d="M12 20s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 10c0 5.65-7 10-7 10z" /></Svg>,
   heartFull: () => <Svg><path d="M12 20s-7-4.35-7-10a4 4 0 0 1 7-2.65A4 4 0 0 1 19 10c0 5.65-7 10-7 10z" fill="currentColor" /></Svg>,
@@ -1665,9 +1669,10 @@ function CardUsage({ usage }) {
     <div className="usage-line" aria-label="Copies and decks">
       <span>owned <b>{fmtInt(usage.owned)}</b></span>
       {ids.size > 0 && <span className="muted">· used in {plural(ids.size, "deck")}{built.size ? ` (${fmtInt(built.size)} built)` : ""}</span>}
+      {usage.boxed > 0 && <span className="muted">· 🔒 {fmtInt(usage.boxed)} in locked binders</span>}
       {available < 0
         ? <span className="badge bad">{fmtInt(-available)} short</span>
-        : usage.built_demand > 0 && <span className="badge ok">{fmtInt(available)} free</span>}
+        : (usage.built_demand > 0 || usage.boxed > 0) && <span className="badge ok">{fmtInt(available)} free</span>}
     </div>
   );
 }
@@ -2707,9 +2712,11 @@ const builtElsewhereOf = (c) => {
   return asList(c?.used_elsewhere).filter((u) => u && (typeof u === "string" || (u.name && (!u.status || u.status === "built"))));
 };
 const deckNames = (list) => list.map(refName).filter((n, i, a) => a.indexOf(n) === i).join(", ");
-/** Other deck boxes holding this card (reserved for their box): "deck box X, deck box Y". */
-const boxNames = (c) => asList(c?.in_boxes).filter((b) => b && b.binder).map((b) => `deck box ${b.binder}`)
-  .filter((n, i, a) => a.indexOf(n) === i).join(", ");
+/** Locked binders holding this card (kept for another deck or for all): "X, Y". */
+const lockedOf = (c) => asList(c?.in_locked ?? c?.in_boxes).filter((b) => b && b.binder);
+const boxNames = (c) => lockedOf(c).map((b) => b.binder).filter((n, i, a) => a.indexOf(n) === i).join(", ");
+/** Copies of a deck row that lie in locked binders (part of in_use). */
+const cardInLocked = (c) => (c && !c.basic ? Math.max(0, Number(c.in_use_locked ?? c.in_use_box) || 0) : 0);
 /** Deck-level counts with fallbacks to the pre-0.3.1 fields. */
 function deckCounts(deck) {
   const cards = asList(deck?.cards).filter((c) => c && c.board !== "maybe");
@@ -2733,9 +2740,10 @@ function DeckCardRow({ card, onOpenCard, onActions }) {
   const inUse = cardInUse(card);
   const builtElsewhere = card.basic ? [] : builtElsewhereOf(card);
   const decksWhere = deckNames(builtElsewhere) || "another built deck";
-  // In use = claimed by other built decks and/or lying in other deck boxes (reserved for those).
-  const inBox = card.basic ? 0 : Math.max(0, Number(card.in_use_box) || 0);
-  const where = [inUse - inBox > 0 ? deckNames(builtElsewhere) : "", inBox > 0 ? boxNames(card) : ""].filter(Boolean).join(", ") || decksWhere;
+  // In use = claimed by other built decks and/or lying in locked binders (kept for another deck).
+  const inBox = cardInLocked(card);
+  const inDecks = inUse - inBox;
+  const where = [inDecks > 0 ? deckNames(builtElsewhere) : "", inBox > 0 ? `locked binder ${boxNames(card)}` : ""].filter(Boolean).join(", ") || decksWhere;
   // Built deck + contested copies = conflict (red); idea deck = in use (amber).
   const conflict = Boolean(card.conflict) && !card.basic;
   const badges = [];
@@ -2745,7 +2753,7 @@ function DeckCardRow({ card, onOpenCard, onActions }) {
       const t = conflict
         ? `Conflict: ${inUse} of your copies ${inUse === 1 ? "is" : "are"} also in ${where} (own ${card.owned ?? 0})`
         : `In use: ${inUse} owned ${inUse === 1 ? "copy is" : "copies are"} in ${where}. You can move ${inUse === 1 ? "it" : "them"} to this deck.`;
-      badges.push(<span key="u" className={`badge ${conflict ? "bad" : "warn"}`} role="img" aria-label={t} title={t}>{conflict ? "⚠" : "⇄"} {inUse}</span>);
+      badges.push(<span key="u" className={`badge ${conflict ? "bad" : "warn"}`} role="img" aria-label={t} title={t}>{conflict ? "⚠" : inBox >= inUse ? "🔒" : "⇄"} {inUse}</span>);
     }
     if (conflict && !inUse) {
       // Shared with another built deck but no owned copy to contest: still a conflict.
@@ -2766,9 +2774,12 @@ function DeckCardRow({ card, onOpenCard, onActions }) {
     }
   }
   // Visible on phones (no hover): where the copies are and that they can move.
+  const lockedLine = inBox > 0 ? <>🔒 in {boxNames(card)} · locked</> : null;
   const useLine = conflict
-    ? <span className="use conf">conflict: also in {decksWhere}</span>
-    : inUse > 0 ? <span className="use inuse">in {where} · can be moved</span> : null;
+    ? <span className="use conf">conflict: also in {decksWhere}{lockedLine && <> · {lockedLine}</>}</span>
+    : inUse > 0
+      ? <span className="use inuse">{inDecks > 0 && <>in {deckNames(builtElsewhere) || decksWhere} · can be moved</>}{inDecks > 0 && lockedLine && " · "}{lockedLine}</span>
+      : null;
   const unresolved = !card.scryfall_id;
   return (
     <>
@@ -3001,6 +3012,9 @@ function ConflictBanner({ deck, onOpenDeck }) {
 function DeckNeedNotice({ deck }) {
   const { toBuy, inUse, toBuyEur, inUseEur } = deckCounts(deck);
   const built = deck?.status === "built";
+  // Copies only free in locked binders (deck boxes, binders the user locked).
+  const locked = Math.max(0, Number(deck?.in_use_locked_count ?? deck?.in_use_box_count) || 0);
+  const inDecks = Math.max(0, inUse - locked);
   if (!toBuy && !inUse) {
     return <div className="notice ok"><span aria-hidden="true">✓</span><div className="grow"><b>You own every card in this deck.</b></div></div>;
   }
@@ -3012,13 +3026,18 @@ function DeckNeedNotice({ deck }) {
           {toBuy > 0
             ? <b>{fmtInt(toBuy)} to buy{toBuyEur != null ? ` (~${fmtEur(toBuyEur)})` : ""}</b>
             : <b>You own every card</b>}
-          {inUse > 0 && <>
+          {inDecks > 0 && <>
             {" · "}
-            <span className="inuse-count"><span aria-hidden="true">{built ? "⚠" : "⇄"}</span> {fmtInt(inUse)} in other {built ? "built " : ""}decks{inUseEur != null && inUseEur > 0 ? ` (${fmtEur(inUseEur)} to buy instead)` : ""}</span>
+            <span className="inuse-count"><span aria-hidden="true">{built ? "⚠" : "⇄"}</span> {fmtInt(inDecks)} in other {built ? "built " : ""}decks{inUseEur != null && inUseEur > 0 && !locked ? ` (${fmtEur(inUseEur)} to buy instead)` : ""}</span>
+          </>}
+          {locked > 0 && <>
+            {" · "}
+            <span className="locked-count"><span aria-hidden="true">🔒</span> {plural(locked, "card")} only in locked binders</span>
           </>}
         </span>
         <span className="small">
-          {inUse > 0 && (built ? "Shared copies: move them or buy extra to play both decks. " : "You own those; move them over when you build this deck. ")}
+          {inDecks > 0 && (built ? "Shared copies: move them or buy extra to play both decks. " : "You own those; move them over when you build this deck. ")}
+          {locked > 0 && "Locked binders keep their cards for their own deck; unlock the binder or move the cards to use them here. "}
           Maybeboard not counted.
         </span>
       </div>
@@ -3053,7 +3072,7 @@ function DeckLinks({ decks, boxes, onOpenDeck, shared = false }) {
   if (!list.length && !boxList.length) return null;
   return (
     <span className="sub">in {boxList.map((b, j) => (
-      <React.Fragment key={`b${j}`}>{j > 0 && ", "}deck box {b.binder}</React.Fragment>
+      <React.Fragment key={`b${j}`}>{j > 0 && ", "}🔒 {b.binder}</React.Fragment>
     ))}{boxList.length > 0 && list.length > 0 && ", "}{list.map((d, j) => {
       const did = typeof d === "object" ? (d.id ?? d.deck_id) : null;
       return (
@@ -3063,7 +3082,7 @@ function DeckLinks({ decks, boxes, onOpenDeck, shared = false }) {
             : refName(d)}
         </React.Fragment>
       );
-    })}{shared ? " · conflict" : " · can be moved"}</span>
+    })}{shared ? " · conflict" : list.length ? " · can be moved" : " · locked"}</span>
   );
 }
 
@@ -3128,12 +3147,12 @@ function DeckShopping({ deck, onOpenDeck, onWishChanged }) {
       {inUse.length > 0 && (
         <details className="disclosure inuse-list">
           <summary>
-            <span>{built && !boxedOnly ? "Shared with other built decks" : anyBoxed ? "In other decks or boxes" : "In other decks"}: {plural(inUseCards, "card")}{inUseTotal != null ? ` (buy instead: ${fmtEur(inUseTotal)})` : ""}</span>
+            <span>{built && !boxedOnly ? "Shared with other built decks" : boxedOnly ? "In locked binders" : anyBoxed ? "In other decks or locked binders" : "In other decks"}: {plural(inUseCards, "card")}{inUseTotal != null ? ` (buy instead: ${fmtEur(inUseTotal)})` : ""}</span>
           </summary>
           <span className="small muted">{built && !boxedOnly
             ? "You own these, but other built decks claim the copies. Move them between decks or buy extra copies to play all at once."
             : anyBoxed
-              ? "You own these; they are in your built decks or in other deck boxes (reserved for those). Move them over, or buy extra copies."
+              ? "You own these; they are in your built decks or in locked binders (kept for their own deck). Move them over, unlock the binder, or buy extra copies."
               : "You own these; they are in your built decks now. Move them over when you build this deck, or buy extra copies."}</span>
           <BuyList items={inUse} qtyKey="qty" total={inUseTotal} label="Buy instead"
             sub={(it) => <DeckLinks decks={(it.quantity ?? 0) - (it.in_box ?? 0) > 0 ? it.decks : []} boxes={it.in_box ? it.boxes : []}
@@ -3213,7 +3232,7 @@ function DeckBoxSheet({ deck, pickedOnly = false, onClose, onDone }) {
 // ===========================================================================
 
 const BUILD_GROUP_HINT = {
-  other: "Owned, but another built deck or a deck box holds them (deck boxes are reserved).",
+  other: "Owned, but another built deck or a locked binder holds them.",
   basics: "Not enough in the collection: take them from your basic lands.",
   buy: "You don't own these.",
   box: "Already where the deck lives.",
@@ -3319,7 +3338,7 @@ function BuildSheet({ deck, onClose, onSetBuilt, onCollectionChanged }) {
                         <span className="tick" aria-hidden="true">{on ? <Icon.check /> : null}</span>
                         <span className="q">{l.quantity}×</span>
                         <span className="nm"><b>{l.name}</b>{l.commander && <span className="badge accent">commander</span>}
-                          {g.kind === "other" && <span className="small muted">in {l.box ? "deck box " : ""}{l.binder || UNSORTED}{l.box && !asList(l.decks).length ? " · reserved" : ""}{asList(l.decks).length ? ` · ${asList(l.decks).join(", ")}` : ""}</span>}
+                          {g.kind === "other" && <span className="small muted">{(l.locked ?? l.box) ? "🔒 " : ""}in {l.binder || UNSORTED}{(l.locked ?? l.box) && !asList(l.decks).length ? " · locked" : ""}{asList(l.decks).length ? ` · ${asList(l.decks).join(", ")}` : ""}</span>}
                           {l.token && l.pt && <span className="badge">{l.pt}</span>}
                           {l.token && <span className="small muted">{l.need ? `need · you own none${l.estimate_note ? ` · ${l.estimate_note}` : ""}` : `in ${l.binder || UNSORTED}`}</span>}
                           {l.marker && asList(l.from).length > 0 && <span className="small muted">{asList(l.from).join(", ")}</span>}
@@ -4337,7 +4356,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
             )}
             {deck.box?.binder && (
               <p className="small muted deck-box-line" style={{ margin: 0 }}><Icon.box /> Deck box: <a href={collectionHash({ view: "binder", binder: deck.box.binder })}>{deck.box.binder}</a>
-                {" "}· its cards are reserved for this deck</p>
+                {" "}· 🔒 its cards are kept for this deck</p>
             )}
             <DeckNeedNotice deck={deck} />
             <DeckStats deck={deck} />
@@ -7794,10 +7813,10 @@ function BinderCover({ cover, icon = <Icon.collection /> }) {
   );
 }
 
-function BinderEntry({ name, label = name, cover, copies, value, badge = null, dashed = false, icon, onClick }) {
+function BinderEntry({ name, label = name, cover, copies, value, badge = null, locked = false, dashed = false, icon, onClick }) {
   return (
     <button type="button" className={`binder-entry${dashed ? " dashed" : ""}`} onClick={onClick}
-      aria-label={`${label}, ${copiesValue(copies, value)}`}>
+      aria-label={`${label}${locked ? ", locked" : ""}, ${copiesValue(copies, value)}`}>
       <BinderCover cover={cover} icon={icon} />
       <span className="info" aria-hidden="true">
         <span className="nm"><span className="t">{label}</span>{badge}</span>
@@ -7859,8 +7878,11 @@ function BinderOverview({ list, onOpen, onGoImport, onGoScan, onChanged }) {
           <h3 className="binder-group-h">{heading} <span className="muted">{items.length}</span></h3>
           <div className="binder-grid">
             {items.map((b) => (
-              <BinderEntry key={b.name} name={b.name} cover={b.cover} copies={b.copies} value={b.value_eur}
-                badge={b.type_suggest === "bulk" ? <span className="badge warn">bulk?</span> : null}
+              <BinderEntry key={b.name} name={b.name} cover={b.cover} copies={b.copies} value={b.value_eur} locked={Boolean(b.locked)}
+                badge={<>
+                  {b.locked && <span className="badge lock" role="img" aria-label="Locked" title="Locked: these cards are kept for their own deck">🔒</span>}
+                  {b.type_suggest === "bulk" && <span className="badge warn">bulk?</span>}
+                </>}
                 onClick={() => onOpen({ view: "binder", binder: b.name })} />
             ))}
           </div>
@@ -7890,6 +7912,16 @@ function BinderHeader({ binder, entry, list, onBack, onOpen, onOpenDeck, onMenu,
   const all = binder == null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [toast, toastEl] = useEditToast(null);
+  const locked = Boolean(entry?.locked ?? entry?.reserved);
+  const toggleLock = async () => {
+    setBusy(true); setError(null);
+    try {
+      await api(`/api/binders/${encodeURIComponent(binder)}`, { method: "PATCH", json: { locked: !locked } });
+      toast({ text: locked ? "Unlocked" : "Locked: these cards won’t be used for other decks" });
+      onChanged();
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  };
   const value = all ? "*all" : binder === "" ? "*unsorted" : binder;
   const binders = list?.binders || [];
   const switchTo = (v) => onOpen(v === "*all" ? { view: "all" } : { view: "binder", binder: v === "*unsorted" ? "" : v }, { replace: true });
@@ -7926,6 +7958,12 @@ function BinderHeader({ binder, entry, list, onBack, onOpen, onOpenDeck, onMenu,
           <span className="small muted">{all ? "Every copy you own" : binder ? binderTypeLabel(entry?.type) : "Copies without a binder"}</span>
         </div>
         <ShareButton title={all ? "All cards" : binder || UNSORTED} hash={collectionHash(all ? { view: "all" } : { view: "binder", binder })} />
+        {binder && entry && (
+          <button type="button" className="btn ghost icon lock-btn" aria-pressed={locked} disabled={busy}
+            aria-label={locked ? `${binder} is locked. Unlock` : `Lock ${binder}`}
+            title={locked ? "Locked: only its own deck uses these cards. Tap to unlock" : "Lock: keep these cards out of other decks"}
+            onClick={toggleLock}>{locked ? <Icon.lock /> : <Icon.unlock />}</button>
+        )}
         {binder && <button type="button" className="btn ghost icon" aria-label={`Options for ${binder}`} title="Rename, type, cover, delete" onClick={onMenu}><Icon.more /></button>}
       </div>
       {decks.length > 0 && onOpenDeck && !entry?.box_deck && (
@@ -7933,10 +7971,10 @@ function BinderHeader({ binder, entry, list, onBack, onOpen, onOpenDeck, onMenu,
           <React.Fragment key={d.id}>{i ? ", " : ""}<button type="button" className="link-btn" onClick={() => onOpenDeck(d.id)}>{d.name}</button></React.Fragment>
         ))}</p>
       )}
-      {binder && entry?.reserved && (
-        <p className="small muted" style={{ margin: 0 }}>{entry.box_deck
-          ? <>Deck box of {onOpenDeck ? <button type="button" className="link-btn" onClick={() => onOpenDeck(entry.box_deck.id)}>{entry.box_deck.name}</button> : <b>{entry.box_deck.name}</b>}: these cards are reserved for it, other decks don’t use them.</>
-          : <>Deck box: these cards are reserved, other decks don’t use them. Link its deck in <b>⋯</b>.</>}</p>
+      {binder && locked && (
+        <p className="small muted" style={{ margin: 0 }}>🔒 {entry.box_deck
+          ? <>Locked for {onOpenDeck ? <button type="button" className="link-btn" onClick={() => onOpenDeck(entry.box_deck.id)}>{entry.box_deck.name}</button> : <b>{entry.box_deck.name}</b>}: other decks don’t use these cards.</>
+          : <>Locked: no deck uses these cards. {entry.type === "deck_box" ? <>Link its deck in <b>⋯</b>.</> : null}</>}</p>
       )}
       {suggest && (
         <div className="notice box-ask" role="status">
@@ -7957,6 +7995,7 @@ function BinderHeader({ binder, entry, list, onBack, onOpen, onOpenDeck, onMenu,
         </div>
       )}
       <ErrorNotice error={error} onDismiss={() => setError(null)} />
+      {toastEl}
     </div>
   );
 }
@@ -7973,7 +8012,8 @@ function BinderMenuSheet({ entry, list, onClose, onChanged, onRenamed, onDeleted
   const [picking, setPicking] = useState(false);
   const [deleting, setDeleting] = useState(null); // "unsort" | "delete"
   const [decks, setDecks] = useState(null);
-  const isBox = entry.type === "deck_box";
+  const locked = Boolean(entry.locked ?? entry.reserved);
+  const isBox = entry.type === "deck_box" || locked;
   useEffect(() => {
     if (!isBox) return undefined;
     let live = true;
@@ -8016,7 +8056,18 @@ function BinderMenuSheet({ entry, list, onClose, onChanged, onRenamed, onDeleted
           <span className="small muted">{entry.type_set
             ? <>You picked this type. <button type="button" className="link-btn" disabled={busy} onClick={() => patch({ type: null })}>Back to automatic ({binderTypeLabel(entry.type_auto)})</button></>
             : "Set automatically (deck boxes are found by name and by their deck)."}</span>
-          {isBox && <span className="small muted">Cards in a deck box are reserved: only its own deck uses them.</span>}
+        </fieldset>
+
+        <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, minWidth: 0, gap: 8 }}>
+          <legend className="label" style={{ marginBottom: 8 }}>Lock</legend>
+          <div className="chips" role="group" aria-label="Lock or unlock">
+            <button type="button" className="chip lg" aria-pressed={locked} disabled={busy} onClick={() => patch({ locked: true })}><Icon.lock /> Locked</button>
+            <button type="button" className="chip lg" aria-pressed={!locked} disabled={busy} onClick={() => patch({ locked: false })}><Icon.unlock /> Unlocked</button>
+          </div>
+          <span className="small muted">{locked ? "Locked: only its own deck uses these cards; other decks see them as in use." : "Unlocked: any deck can use these cards."}
+            {" "}{entry.locked_set
+              ? <button type="button" className="link-btn" disabled={busy} onClick={() => patch({ locked: null })}>Back to automatic ({entry.locked_auto ? "locked" : "unlocked"})</button>
+              : "Set automatically (deck boxes are locked)."}</span>
         </fieldset>
 
         {isBox && (
@@ -8031,8 +8082,8 @@ function BinderMenuSheet({ entry, list, onClose, onChanged, onRenamed, onDeleted
               ))}
             </select>
             <span className="small muted">{entry.box_deck
-              ? <>The cards here are free for <b>{entry.box_deck.name}</b> and in use for every other deck.</>
-              : "No deck: the cards here are reserved for nobody, so no deck takes them."}
+              ? <>{locked ? <>The cards here are free for <b>{entry.box_deck.name}</b> and in use for every other deck.</> : <>Holds <b>{entry.box_deck.name}</b>. Unlocked: every deck can use the cards.</>}</>
+              : locked ? "No deck: the cards here are locked for every deck." : "No deck linked."}
               {entry.box_deck?.via === "name" ? " (Found by its name.)" : entry.box_deck?.via === "manabox" ? " (Its ManaBox deck binder.)" : ""}</span>
           </div>
         )}

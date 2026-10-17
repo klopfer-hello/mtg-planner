@@ -133,6 +133,20 @@ describe("binder API", () => {
     again.close();
   });
 
+  test("PATCH /api/binders/:name {locked} locks, unlocks and goes back to auto; combines with other fields", async () => {
+    const lockOf = (body, name) => ["locked", "locked_set", "reserved"].map((k) => body.binders.find((b) => b.name === name)[k]);
+    let r = await call("PATCH", `/api/binders/${enc("Scans")}`, { locked: true });
+    assert.equal(r.status, 200);
+    assert.deepEqual(lockOf(r.body, "Scans"), [true, true, true]);
+    r = await call("PATCH", `/api/binders/${enc("Scans")}`, { locked: false, type: "trade" });
+    assert.deepEqual([...lockOf(r.body, "Scans"), r.body.binders.find((b) => b.name === "Scans").type], [false, true, false, "trade"]);
+    assert.equal((await call("PATCH", `/api/binders/${enc("Scans")}`, { locked: "yes" })).status, 400);
+    assert.equal((await call("PATCH", `/api/binders/${enc("Nope")}`, { locked: true })).status, 404);
+    r = await call("PATCH", `/api/binders/${enc("Scans")}`, { locked: null, type: null });
+    assert.deepEqual(lockOf(r.body, "Scans"), [false, false, false]);
+    assert.deepEqual(lockOf((await call("GET", "/api/binders")).body, "Scans"), [false, false, false]);
+  });
+
   test("GET /api/collection/sections + section filter on /api/collection", async () => {
     let r = await call("GET", "/api/collection/sections?by=type");
     assert.equal(r.status, 200);
