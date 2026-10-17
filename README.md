@@ -150,6 +150,7 @@ More: [docs/backups-and-security.md](docs/backups-and-security.md)
   your Claude plan. Keep it on your home network, never on the internet.
 - Everything except the chat and the Claude help for hard-to-scan cards
   works without Claude.
+- **Share** a deck or binder: the arrow button sends a link to it.
 
 ## More details
 

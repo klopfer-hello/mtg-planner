@@ -40,6 +40,9 @@ Decks can be exported as a text list you can import elsewhere.
 - A **cover picture**: the commander, else the most expensive card (EUR,
   basic lands never). The deck list shows it as a thumbnail on phones and as
   the card art on wider screens.
+- **Share** (the arrow next to the deck name) sends a link to the deck
+  (`#decks/<id>`): the phone's share menu, else the link is copied. Anyone on
+  your home network opens it straight in the app.
 
 ## Deck stats
 

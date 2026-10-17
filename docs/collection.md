@@ -102,6 +102,11 @@ returns to the overview, and a reload keeps you where you were. The page has:
   them to *Unsorted* (default) or delete them too (logged and undoable, see
   [Editing owned copies](#editing-owned-copies)).
 
+**Share** (the arrow next to the binder name, also on *All cards*) sends a
+link to the page (`#collection/binder/<name>`, `#collection/all`): the phone's
+share menu, else the link is copied. Anyone on your home network opens it
+straight in the app.
+
 **New binder** and **Manage** (rename, type and delete for every binder) sit
 at the top of the overview. Tapping the Binders tab again returns there.
 - a card's details list every owned copy with a **Move…** action: pick how

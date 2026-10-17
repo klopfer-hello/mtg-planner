@@ -432,6 +432,7 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 .deck-title { display: flex; gap: 12px; align-items: center; min-width: 0; }
 .deck-title .cover { width: 48px; }
 .deck-title h2 { min-width: 0; }
+.deck-title .share-btn { margin-left: auto; flex: none; }
 @media (min-width: 768px) {
   .deck-item { grid-template-columns: minmax(0, 1fr); padding: 0 0 14px; overflow: hidden; align-content: start; }
   .deck-item .cover { width: 100%; aspect-ratio: 626 / 300; border-radius: 0; }
@@ -1466,6 +1467,7 @@ const Icon = {
   history: () => <Svg><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" /><path d="M12 8v4l3 2" /></Svg>,
   checklist: () => <Svg><path d="M4 6l1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17M11 6h9M11 12h9M11 18h9" /></Svg>,
   minus: () => <Svg><path d="M5 12h14" /></Svg>,
+  share: () => <Svg><path d="M12 3v12M8 7l4-4 4 4" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" /></Svg>,
   more: () => <Svg><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></Svg>,
   crown: () => <Svg><path d="M4 18h16M5 15l-1-9 5 4 3-6 3 6 5-4-1 9z" /></Svg>,
   zoomIn: () => <Svg><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5M8 11h6M11 8v6" /></Svg>,
@@ -1599,6 +1601,50 @@ function Sheet({ title, onClose, children, actions, pinned }) {
         {children}
       </div>
     </div>
+  );
+}
+
+/** Copy text: the async clipboard API (secure contexts), else a hidden textarea + execCommand. */
+async function copyText(text) {
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* fall through */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+
+/** Link to a view of this server (same host the user opened, e.g. #decks/6 or #collection/binder/Trade). */
+const shareUrl = (hash) => `${location.origin}${location.pathname}${hash}`;
+
+/**
+ * Share a deep link to a deck or binder with someone on the same network: the share
+ * sheet on phones (navigator.share), else the link goes to the clipboard ("Link copied").
+ */
+function ShareButton({ title, hash }) {
+  const [toast, toastEl] = useEditToast(null);
+  const run = async () => {
+    const url = shareUrl(hash);
+    if (typeof navigator.share === "function") {
+      try { await navigator.share({ title, url }); return; } catch (e) { if (e?.name === "AbortError") return; }
+    }
+    if (await copyText(url)) toast({ text: "Link copied" });
+    else window.prompt("Copy this link:", url);
+  };
+  return (
+    <>
+      <button type="button" className="btn ghost icon share-btn" aria-label={`Share a link to ${title}`} title="Share link" onClick={run}><Icon.share /></button>
+      {toastEl}
+    </>
   );
 }
 
@@ -2577,7 +2623,9 @@ function DeckCover({ cover, banner = true }) {
   );
 }
 
-function DeckList({ dataVersion, onOpen, refreshKey }) {
+function DeckList({ dataVersion, onOpen, refreshKey, notice = null }) {
+  const [hideNotice, setHideNotice] = useState(false);
+  useEffect(() => setHideNotice(false), [notice]);
   const [decks, setDecks] = useState(null);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -2604,6 +2652,10 @@ function DeckList({ dataVersion, onOpen, refreshKey }) {
             if (res.parse_errors?.length) issues.push(`Skipped lines: ${res.parse_errors.join(" | ")}`);
             onOpen(res.id, issues.length ? issues.join(" — ") : null);
           }} />
+      )}
+      {notice && !hideNotice && (
+        <div className="notice warn" role="status"><div className="grow">{notice}</div>
+          <button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setHideNotice(true)}><Icon.close /></button></div>
       )}
       <ErrorNotice error={error} onRetry={load} />
       {!decks && !error && <Spinner label="Loading decks…" />}
@@ -4032,7 +4084,7 @@ function SpellbookPanel({ health, dataVersion }) {
   );
 }
 
-function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpenDeck, onAsk, onChanged, onCollectionChanged = onChanged, onWishChanged }) {
+function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, onOpenCard, onOpenDeck, onAsk, onChanged, onCollectionChanged = onChanged, onWishChanged }) {
   const [deck, setDeck] = useState(null);
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
@@ -4052,7 +4104,12 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
 
   const load = useCallback(() => {
     setError(null);
-    api(`/api/decks/${id}`).then(setDeck).catch((e) => setError(e.status === 404 ? "This deck no longer exists." : e.message));
+    api(`/api/decks/${id}`).then(setDeck).catch((e) => {
+      // A link to a deleted deck (#decks/<id>) lands on the deck list.
+      if (e.status === 404 && onMissing) onMissing();
+      else setError(e.status === 404 ? "This deck no longer exists." : e.message);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
   useEffect(load, [load, dataVersion]); // also after the planner saved this deck
   // Combos still pending (the server fetches them in the background): look again after 4 s, at most twice per deck.
@@ -4190,6 +4247,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onOpenCard, onOpen
                 <div className="deck-title">
                   <DeckCover cover={deck.cover} banner={false} />
                   <h2>{deck.name}</h2>
+                  <ShareButton title={deck.name} hash={deckHash(deck.id)} />
                 </div>
                 <div className="row small">
                   {deck.format && <span className="badge">{deck.format}</span>}
@@ -4323,10 +4381,11 @@ function DecksTab({ dataVersion, deckId, deckNotice, onOpenDeck, onOpenCard, onA
   if (deckId) {
     return (
       <DeckDetail key={deckId} id={deckId} dataVersion={dataVersion} initialNotice={deckNotice} onBack={() => { onOpenDeck(null); bumpList(); }}
+        onMissing={() => onOpenDeck(null, "Deck not found. It may have been deleted.", { replace: true })}
         onOpenCard={onOpenCard} onOpenDeck={onOpenDeck} onAsk={onAsk} onChanged={onChanged} onCollectionChanged={onCollectionChanged} onWishChanged={onWishChanged} />
     );
   }
-  return <DeckList dataVersion={dataVersion} refreshKey={listKey} onOpen={onOpenDeck} />;
+  return <DeckList dataVersion={dataVersion} refreshKey={listKey} onOpen={onOpenDeck} notice={deckNotice} />;
 }
 
 // ===========================================================================
@@ -7835,6 +7894,7 @@ function BinderHeader({ binder, entry, list, onBack, onOpen, onOpenDeck, onMenu,
           </span>
           <span className="small muted">{all ? "Every copy you own" : binder ? binderTypeLabel(entry?.type) : "Copies without a binder"}</span>
         </div>
+        <ShareButton title={all ? "All cards" : binder || UNSORTED} hash={collectionHash(all ? { view: "all" } : { view: "binder", binder })} />
         {binder && <button type="button" className="btn ghost icon" aria-label={`Options for ${binder}`} title="Rename, type, cover, delete" onClick={onMenu}><Icon.more /></button>}
       </div>
       {decks.length > 0 && onOpenDeck && (
@@ -9249,6 +9309,9 @@ const TABS = [
 const isTab = (t) => TABS.some((x) => x.id === t);
 // The tab is the hash's first segment; the rest is the tab's own route (#collection/binder/<name>).
 const hashTab = () => location.hash.slice(1).split("/")[0];
+// Deck links: #decks = the list, #decks/<id> = one deck (shareable, the back button works).
+const deckIdOf = (hash) => { const m = /^#decks\/(\d+)$/.exec(hash || ""); return m ? Number(m[1]) : null; };
+const deckHash = (id) => (id ? `#decks/${id}` : "#decks");
 
 function App() {
   const [tab, setTab] = useState(() => {
@@ -9266,7 +9329,7 @@ function App() {
   const [epoch, bumpEpoch] = useReducer((x) => x + 1, 0);
   const [restored, setRestored] = useState(null);
   const [cardId, setCardId] = useState(null);
-  const [deck, setDeck] = useState({ id: null, notice: null });
+  const [deck, setDeck] = useState(() => ({ id: hashTab() === "decks" ? deckIdOf(location.hash) : null, notice: null }));
   const [plannerRequest, setPlannerRequest] = useState(null);
   const [health, setHealth] = useState(null);
   const scrollPos = useRef({});
@@ -9298,6 +9361,10 @@ function App() {
       const h = hashTab();
       if (!isTab(h)) return;
       tabHash.current[h] = location.hash;
+      if (h === "decks") {
+        const id = deckIdOf(location.hash);
+        setDeck((d) => (d.id === id ? d : { id, notice: null }));
+      }
       const v = marketViewOf(location.hash);
       if (v) setValueView(v);
       switchTab(h);
@@ -9320,10 +9387,13 @@ function App() {
   const [wishVersion, bumpWish] = useReducer((x) => x + 1, 0);
   // Tapping the active Collection tab returns to the binder overview.
   const [collectionHome, goCollectionHome] = useReducer((x) => x + 1, 0);
-  const openDeck = useCallback((id, notice = null) => {
+  const openDeck = useCallback((id, notice = null, { replace = false } = {}) => {
     setDeck({ id, notice });
     setCardId(null);
     scrollPos.current.decks = 0;
+    // The deck is in the URL (#decks/<id>) while the Decks tab shows it or opens for it.
+    if (id || hashTab() === "decks") goHash(deckHash(id), { replace });
+    else tabHash.current.decks = deckHash(null);
     if (id) switchTab("decks");
     window.scrollTo(0, 0);
   }, [switchTab]);
@@ -9387,7 +9457,7 @@ function App() {
           onRequestHandled={() => setPlannerRequest(null)} onChanged={bumpDecks} />)}
         {panel("import", <ImportTab dataVersion={dataVersion} health={health} onImported={onImported} restored={restored}
           onDismissRestored={() => setRestored(null)}
-          onRestored={(r) => { setRestored(r); setCardId(null); setDeck({ id: null, notice: null }); bumpEpoch(); onImported(); window.scrollTo(0, 0); }} />)}
+          onRestored={(r) => { setRestored(r); setCardId(null); openDeck(null); bumpEpoch(); onImported(); window.scrollTo(0, 0); }} />)}
       </main>
       {cardId && <CardSheet id={cardId} onClose={() => setCardId(null)} onOpenCard={setCardId} onOpenDeck={(id) => openDeck(id)} onChanged={onImported}
         onWishChanged={bumpWish} />}
