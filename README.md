@@ -102,7 +102,9 @@ More: [how to scan](docs/guide.md#2-scanning) · [docs/scanner.md](docs/scanner.
 - **Import:** export a CSV in ManaBox, then upload it in **Settings**.
 - **Search:** find cards with short codes. Example: `t:creature eur>2` =
   creatures worth more than €2. [All codes](docs/collection.md#search-syntax)
-- **Binders:** create, rename and filter binders. Move cards between them.
+- **Binders:** the Collection tab starts with your binders (cover card,
+  copies, value), grouped as binders, deck boxes, bulk and trade. Tap one to
+  open it. Move cards between them.
 - **Edit or delete** copies from a card's details. Every change can be
   **undone** in Settings → Recent changes.
 - **ManaBox or the app in charge?** ManaBox at first. The app asks once
