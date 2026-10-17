@@ -137,13 +137,13 @@ describe("implicit confirmation", () => {
   test("a +1 on another row of the session confirms; undoing that +1 reverts it", async () => {
     const b = (await probe(result(SOL))).scan;
     const a = (await probe(suggest(BOLT))).scan;
-    // later clocks: undoLast acts on the newest updated_at
-    const inc = incrementScan(ctx.db, b.id, { now: Date.now() + 1000 });
+    // same-ms actions on an older row: the action clock still orders them after the stage
+    const inc = incrementScan(ctx.db, b.id);
     assert.equal(inc.quantity, 2);
     assert.deepEqual(inc.implicitly_confirmed.map((c) => c.id), [a.id]);
     assert.equal(raw(a.id).match_status, "confirmed");
     // nothing left to confirm
-    const plain = incrementScan(ctx.db, b.id, { now: Date.now() + 2000 });
+    const plain = incrementScan(ctx.db, b.id);
     assert.equal(plain.implicitly_confirmed, undefined);
     const u1 = undoLast(ctx.db, { imageDir });
     assert.equal(u1.undone, "decrement");
@@ -157,10 +157,29 @@ describe("implicit confirmation", () => {
     assert.equal(incrementScan(ctx.db, self.id).implicitly_confirmed, undefined);
   });
 
+  test("undo follows the action order when the clock ties or steps back", () => {
+    const T = Date.parse("2026-10-17T10:00:00Z");
+    const a = stageScan(ctx.db, suggest(BOLT), { imageDir, session: "s1", now: T }).scan;
+    const b = stageScan(ctx.db, result(SOL), { imageDir, session: "s1", now: T - 5000 }).scan; // clock stepped back
+    assert.ok(b.created_at > a.created_at);
+    assert.equal(raw(a.id).match_status, "confirmed");
+    const u = undoLast(ctx.db, { imageDir });
+    assert.deepEqual([u.undone, u.scan.id, u.unconfirmed], ["delete", b.id, [a.id]]);
+    assert.equal(raw(a.id).match_status, "suggest");
+    // a new row under the reused id gets a newer created_at than the removed one
+    const c = stageScan(ctx.db, result(SOL), { imageDir, now: T - 60000 }).scan;
+    assert.equal(c.id, b.id);
+    assert.ok(c.created_at > b.created_at);
+    // a +1 of the older row in the same ms, then an edit with an even earlier clock
+    incrementScan(ctx.db, a.id, { now: T });
+    updateScan(ctx.db, c.id, { condition: "played" }, { idx, index, now: T - 9000 });
+    const order = [undoLast(ctx.db, { imageDir }), undoLast(ctx.db, { imageDir })];
+    assert.deepEqual(order.map((x) => [x.undone, x.scan.id]), [["revert", c.id], ["decrement", a.id]]);
+  });
+
   test("a user confirm/fix after the implicit one is kept by the undo; the label says so", async () => {
     const a = (await probe(suggest(BOLT))).scan;
     await probe(result(SOL));
-    await new Promise((r) => setTimeout(r, 5)); // the edit is the newest action
     updateScan(ctx.db, a.id, { confirm: true }, { idx, index });
     let row = full(a.id);
     assert.equal(row.features.confirm.source, "user");

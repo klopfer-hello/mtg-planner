@@ -260,11 +260,11 @@ describe("staging", () => {
     assert.equal(existsSync(path.join(imageDir, `scan-${s.id}.jpg`)), false);
   });
 
-  test("a deferred delete naming created_at never removes a newer scan that reused the id", async () => {
+  test("a deferred delete naming created_at never removes a newer scan that reused the id", () => {
     stage(result(SOL));
     const x = stage(result(BOLT)).scan; // discarded in the UI (hidden, delete pending)
     undoLast(ctx.db, { imageDir }); // removes x: the newest staged row
-    await new Promise((r) => setTimeout(r, 5)); // a later created_at
+    // same ms or not: the action clock gives the new row a later created_at
     const y = stage(result(SERRA)).scan;
     assert.equal(y.id, x.id, "INTEGER PRIMARY KEY reuses the id");
     assert.throws(() => deleteScan(ctx.db, x.id, { imageDir, createdAt: x.created_at }), (e) => e.status === 409);
