@@ -728,8 +728,7 @@ function getDeckHistory(args) {
       lines.push(`${b.board}: ${parts.join("; ")}`);
     }
     for (const m of v.diff?.meta ?? []) lines.push(`${m.field}: ${m.from ?? "-"} → ${m.to ?? "-"}`);
-    return lines.join("
-");
+    return lines.join("\n");
   }
   const limit = Number.isInteger(args.limit) ? Math.min(50, Math.max(1, args.limit)) : 10;
   const { versions } = listDeckVersions(d, deck.id);
@@ -738,8 +737,7 @@ function getDeckHistory(args) {
     lines.push(`- v${v.id} · ${when(v.at)} · ${v.actor} · ${v.summary} · ${v.card_count} cards${v.current ? " (current)" : ""}`);
   }
   if (versions.length > limit) lines.push(`... ${versions.length - limit} older`);
-  return lines.join("
-");
+  return lines.join("\n");
 }
 
 /** save_deck / evaluate_deck cards → deck items (ToolError on bad input). */
