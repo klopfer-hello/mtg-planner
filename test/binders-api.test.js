@@ -94,6 +94,44 @@ describe("binder API", () => {
     assert.equal((await call("GET", "/api/stats")).body.collection_master, "manabox");
   });
 
+  test("GET /api/binders: type, value, cover; PATCH type / cover_scryfall_id", async () => {
+    const body = (await call("GET", "/api/binders")).body;
+    const box = body.binders.find((b) => b.name === "Box");
+    assert.deepEqual([box.type, box.type_auto, box.type_set, box.type_suggest, box.value_eur], ["binder", "binder", false, null, 4.5]);
+    assert.deepEqual([box.cover.scryfall_id, box.cover.chosen, box.top.name], [ID.sol, false, "Sol Ring"]);
+    assert.equal(body.unsorted.value_eur, 0.1);
+    assert.equal(body.unsorted.cover.scryfall_id, ID.serra);
+    let r = await call("PATCH", `/api/binders/${enc("box")}`, { type: "trade" });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.name, "Box");
+    assert.deepEqual(["type", "type_set"].map((k) => r.body.binders.find((b) => b.name === "Box")[k]), ["trade", true]);
+    assert.equal((await call("PATCH", `/api/binders/${enc("Box")}`, { type: "shoebox" })).status, 400);
+    assert.equal((await call("PATCH", `/api/binders/${enc("Box")}`, { cover_scryfall_id: ID.lightning })).status, 400, "not in Box");
+    assert.equal((await call("PATCH", `/api/binders/${enc("Nope")}`, { type: "bulk" })).status, 404);
+    r = await call("PATCH", `/api/binders/${enc("Scans")}`, { cover_scryfall_id: ID.lightning, type: null });
+    assert.equal(r.status, 200);
+    const scans = r.body.binders.find((b) => b.name === "Scans");
+    assert.deepEqual([scans.cover.scryfall_id, scans.cover.chosen, scans.type_set], [ID.lightning, true, false]);
+    r = await call("PATCH", `/api/binders/${enc("Box")}`, { type: "auto" });
+    assert.equal(r.body.binders.find((b) => b.name === "Box").type_set, false);
+  });
+
+  test("GET /api/collection/sections + section filter on /api/collection", async () => {
+    let r = await call("GET", "/api/collection/sections?by=type");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.sections.map((s) => [s.key, s.label, s.cards, s.copies]),
+      [["creature", "Creatures", 1, 1], ["instant", "Instants", 1, 2], ["artifact", "Artifacts", 1, 3]]);
+    r = await call("GET", `/api/collection/sections?by=set&binder=${enc("box")}`);
+    assert.deepEqual(r.body.sections.map((s) => [s.key, s.label, s.value_eur]), [["c21", "Commander 2021", 4.5]]);
+    r = await call("GET", "/api/collection/sections?by=color&q=t%3Ainstant");
+    assert.deepEqual(r.body.sections.map((s) => s.key), ["R"]);
+    assert.equal((await call("GET", "/api/collection/sections?by=artist")).status, 400);
+    assert.equal((await call("GET", "/api/collection/sections?q=foo%3Abar")).status, 400);
+    r = await call("GET", "/api/collection?section_by=rarity&section=uncommon");
+    assert.deepEqual(r.body.rows.map((x) => x.name).sort(), ["Serra Angel", "Sol Ring"]);
+    assert.equal((await call("GET", "/api/collection?section_by=nope&section=x")).status, 400);
+  });
+
   test("POST /api/binders: 201, 409 duplicate, 400 empty/too long, 415 wrong type, 403 cross-site", async () => {
     let r = await call("POST", "/api/binders", { name: "Trade" });
     assert.equal(r.status, 201);

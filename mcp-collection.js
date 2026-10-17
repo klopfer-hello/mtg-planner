@@ -245,7 +245,8 @@ const TOOLS = [
   {
     name: "list_binders",
     description:
-      "List the user's binders (storage groups of owned cards): name, number of printings, total copies, and where " +
+      "List the user's binders (storage groups of owned cards): name, type [binder | deck box | bulk | trade | other], number " +
+      "of printings, total copies, EUR value, linked decks, and where " +
       "the copies came from (manabox = synced from the ManaBox app, scan = added with the app's camera scanner, app = moved " +
       "into the binder in the app). Empty binders are listed too; Unsorted = copies without a binder. " +
       "Search a binder's contents with search_collection and b:\"<name>\".",
@@ -650,7 +651,9 @@ function getCard(args) {
 function listBindersTool() {
   const { binders, unsorted, collection_master: master } = listBinders(getDb());
   if (!binders.length && !unsorted.copies) return "The user has no binders and no cards in the collection yet.";
-  const line = (name, b) => `${name}: ${b.cards} printings, ${b.copies} copies${b.sources.length ? `, source ${b.sources.join("+")}` : " (empty)"}`;
+  const line = (name, b) => `${name}${b.type ? ` [${b.type.replace("_", " ")}]` : ""}: ${b.cards} printings, ${b.copies} copies` +
+    `${b.copies ? `, value €${(b.value_eur ?? 0).toFixed(2)}` : ""}${b.sources.length ? `, source ${b.sources.join("+")}` : " (empty)"}` +
+    `${b.decks?.length ? `, deck ${b.decks.map((d) => `#${d.id} ${d.name}`).join(", ")}` : ""}`;
   const lines = binders.map((b) => line(b.name, b));
   if (unsorted.copies) lines.push(line("(Unsorted, no binder)", unsorted));
   lines.push(`Collection master: ${master === "app" ? "mtg-planner (ManaBox imports add cards)" : "ManaBox (imports replace ManaBox cards)"}`);

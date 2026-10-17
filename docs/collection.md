@@ -59,7 +59,9 @@ fine.
 
 ## Browsing and searching
 
-The **Collection** tab uses Scryfall-style search syntax (`t:creature c<=bg
+The **Collection** tab opens on an overview of your binders (see
+[Binders](#binders)). **All cards** at the top shows the whole collection;
+tapping a binder opens just that binder. Both use Scryfall-style search syntax (`t:creature c<=bg
 cmc<=3 eur>2 -is:foil`, see [Search syntax](#search-syntax)). You can group by
 card or by printing and sort by name, mana value, price, quantity, set or
 rarity. Card details show every printing you own and every deck that uses
@@ -71,19 +73,43 @@ English printing's EUR price, so values never fall back to USD.
 ## Binders
 
 A binder is a named group of owned copies; copies without one are *Unsorted*.
-In the **Collection** tab:
 
-- the binder bar filters the list by binder (or *Unsorted*); **New binder**
-  creates an empty binder, **Manage** renames (renaming onto an existing name
-  merges the two) and deletes binders. Deleting asks what happens to the
-  cards: move them to *Unsorted* (default) or delete them too (logged and
-  undoable, see [Editing owned copies](#editing-owned-copies)).
+**Overview.** The **Collection** tab starts with one entry per binder: a cover
+card, the number of copies and the value in EUR. On a phone this is a compact
+list, on a wide screen a grid of tiles. Binders are grouped by **type**:
+
+| Type | Set |
+| --- | --- |
+| *Deck box* | automatically for names like `Deck box: …` or `Commander Deck: …`, and for binders a deck is boxed in or synced from |
+| *Binder* | automatically for everything else |
+| *Bulk*, *Trade*, *Other* | by you |
+
+A binder with more than 1,000 copies asks once: "Looks like bulk?" Answer
+**Yes** or **No** and it never asks again. The cover is the binder's most
+valuable card unless you pick one. *Unsorted* shows up when it holds copies.
+
+**A binder's page.** Tap a binder to open it. The browser's back button
+returns to the overview, and a reload keeps you where you were. The page has:
+
+- the binder name as a switcher: tap it to jump to another binder;
+- its own search (the full [search syntax](#search-syntax), only inside this
+  binder), sort and grid/list view;
+- **sections** by set, colour, rarity or type. Big binders (more than 300
+  copies) start in sections by set. A section loads its cards only when you
+  open it, so a binder with thousands of copies stays fast;
+- the **⋯** menu: type, cover card, rename (renaming onto an existing name
+  merges the two) and delete. Deleting asks what happens to the cards: move
+  them to *Unsorted* (default) or delete them too (logged and undoable, see
+  [Editing owned copies](#editing-owned-copies)).
+
+**New binder** and **Manage** (rename, type and delete for every binder) sit
+at the top of the overview. Tapping the Collection tab again returns there.
 - a card's details list every owned copy with a **Move…** action: pick how
   many copies and the target binder (or a new one).
 - **Select** turns the grid or list into a selection; **Move to…** moves every
-  copy of the selected cards, or, while a binder filter is active, only the
-  copies in that binder. **All** selects every card of the current view (search
-  + binder filter, all pages), at most 1000 at once.
+  copy of the selected cards, or, on a binder's page, only the copies in that
+  binder. **All** selects every card of the current view (search + binder, all
+  pages and sections), at most 1000 at once.
 
 ## The collection master
 
@@ -172,12 +198,13 @@ same-origin request.
 
 | Route | |
 | --- | --- |
-| `GET /api/binders` | `{binders: [{name, cards, unique_cards, copies, sources, by_source, created_at, empty}], unsorted, collection_master}` |
+| `GET /api/binders` | `{binders: [{name, cards, unique_cards, copies, sources, by_source, created_at, empty, type, type_auto, type_set, type_suggest, value_eur, top, cover, decks}], unsorted, collection_master}`; `type` is `binder`, `deck_box`, `bulk`, `trade` or `other` (`type_set` = picked by the user, else `type_auto`); `type_suggest: "bulk"` for a big untyped binder; `cover {scryfall_id, name, image, image_small, chosen}`; `top` = the most valuable card; `decks` = decks boxed in or synced from it |
 | `POST /api/binders {name}` | create an empty binder: 201, 409 if it exists, 400 if empty or longer than 100 |
-| `PATCH /api/binders/:name {name, confirm_master?}` | rename, merging into an existing binder |
+| `PATCH /api/binders/:name {name?, type?, cover_scryfall_id?, confirm_master?}` | rename (merging into an existing binder; type and cover come along); `type` null = automatic; `cover_scryfall_id` must be a printing in the binder, null = most valuable card |
 | `DELETE /api/binders/:name?cards=unsort\|delete&confirm_master=1` | delete; `unsort` (default) moves the cards to Unsorted, `delete` deletes them (logged in the edit log, undoable) |
 | `POST /api/collection/move` | `{items, to_binder, create?, confirm_master?}`; an item is `{scryfall_id, finish, language, condition, binder, source?, quantity}` (copies of one row key), `{oracle_id, from_binder?}` (every copy of a card) or `{printing_id, from_binder?}` (every copy of a printing); `to_binder: ""` is Unsorted |
-| `GET /api/collection?binder=` | the collection list filtered by exact binder (`binder=` = Unsorted) |
+| `GET /api/collection?binder=` | the collection list filtered by exact binder (`binder=` = Unsorted); `section_by=set\|color\|rarity\|type&section=<key>` = one section |
+| `GET /api/collection/sections?by=set\|color\|rarity\|type&q&group&binder` | `{by, sections: [{key, label, cards, copies, value_eur}]}` for the same view as `/api/collection` |
 | `GET\|PATCH /api/settings` | `{collection_master: "manabox" \| "app"}` (also in `GET /api/stats`) |
 | `POST /api/import/manabox?mode=replace\|delta\|add&binder=&create_binder=1` | raw CSV body; `binder` puts every card into that binder (empty = Unsorted, a new name needs `create_binder=1`, else 404); the summary lists `added` and `decreased` rows in delta mode |
 | `POST /api/refresh-prices` | re-fetch card data and prices of everything you own or use in a deck |

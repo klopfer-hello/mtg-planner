@@ -20,13 +20,14 @@ Not set up yet? Start with the [Installation guide](install.md).
 - **Binder**: a named group of your cards, like a real binder.
 - **Board**: a part of a deck: main, side, commander or maybe.
 
-**The five tabs** at the bottom of the screen:
+**The six tabs** at the bottom of the screen:
 
 | Tab | What it is for |
 | --- | --- |
 | **Scan** | Scan cards with your phone's camera. |
-| **Collection** | See, search and sort the cards you own. |
+| **Collection** | Your binders; see, search and sort the cards you own. On small phones it is called **Cards**. |
 | **Decks** | Plan decks and see what you still need. |
+| **Value** | Your collection's value over time, and your wishlist. |
 | **Planner** | Chat with Claude about your cards. |
 | **Settings** | Import, backups, recent changes, scanner data. |
 
@@ -178,13 +179,13 @@ Still no luck? Tap **Find by name** and type the name. Red cards also have a
 
 ## 3. Your collection
 
-Open the **Collection** tab. The top shows how many cards you own and their
-value.
+Open the **Collection** tab. It starts with your binders: cover card, copies
+and value, grouped by type. **All cards** and **Unsorted** sit there too.
 
 ### Binders
 
-- **Filter:** tap a binder chip. **All** shows everything. Cards without a
-  binder are **Unsorted**.
+- **Open a binder:** tap it. Its page has its own search and sections (by set,
+  colour, rarity or type). Cards without a binder are **Unsorted**.
 - **New binder:** tap **New binder**.
 - **Rename or delete:** tap **Manage**.
 

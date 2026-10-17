@@ -100,7 +100,8 @@ More: [how to scan](docs/guide.md#2-scanning) · [docs/scanner.md](docs/scanner.
 - **Import:** export a CSV in ManaBox, then upload it in **Settings**.
 - **Search:** find cards with short codes. Example: `t:creature eur>2` =
   creatures worth more than €2. [All codes](docs/collection.md#search-syntax)
-- **Binders:** create, rename and filter binders. Move cards between them.
+- **Binders:** the Collection tab starts with your binders (cover, copies,
+  value), grouped by type. Tap one to open it. Move cards between them.
 - **Edit or delete** copies from a card's details. Every change can be
   **undone** in Settings → Recent changes.
 - **ManaBox or the app in charge?** ManaBox at first. The app asks once
@@ -116,8 +117,7 @@ More: [docs/collection.md](docs/collection.md)
   cards, so you see conflicts between decks.
 - The **shopping list** collects what all your decks still need.
 - **Put into deck box** moves a deck's cards into their own binder.
-- **Value** tab: your collection's worth over time, top cards, price moves,
-  and a **wishlist** (♡ on any card) with max prices. [Details](docs/finance.md)
+- **Value** tab: worth over time, top cards, price moves and a **wishlist** (♡ on any card). [Details](docs/finance.md)
 - Commander decks show a **bracket** (1-5) and a **power score** (1-10). Combos are checked at [Commander Spellbook](https://commanderspellbook.com/): only card names are sent, and you can turn it off. [Details](docs/decks.md#bracket-and-power-score)
 
 More: [docs/decks.md](docs/decks.md)

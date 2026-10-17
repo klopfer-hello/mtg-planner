@@ -2,7 +2,7 @@
 
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { compileQuery, QUERY_HELP, searchCollection } from "../lib/query.js";
+import { collectionSections, compileQuery, QUERY_HELP, searchCollection } from "../lib/query.js";
 import { cardPrice, formatPrice, stats } from "../lib/db.js";
 import { ID, seedCards, seedCollection, tempDb } from "./fixtures.js";
 
@@ -266,5 +266,36 @@ describe("cardPrice / formatPrice", () => {
     assert.equal(cardPrice({ prices: null }), null);
     assert.equal(formatPrice({ value: 1.5, currency: "€" }), "€1.50");
     assert.equal(formatPrice(null), "n/a");
+  });
+});
+
+describe("collectionSections", () => {
+  let ctx;
+  before(() => {
+    ctx = tempDb();
+    seedCards(ctx.db);
+    seedCollection(ctx.db, [
+      [ID.forest, 10, { binder: "Bulk" }], [ID.delver, 2, { binder: "Bulk" }], [ID.atraxa, 1, { binder: "Bulk" }],
+      [ID.counterspell, 1, { binder: "Bulk" }], [ID.counterspell7ed, 2, { binder: "Bulk" }], [ID.sol, 1, { binder: "Other" }],
+    ]);
+  });
+  after(() => ctx.cleanup());
+  const keys = (o) => collectionSections(ctx.db, { binder: "bulk", ...o }).sections.map((s) => [s.key, s.cards, s.copies]);
+
+  test("by type: front face, subtypes never count (Basic Land — Forest is a land, Delver a creature)", () => {
+    assert.deepEqual(keys({ by: "type" }), [["creature", 2, 3], ["instant", 1, 3], ["land", 1, 10]]);
+  });
+  test("by colour: multicolour, colourless lands apart; by rarity in rarity order", () => {
+    assert.deepEqual(keys({ by: "color" }), [["U", 2, 5], ["M", 1, 1], ["L", 1, 10]]);
+    assert.deepEqual(keys({ by: "rarity" }), [["mythic", 1, 1], ["uncommon", 1, 1], ["common", 3, 14]]);
+  });
+  test("by set: a card with printings in two sets is in both; sorted by set name; q and qty filters apply", () => {
+    assert.deepEqual(collectionSections(ctx.db, { binder: "bulk", by: "set" }).sections.map((s) => s.label),
+      ["Dominaria United", "Double Masters", "Innistrad", "Modern Horizons 2", "Seventh Edition"]);
+    assert.deepEqual(keys({ by: "set", q: "counterspell" }), [["mh2", 1, 1], ["7ed", 1, 2]]);
+    assert.deepEqual(keys({ by: "set", q: "qty>=2", group: "printing" }).map((k) => k[0]), ["dmu", "isd", "7ed"]);
+    const rows = searchCollection(ctx.db, { binder: "bulk", section: { by: "set", key: "7ed" } }).rows;
+    assert.deepEqual(rows.map((r) => [r.name, r.qty]), [["Counterspell", 2]]);
+    assert.throws(() => collectionSections(ctx.db, { by: "artist" }), /Unknown section/);
   });
 });

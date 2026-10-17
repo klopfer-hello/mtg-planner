@@ -69,6 +69,29 @@ describe("normalizeCard (v9 facts)", () => {
   });
 });
 
+describe("migrations v10-v14", () => {
+  test("v9 -> v14: wishlist, value history and binder type/cover; rows kept, idempotent re-run", () => {
+    seedCollection(ctx.db, [[ID.sol, 2, { binder: "Box" }], [ID.lightning, 1]]);
+    ctx.db.exec(`DROP TABLE wishlist; DROP TABLE value_history; DROP TABLE value_history_binders; DROP TABLE card_history;
+      ALTER TABLE binders DROP COLUMN type; ALTER TABLE binders DROP COLUMN cover_scryfall_id; PRAGMA user_version = 9`);
+    ctx.db.close();
+    assert.equal(SCHEMA_VERSION, 14);
+    for (let i = 0; i < 2; i++) {
+      const db = openDb(ctx.file);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
+      for (const t of ["wishlist", "value_history", "value_history_binders", "card_history"]) assert.ok(cols(db, t).length > 0, t);
+      for (const c of ["type", "cover_scryfall_id"]) assert.ok(cols(db, "binders").includes(c), c);
+      assert.equal(db.prepare("SELECT SUM(quantity) AS n FROM collection").get().n, 3);
+      if (i === 0) db.prepare("INSERT INTO binders (name, origin, type) VALUES ('Box', 'app', 'trade') ON CONFLICT(name) DO UPDATE SET type = 'trade'").run();
+      db.exec("PRAGMA user_version = 9"); // re-run v10-v14 on a migrated DB
+      db.close();
+    }
+    const db = openDb(ctx.file);
+    assert.equal(db.prepare("SELECT type FROM binders WHERE name = 'Box'").get().type, "trade", "kept on re-run");
+    db.close(); // every connection is closed: the temp dir can be removed (also on Windows)
+  });
+});
+
 describe("migration v9", () => {
   test("v8 -> v9 keeps every row, new facts are NULL, idempotent re-run", () => {
     seedCollection(ctx.db, [[ID.sol, 2, { binder: "Box" }], [ID.lightning, 1]]);
