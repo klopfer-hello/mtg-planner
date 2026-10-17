@@ -133,6 +133,25 @@ describe("decks", () => {
     assert.match(text, /30x Forest .*\| basic \|/);
   });
 
+  test("cards list the binders holding their copies (all printings, most first)", () => {
+    seedCollection(ctx.db, [
+      [ID.counterspell7ed, 1, { binder: "Blue" }],
+      [ID.counterspell, 2, { binder: "Trade" }],
+      [ID.counterspell, 1, { binder: "Blue", finish: "foil" }],
+      [ID.counterspell, 1],
+    ]);
+    const deckId = saveDeckRows(ctx.db, { name: "B", rows: [
+      { board: "main", name: "Counterspell", scryfall_id: ID.counterspell, quantity: 1 },
+      { board: "main", name: "Serra Angel", scryfall_id: ID.serra, quantity: 1 },
+    ] });
+    const d = deckDetail(ctx.db, deckId);
+    const card = (name) => d.cards.find((c) => c.name === name);
+    assert.deepEqual(card("Counterspell").binders, [
+      { binder: "Blue", quantity: 2 }, { binder: "Trade", quantity: 2 }, { binder: "", quantity: 1 },
+    ]);
+    assert.deepEqual(card("Serra Angel").binders, []);
+  });
+
   test("ownership by name for unresolved cards", () => {
     seedCollection(ctx.db, [[ID.serra, 2]]);
     const deckId = saveDeckRows(ctx.db, { name: "N", rows: [{ board: "main", name: "serra angel", scryfall_id: null, quantity: 3 }] });
