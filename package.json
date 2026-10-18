@@ -1,6 +1,6 @@
 {
   "name": "mtg-planner",
-  "version": "0.8.0-beta.5",
+  "version": "0.8.0-beta.6",
   "description": "Self-hosted Magic: The Gathering collection + deck planner with a Claude-powered assistant",
   "private": true,
   "type": "module",
