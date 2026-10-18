@@ -8,7 +8,7 @@ import { gzipSync } from "node:zlib";
 import os from "node:os";
 import path from "node:path";
 import {
-  cnDigits, getPrinting, indexStatus, lookupCollector, lookupLegacyNumber, normTitle, openIndex,
+  cnDigits, getPrinting, indexStatus, localizedNames, lookupCollector, lookupLegacyNumber, normTitle, openIndex,
   printingsOf, refreshIndex, refreshIndexInWorker, searchTitle, setCodes, storagePrinting, variantsOf,
 } from "../lib/cardindex.js";
 import http from "node:http";
@@ -258,6 +258,10 @@ describe("printings and storage language", () => {
     const ps = printingsOf(idx, "o-Aeronaut Cavalry");
     assert.deepEqual(keys(ps), ["pbro/1s/en", "bro/1/en"]);
     assert.equal(printingsOf(idx, "o-Ajani Steadfast", { lang: "de" }).length, 1);
+    // Build list: German printed names per oracle id; cards without a German printing are left out.
+    assert.deepEqual(localizedNames(idx, ["o-Ajani Steadfast", "o-Lightning Bolt", "o-Karn, the Great Creator", "nope", "", null], "de"),
+      { "o-Ajani Steadfast": "Ajani der Unerschütterliche", "o-Lightning Bolt": "Blitzschlag" });
+    assert.deepEqual(localizedNames(idx, ["o-Karn, the Great Creator"], "ja"), { "o-Karn, the Great Creator": "大いなる創造者、カーン" });
   });
   test("storagePrinting: same set+number in storage lang, else en, else input", () => {
     const de = lookupCollector(idx, { set: "m15", number: "1", lang: "de" })[0];

@@ -50,6 +50,8 @@ describe("build checklist", () => {
     ]);
     const serra = list.groups[3].lines[0];
     assert.deepEqual([serra.binder, serra.decks], ["Deck box: Other", ["Other"]]);
+    // Lines carry what the UI shows without a tap: mana cost, mana value, colours, image.
+    assert.deepEqual([serra.mana_cost, serra.cmc, serra.colors, "image_small" in serra], ["{3}{W}{W}", 5, "W", true]);
     assert.equal(list.groups[5].lines[0].price_eur, 1);
     assert.deepEqual([list.total, list.picked, list.complete, list.box_binder], [10, 0, false, "Deck box: Build me"]);
   });

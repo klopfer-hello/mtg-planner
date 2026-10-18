@@ -162,6 +162,7 @@ Set these in `.env`, which `docker-compose.yml` loads if it exists:
 | `BACKUP_KEEP` | `20` | Manual backups kept; older ones are deleted when a new one is made. Pre-restore safety backups are kept separately (the last 5). |
 | `DOWNLOAD_DIR` | `<database dir>/downloads` (`/data/downloads`) | Android app files (`*.apk`) offered under **Settings → Phone app**. Copy an APK there (optional `<name>.apk.json` with `title`, `version`, `notes`); the section is hidden while the folder is empty. Nothing can be uploaded through the app. |
 | `SCAN_IMAGE_DIR` | `<database dir>/scans` | Where uploaded scan photos are kept until they are committed (calibration scans keep them). |
+| `CARD_NAME_LANG` | `de` | Language of the second card name shown in brackets on a deck's **Build list** (the printed name from the card index). Empty turns it off. |
 
 These are set in the image and rarely need changing: `PORT=8080`,
 `DB_FILE=/data/mtg-planner.db`, `STATIC_DIR=/app/public`,

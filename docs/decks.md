@@ -255,7 +255,11 @@ deck still needs and, across all built decks, what to buy with a € total (see
 an idea deck you are about to build.
 
 - Cards are grouped by the **binder** their free copies are in (Unsorted
-  first). It uses the same order as *Put into deck box*.
+  first). It uses the same order as *Put into deck box*. Within a group the
+  cards are sorted by name, like a sorted binder.
+- Every line shows the card's mana cost and its German name in brackets
+  (`CARD_NAME_LANG`, see [Setup](setup.md)). Tap the small picture on the right
+  to see the card; the line itself is the tick.
 - **In other decks or locked binders**: you own them, but another built deck
   or a locked binder has them ("🔒 in … · locked").
 - **Basic lands**: basics you don't own enough of.
@@ -291,7 +295,7 @@ same-origin request.
 | --- | --- |
 | `GET /api/decks/:id` | the deck; adds `cover: {scryfall_id, name, image_small, image_normal, image_art, source}` (`source` is `commander` or `top`; null without a card image; the rows of `GET /api/decks` carry it too) and `accessories: {status, tokens: [{key, name, type_line, pt, colors, oracle_text, image_small, scryfall_ids, source, from: [{name, quantity, side?}], estimate, estimate_note, side_only?, owned: {quantity, binders: [{binder, quantity}]}}], markers: [{key, label, kind, note?, sizes?, from, side_only?}], maybe_skipped, unknown}`; `status` is `ok`, `pending` (token data is being fetched: read again after a few seconds) or `unavailable` (card text only); locked binders: `box {binder, via}` (the box this deck owns), per card `in_locked` (= `in_boxes`) `[{binder, deck_id, deck_name, quantity}]` (locked binders of other decks or nobody holding it) and `in_use_locked` (= `in_use_box`, the part of `in_use` lying there), `in_use_locked_count` (= `in_use_box_count`; the list rows carry it too), and `shopping.in_use[]` items add `boxes` and `in_box` |
 | `POST /api/decks/evaluate` | also returns `accessories` for the draft |
-| `GET /api/decks/:id/build` | the build list: `{deck_id, name, status, box_binder, total, picked, complete, movable_picked, groups: [{key, kind, title, binder?, quantity, picked, lines: [{key, source, name, quantity, picked, oracle_id, scryfall_id, commander, binder?, decks?, price_eur?}]}]}`; `kind` is `binder`, `other`, `basics`, `buy`, `box` or `tokens` (token lines with `token`, `need`; marker lines with `marker`; not counted in `total`/`picked`) |
+| `GET /api/decks/:id/build` | the build list: `{deck_id, name, status, box_binder, total, picked, complete, movable_picked, groups: [{key, kind, title, binder?, quantity, picked, lines: [{key, source, name, local_name?, quantity, picked, oracle_id, scryfall_id, image_small, mana_cost, cmc, colors, commander, binder?, decks?, price_eur?}]}]}` (`local_name` = the printed name in `CARD_NAME_LANG` when the card index has one); `kind` is `binder`, `other`, `basics`, `buy`, `box` or `tokens` (token lines with `token`, `need`; marker lines with `marker`; not counted in `total`/`picked`) |
 | `PUT /api/decks/:id/build/picks {key, source, quantity}` | tick (`quantity` = the line's copies) or untick (`0`) one line; returns the list; 404 when the line is gone |
 | `DELETE /api/decks/:id/build/picks` | untick everything; returns the list |
 | `POST /api/decks/:id/to-binder {binder?, confirm_master?, picked_only?}` | *Put into deck box*; `picked_only: true` moves only the cards ticked in a binder group (400 when none) |

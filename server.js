@@ -599,6 +599,27 @@ const deckLibCall = (fn) => {
   }
 };
 
+// Language of the second card name on the build list (`local_name`); '' turns it off.
+const CARD_NAME_LANG = process.env.CARD_NAME_LANG ?? "de";
+
+/**
+ * Add `local_name` (the card's printed name in CARD_NAME_LANG, from the card
+ * index) to every build-list line that has one. Best effort: without an index,
+ * with the language off, or when the lookup fails the list is returned as is.
+ */
+async function localizeBuild(list) {
+  if (!idx || !CARD_NAME_LANG || !list?.groups) return list;
+  const lines = list.groups.flatMap((g) => g.lines).filter((l) => l.oracle_id);
+  if (!lines.length) return list;
+  try {
+    const names = await indexLookup("localizedNames", [...new Set(lines.map((l) => l.oracle_id))], CARD_NAME_LANG);
+    for (const l of lines) if (names[l.oracle_id]) l.local_name = names[l.oracle_id];
+  } catch (err) {
+    console.warn(`[build] local names unavailable: ${err.message}`);
+  }
+  return list;
+}
+
 /**
  * Build checklist + deck history routes: GET /api/decks/:id/build, PUT /api/decks/:id/build/picks
  * {key, source, quantity}, DELETE /api/decks/:id/build/picks, GET /api/decks/:id/history,
@@ -607,14 +628,14 @@ const deckLibCall = (fn) => {
 async function deckBuildHistoryApi(req, method, id, rest) {
   if (rest === "build") {
     if (method !== "GET") throw new HttpError(405, "Method not allowed");
-    return deckLibCall(() => buildChecklist(db, id));
+    return localizeBuild(deckLibCall(() => buildChecklist(db, id)));
   }
   if (rest === "build/picks") {
     if (method === "PUT") {
       const body = await readJson(req);
-      return deckLibCall(() => setBuildPick(db, id, { key: body.key, source: body.source, quantity: body.quantity }));
+      return localizeBuild(deckLibCall(() => setBuildPick(db, id, { key: body.key, source: body.source, quantity: body.quantity })));
     }
-    if (method === "DELETE") return deckLibCall(() => clearBuildPicks(db, id));
+    if (method === "DELETE") return localizeBuild(deckLibCall(() => clearBuildPicks(db, id)));
     throw new HttpError(405, "Method not allowed");
   }
   if (rest === "history") {

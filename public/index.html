@@ -559,12 +559,18 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 .build-group .gname { display: flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
 .build-group .gname svg { width: 18px; height: 18px; flex: none; color: var(--muted); }
 .build-lines { display: grid; }
-.build-line {
+.build-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-top: 1px solid var(--border); }
+.build-line .pick {
   appearance: none; display: grid; grid-template-columns: 28px auto minmax(0, 1fr) auto; align-items: center; gap: 10px;
-  width: 100%; min-height: 52px; padding: 6px 4px; border: 0; border-top: 1px solid var(--border); background: none;
+  width: 100%; min-height: 52px; padding: 6px 4px; border: 0; background: none;
   color: inherit; text-align: left; cursor: pointer; font: inherit;
 }
-.build-line:disabled { cursor: default; }
+.build-line .pick:disabled { cursor: default; }
+.build-line .peek { appearance: none; border: 0; background: none; padding: 4px; min-width: 44px; min-height: 44px; display: grid; place-items: center; cursor: pointer; color: var(--muted); }
+.build-line .peek img { width: 32px; height: 45px; object-fit: cover; border-radius: 3px; display: block; background: var(--border); }
+.build-line .peek svg { width: 20px; height: 20px; }
+.build-line .de { color: var(--muted); font-size: .92em; overflow-wrap: anywhere; }
+.build-line .nm .mana .sym { width: 14px; height: 14px; }
 .build-line .tick { width: 26px; height: 26px; border: 2px solid var(--border); border-radius: 7px; display: grid; place-items: center; }
 .build-line .tick svg { width: 18px; height: 18px; }
 .build-line.on .tick { background: var(--ok); border-color: var(--ok); color: #fff; }
@@ -1578,7 +1584,12 @@ function Sheet({ title, onClose, children, actions, pinned }) {
     document.body.style.overflow = "hidden";
     ref.current?.focus();
     const onKey = (e) => {
-      if (e.key === "Escape") { e.stopPropagation(); onClose(); }
+      if (e.key === "Escape") {
+        // Sheets stack (the card sheet opens above the build list): only the top one closes.
+        const overlays = document.querySelectorAll(".overlay");
+        if (ref.current && overlays[overlays.length - 1] !== ref.current.parentElement) return;
+        e.stopPropagation(); onClose();
+      }
       if (e.key === "Tab" && ref.current) {
         const f = ref.current.querySelectorAll('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])');
         if (!f.length) return;
@@ -3243,7 +3254,7 @@ const BUILD_GROUP_HINT = {
  * Build checklist: the deck's cards grouped by the binder to pick them from, a tick per line
  * (stored on the server, so it works across devices), then "Put into deck box" / "Mark as built".
  */
-function BuildSheet({ deck, onClose, onSetBuilt, onCollectionChanged }) {
+function BuildSheet({ deck, onClose, onSetBuilt, onCollectionChanged, onOpenCard }) {
   const [list, setList] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(null); // line id being saved
@@ -3332,12 +3343,17 @@ function BuildSheet({ deck, onClose, onSetBuilt, onCollectionChanged }) {
                 <div className="build-lines">
                   {lines.map((l) => {
                     const on = l.picked >= l.quantity;
+                    const id = lineId(l);
                     return (
-                      <button key={lineId(l)} type="button" role="checkbox" aria-checked={on ? "true" : l.picked > 0 ? "mixed" : "false"}
-                        className={`build-line${on ? " on" : ""}`} disabled={l.source === "box" || busy === lineId(l)} onClick={() => toggle(l)}>
+                      <div key={id} className={`build-line${on ? " on" : ""}`}>
+                      <button type="button" role="checkbox" aria-checked={on ? "true" : l.picked > 0 ? "mixed" : "false"}
+                        className="pick" disabled={l.source === "box" || busy === id} onClick={() => toggle(l)}>
                         <span className="tick" aria-hidden="true">{on ? <Icon.check /> : null}</span>
                         <span className="q">{l.quantity}×</span>
-                        <span className="nm"><b>{l.name}</b>{l.commander && <span className="badge accent">commander</span>}
+                        <span className="nm"><b>{l.name}</b>
+                          {l.local_name && l.local_name !== l.name && <span className="de">({l.local_name})</span>}
+                          {l.mana_cost ? <ManaCost cost={l.mana_cost} /> : null}
+                          {l.commander && <span className="badge accent">commander</span>}
                           {g.kind === "other" && <span className="small muted">{(l.locked ?? l.box) ? "🔒 " : ""}in {l.binder || UNSORTED}{(l.locked ?? l.box) && !asList(l.decks).length ? " · locked" : ""}{asList(l.decks).length ? ` · ${asList(l.decks).join(", ")}` : ""}</span>}
                           {l.token && l.pt && <span className="badge">{l.pt}</span>}
                           {l.token && <span className="small muted">{l.need ? `need · you own none${l.estimate_note ? ` · ${l.estimate_note}` : ""}` : `in ${l.binder || UNSORTED}`}</span>}
@@ -3345,6 +3361,12 @@ function BuildSheet({ deck, onClose, onSetBuilt, onCollectionChanged }) {
                         </span>
                         {g.kind === "buy" && <span className="p small muted">{l.price_eur == null ? "" : fmtEur(l.price_eur * l.quantity)}</span>}
                       </button>
+                      {l.scryfall_id && onOpenCard && (
+                        <button type="button" className="peek" aria-label={`Show ${l.name}`} title="Show card" onClick={() => onOpenCard(l.scryfall_id)}>
+                          {l.image_small ? <img src={l.image_small} alt="" loading="lazy" decoding="async" /> : <Icon.search />}
+                        </button>
+                      )}
+                      </div>
                     );
                   })}
                 </div>
@@ -4406,7 +4428,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
           {powerOpen && <PowerSheet deck={deck} onClose={() => setPowerOpen(false)} onChanged={() => { load(); onChanged(); }} />}
           {deckBox && <DeckBoxSheet deck={deck} onClose={() => setDeckBox(false)} onDone={() => { load(); onCollectionChanged(); }} />}
           {buildOpen && <BuildSheet deck={deck} onClose={() => { setBuildOpen(false); load(); }} onSetBuilt={() => setStatus("built")}
-            onCollectionChanged={() => { load(); onCollectionChanged(); }} />}
+            onCollectionChanged={() => { load(); onCollectionChanged(); }} onOpenCard={onOpenCard} />}
           {historyOpen && <HistorySheet deck={deck} onClose={() => setHistoryOpen(false)}
             onRestored={(res) => { if (res && Array.isArray(res.cards)) setDeck(res); else load(); onChanged(); }} />}
         </>
