@@ -14,7 +14,8 @@ The **Planner** tab is a chat that runs the
 with exactly two MCP servers:
 
 - **collection**, this repo's own MCP server: it reads your collection and
-  decks, saves decks (`save_deck`) and can correct owned copies
+  decks, saves decks (`save_deck`), writes a deck's notes (`update_deck_notes`,
+  Markdown, only the notes; the old text stays in the deck's History) and can correct owned copies
   (`edit_copies`: language, printing, finish or condition, after stating the
   exact change). It cannot delete anything; every edit is logged and can be
   undone in the app. It has no access to backups. `get_deck` and

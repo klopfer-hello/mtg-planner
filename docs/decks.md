@@ -50,6 +50,10 @@ Decks can be exported as a text list you can import elsewhere.
 - You can set the **commander** (up to two for partner/background pairs;
   legendary creatures in the deck are suggested) and move cards between
   boards.
+- **Notes**: tap **Edit** on a deck to write notes in Markdown (`## headings`,
+  `- lists`, `**bold**`, `{G}` for mana symbols, up to 5,000 characters). Long
+  notes fold up with **Show more**. Claude can write them too when you ask
+  ("write a game plan into the notes"). Every change is a version in **History**.
 - A **cover picture**: the commander, else the most expensive card (EUR,
   basic lands never). The deck list shows it as a thumbnail on phones and as
   the card art on wider screens.

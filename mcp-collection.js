@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // "collection" MCP server: gives the Claude CLI read access to the owned
 // collection and decks (incl. what built decks claim: owned vs free copies,
-// conflicts, shopping list), plus two write tools: save_deck (decks the user then
-// sees in the app) and edit_copies (fix language / printing / finish / condition
+// conflicts, shopping list), plus three write tools: save_deck (decks the user then
+// sees in the app), update_deck_notes (a deck's Markdown notes only) and edit_copies (fix language / printing / finish / condition
 // of owned copies; lib/edits.js, actor 'claude', logged and undoable in the app),
 // plus list_wishlist / add_to_wishlist (lib/wishlist.js; Claude may add, never remove).
 // evaluate_deck is a dry run: stats, Commander bracket and 1-10 score of a draft
@@ -26,7 +26,7 @@ import { cardPrice, formatPrice, getAppMeta, openDb, setAppMeta, stats } from ".
 import { QUERY_HELP, searchCollection } from "./lib/query.js";
 import {
   BOARDS, DECK_STATUSES, allocation, bracketVerdict, cardKey, cardUsage, deckDetail, deckPower, deckToText, draftDeck, findDeck, isBasicLand,
-  listDecks, powerLines, saveDeck, shoppingList,
+  DECK_NOTES_MAX, DeckError, listDecks, powerLines, saveDeck, setDeckNotes, shoppingList,
 } from "./lib/decks.js";
 import { createSpellbookScheduler } from "./lib/spellbook.js";
 import { BinderError, listBinders } from "./lib/binders.js";
@@ -380,6 +380,26 @@ const TOOLS = [
     },
     annotations: { title: "Save deck", readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     run: saveDeckTool,
+  },
+  {
+    name: "update_deck_notes",
+    description:
+      "Replace the notes of one deck (shown on the deck page, Markdown: short ## headings, - bullets, **bold**, mana as " +
+      "{G}) without touching its cards. Use it for strategy notes, a game plan or reminders the user asks for. Keep them " +
+      "short and scannable on a phone (≤ ~25 lines). Send the COMPLETE new text: it replaces the old notes (get_deck shows " +
+      "them); an empty string clears them. Say in one line what you change before calling. The previous notes stay in " +
+      "the deck's History, so the user can go back in the app.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        deck: { type: ["string", "integer"], description: "Deck id, or (part of) the deck name." },
+        notes: { type: "string", maxLength: DECK_NOTES_MAX, description: `The full new notes in Markdown (max ${DECK_NOTES_MAX} characters).` },
+      },
+      required: ["deck", "notes"],
+      additionalProperties: false,
+    },
+    annotations: { title: "Update deck notes", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    run: updateDeckNotesTool,
   },
   {
     name: "edit_copies",
@@ -933,6 +953,24 @@ async function saveDeckTool(args) {
   lines.push("", deckToText(detail));
   if (target) lines.push("", bracketVerdict(detail.power, target));
   return lines.join("\n");
+}
+
+function updateDeckNotesTool(args) {
+  const d = getDb();
+  const deck = findDeck(d, args.deck);
+  if (!deck) throw new ToolError(`No deck matches "${args.deck}". Use list_decks for the ids.`);
+  if (typeof args.notes !== "string") throw new ToolError("notes must be text (an empty string clears them).");
+  let stored;
+  try {
+    stored = setDeckNotes(d, deck.id, args.notes, { actor: "claude" });
+  } catch (err) {
+    if (err instanceof DeckError) throw new ToolError(err.message);
+    throw err;
+  }
+  if ((deck.description ?? null) === stored) return `The notes of deck #${deck.id} "${deck.name}" are unchanged.`;
+  return stored
+    ? `Updated the notes of deck #${deck.id} "${deck.name}" (${stored.length} characters). The user sees them on the deck page; the old notes are in the deck's History.`
+    : `Cleared the notes of deck #${deck.id} "${deck.name}". The old notes are in the deck's History.`;
 }
 
 // --- edit_copies -------------------------------------------------------------

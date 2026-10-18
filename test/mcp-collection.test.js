@@ -88,7 +88,7 @@ describe("mcp-collection.js", () => {
   test("lists exactly the documented, non-destructive tools", async () => {
     const { result } = await mcp.request("tools/list", {});
     const names = result.tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["add_to_wishlist", "check_owned", "collection_overview", "edit_copies", "evaluate_deck", "get_card", "get_deck", "get_deck_history", "list_binders", "list_decks", "list_wishlist", "save_deck", "search_collection", "shopping_list"]);
+    assert.deepEqual(names, ["add_to_wishlist", "check_owned", "collection_overview", "edit_copies", "evaluate_deck", "get_card", "get_deck", "get_deck_history", "list_binders", "list_decks", "list_wishlist", "save_deck", "search_collection", "shopping_list", "update_deck_notes"]);
     for (const t of result.tools) {
       assert.equal(typeof t.description, "string");
       assert.equal(t.inputSchema?.type, "object", `${t.name} needs an object inputSchema`);
@@ -177,6 +177,24 @@ describe("mcp-collection.js", () => {
     assert.match(text, /Counter target spell/);
     assert.match(text, /mh2|MH2/);
     assert.match(text, /7ed|7ED/);
+  });
+
+  test("update_deck_notes replaces only the notes, get_deck shows them, unknown deck is an error", async () => {
+    const NOTES = "## Plan\n- **ramp** early";
+    const saved = await mcp.call("save_deck", { name: "Notes deck", cards: [{ name: "Sol Ring", quantity: 1 }] });
+    const id = Number(/deck #(\d+)/.exec(saved.text)[1]);
+    const res = await mcp.call("update_deck_notes", { deck: id, notes: NOTES });
+    assert.equal(res.isError, false, res.text);
+    assert.match(res.text, /Updated the notes of deck #\d+ "Notes deck"/);
+    const shown = await mcp.call("get_deck", { deck: id });
+    assert.ok(shown.text.includes(NOTES), shown.text);
+    assert.match(shown.text, /Sol Ring/);
+    assert.match((await mcp.call("update_deck_notes", { deck: id, notes: NOTES })).text, /unchanged/);
+    assert.match((await mcp.call("update_deck_notes", { deck: id, notes: "" })).text, /Cleared the notes/);
+    const history = await mcp.call("get_deck_history", { deck: id });
+    assert.match(history.text, /claude/);
+    const missing = await mcp.call("update_deck_notes", { deck: "no such deck at all", notes: "x" });
+    assert.equal(missing.isError, true);
   });
 
   test("save_deck → list_decks → get_deck", async () => {

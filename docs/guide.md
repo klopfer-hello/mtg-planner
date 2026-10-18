@@ -263,6 +263,8 @@ Open the **Decks** tab.
 - **Filter:** the buttons above the list: **★ Favourites**, **Built**,
   **Ideas**, formats and colours. **Clear filters** resets them.
 - **Share:** the arrow next to the deck's name sends a link to the deck.
+- **Notes:** open the deck, tap **Edit**, write in **Notes**. Or ask Claude:
+  "Write a short game plan into the notes of my Atraxa deck."
 
 ### Idea or built?
 

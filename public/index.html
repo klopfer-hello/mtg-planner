@@ -696,6 +696,10 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 
 /* Markdown from Claude */
 .md { overflow-wrap: anywhere; word-break: break-word; min-width: 0; max-width: 100%; }
+.deck-notes { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.deck-notes-body { max-height: 11.5em; overflow: hidden; position: relative; width: 100%; }
+.deck-notes-body.open { max-height: none; }
+.deck-notes-body.clipped::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2.5em; background: linear-gradient(transparent, var(--bg)); pointer-events: none; }
 .md a { word-break: break-all; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
@@ -1443,6 +1447,29 @@ function escapeHtml(s) {
 function Markdown({ text }) {
   const html = useMemo(() => renderMarkdown(text), [text]);
   return <div className="md" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/** A deck's notes (Markdown); long notes collapse to a few lines with Show more. */
+function DeckNotes({ text }) {
+  const ref = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [long, setLong] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) setLong(el.scrollHeight > el.clientHeight + 4);
+  }, [text]);
+  return (
+    <div className="deck-notes">
+      <div ref={ref} className={`deck-notes-body${open ? " open" : ""}${long && !open ? " clipped" : ""}`}>
+        <Markdown text={text} />
+      </div>
+      {(long || open) && (
+        <button type="button" className="btn ghost sm" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -4461,7 +4488,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
                     </span>
                   </div>
                 )}
-                {deck.description && <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{deck.description}</p>}
+                {deck.description && <DeckNotes text={deck.description} />}
               </>
             ) : (
               <form className="card stack" onSubmit={saveEdit} aria-label="Edit deck">
@@ -4477,8 +4504,9 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
                   </select>
                 </div>
                 <div className="field">
-                  <label htmlFor="edit-desc">Description</label>
-                  <textarea id="edit-desc" className="input" rows={3} maxLength={5000} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                  <label htmlFor="edit-desc">Notes</label>
+                  <textarea id="edit-desc" className="input" rows={6} maxLength={5000} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} aria-describedby="edit-desc-hint" />
+                  <span id="edit-desc-hint" className="small muted">Markdown: **bold**, - lists, ## headings, {"{G}"} for mana. Claude can update them too.</span>
                 </div>
                 <div className="row">
                   <button type="submit" className="btn primary" disabled={saving || !form.name.trim()}>{saving ? "Saving…" : "Save"}</button>
@@ -4527,7 +4555,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
               {deck.status === "built" && <button type="button" className="btn" onClick={() => setDeckBox(true)}><Icon.box /> Put into deck box</button>}
               <button type="button" className="btn" onClick={() => setHistoryOpen(true)}><Icon.history /> History</button>
               <a className="btn" href={exportHref} download><Icon.download /> Export</a>
-              {!editing && <button type="button" className="btn" onClick={startEdit}><Icon.edit /> Rename</button>}
+              {!editing && <button type="button" className="btn" onClick={startEdit}><Icon.edit /> Edit</button>}
               <button type="button" className="btn danger" onClick={remove}><Icon.trash /> Delete</button>
             </div>
             <ErrorNotice error={actionError} onDismiss={() => setActionError(null)} />
@@ -9799,7 +9827,7 @@ function App() {
   const askAboutDeck = useCallback((d) => {
     const prompt = `Let's work on my deck #${d.id} "${d.name}"${d.format ? ` (${d.format})` : ""}. `
       + `Load it with get_deck and give me a short analysis: mana curve, card-type balance, key synergies, weak spots, `
-      + `and which of the missing cards matter most. Suggest improvements, preferring cards I already own.`;
+      + `and which of the missing cards matter most (read the deck notes too). Suggest improvements, preferring cards I already own.`;
     setPlannerRequest({ prompt, title: `Deck: ${d.name}`.slice(0, 60), nonce: Date.now() });
     switchTab("planner");
   }, [switchTab]);

@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DeckError, bracketVerdict, canPair, deckComboRequest, deckDetail, deckPower, deckToText, draftDeck, eurForFinish, eurOfPrinting, exportDeck, findDeck,
-  listDecks, normalizeFormat, parseDecklist, powerLines, saveDeck, saveDeckRows, scoreText, setCommander, updateDeckCard,
+  DECK_NOTES_MAX, listDecks, normalizeFormat, parseDecklist, powerLines, saveDeck, saveDeckRows, scoreText, setCommander, setDeckNotes, updateDeckCard,
 } from "../lib/decks.js";
+import { listDeckVersions } from "../lib/deckhistory.js";
 import { CEDH_HINT } from "../lib/power.js";
 import { SPELLBOOK_PARSER, deckPayloadRows, spellbookRequest } from "../lib/spellbook.js";
 import { upsertCards } from "../lib/db.js";
@@ -641,5 +642,39 @@ describe("deck power", () => {
     const chooser = { name: "A", type_line: "Legendary Creature", oracle_text: "Choose a Background" };
     assert.equal(canPair(chooser, bg), true);
     assert.equal(canPair(chooser, chooser), false);
+  });
+});
+
+describe("setDeckNotes", () => {
+  let ctx;
+  beforeEach(() => {
+    ctx = tempDb();
+    seedCards(ctx.db);
+  });
+  afterEach(() => ctx.cleanup());
+  const versions = (id) => listDeckVersions(ctx.db, id).versions;
+  const PLAN = "## Plan\n- ramp {G}";
+
+  test("stores trimmed Markdown, records one history version per change, keeps the cards", () => {
+    const id = saveDeckRows(ctx.db, { name: "N", rows: [{ board: "main", name: "Sol Ring", scryfall_id: ID.sol, quantity: 1 }] });
+    const before = versions(id).length;
+    assert.equal(setDeckNotes(ctx.db, id, "  ## Plan\r\n- ramp {G}\r\n  ", { actor: "claude" }), PLAN);
+    assert.equal(ctx.db.prepare("SELECT description FROM decks WHERE id = ?").get(id).description, PLAN);
+    const after = versions(id);
+    assert.equal(after.length, before + 1);
+    assert.equal(after[0].actor, "claude");
+    assert.equal(setDeckNotes(ctx.db, id, PLAN), PLAN);
+    assert.equal(versions(id).length, before + 1, "equal text = no new version");
+    assert.equal(deckDetail(ctx.db, id).cards.length, 1);
+    assert.match(deckToText(deckDetail(ctx.db, id)), /Notes \(Markdown[^\n]*\n## Plan\n- ramp \{G\}/);
+  });
+
+  test("empty clears, too long and unknown deck are refused", () => {
+    const id = saveDeckRows(ctx.db, { name: "N", description: "old", rows: [] });
+    assert.equal(setDeckNotes(ctx.db, id, "   "), null);
+    assert.equal(ctx.db.prepare("SELECT description FROM decks WHERE id = ?").get(id).description, null);
+    assert.throws(() => setDeckNotes(ctx.db, id, "x".repeat(DECK_NOTES_MAX + 1)), (e) => e instanceof DeckError && e.status === 400);
+    assert.throws(() => setDeckNotes(ctx.db, 9999, "x"), (e) => e instanceof DeckError && e.status === 404);
+    assert.throws(() => setDeckNotes(ctx.db, id, 42), (e) => e instanceof DeckError && e.status === 400);
   });
 });
