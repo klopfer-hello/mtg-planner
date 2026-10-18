@@ -247,7 +247,8 @@ It never links on its own. The deck page shows its box under the value.
 
 ## To buy
 
-Each deck shows its own **To buy** list. **Market → To buy** shows what each
+Each deck shows its own **To buy** list. **Export list** below it downloads
+the cards as a text file (`3 Counterspell`, one per line). **Market → To buy** shows what each
 deck still needs and, across all built decks, what to buy with a € total (see
 [finance.md](finance.md#to-buy)).
 

@@ -8,8 +8,9 @@ import assert from "node:assert/strict";
 import { upsertCards } from "../lib/db.js";
 import { normalizeCard } from "../lib/scryfall.js";
 import {
-  WishlistError, addWishlistItem, deleteWishlistItem, listWishlist, updateWishlistItem, wishlistShopping,
+  WishlistError, addWishlistItem, deleteWishlistItem, deleteWishlistItems, listWishlist, updateWishlistItem, wishlistShopping, wishlistText,
 } from "../lib/wishlist.js";
+import { buyListText } from "../lib/decks.js";
 import { refreshOwnedCards } from "../lib/manabox.js";
 import { ID, SCRYFALL_CARDS, seedCards, seedCollection, stubScryfall, tempDb } from "./fixtures.js";
 
@@ -78,6 +79,37 @@ describe("addWishlistItem", () => {
     await rejects(addWishlistItem(ctx.db, { name: "Sol Ring", language: "german!" }), 400, /language/);
     await rejects(addWishlistItem(ctx.db, { name: "Sol Ring", priority: 7 }), 400, /priority/);
     await rejects(addWishlistItem(ctx.db, { scryfall_id: "nope" }), 400, /Scryfall id/);
+  });
+});
+
+describe("bulk remove + text export", () => {
+  test("wishlistText: items still to buy, printing for exact items, finish marks; got-it items left out", async () => {
+    seedCards(ctx.db);
+    seedCollection(ctx.db, [[ID.sol, 1]]);
+    await addWishlistItem(ctx.db, { name: "Sol Ring" }); // got it
+    const bolt = (await addWishlistItem(ctx.db, { name: "Lightning Bolt", quantity: 3, any_printing: true })).item;
+    const atraxa = (await addWishlistItem(ctx.db, { scryfall_id: ID.atraxa, any_printing: false, finish: "foil" })).item;
+    const set = atraxa.set_code.toUpperCase();
+    assert.equal(bolt.any_printing, true);
+    assert.equal(wishlistText(ctx.db), `3 Lightning Bolt\n1 Atraxa, Praetors' Voice (${set}) ${atraxa.collector_number} *F*\n`);
+    assert.equal(wishlistText(tempDb().db), "", "empty list = empty file");
+  });
+
+  test("deleteWishlistItems: removes the given ids, skips gone ones, validates", async () => {
+    seedCards(ctx.db);
+    const ids = [];
+    for (const name of ["Sol Ring", "Lightning Bolt", "Serra Angel"]) ids.push((await addWishlistItem(ctx.db, { name })).item.id);
+    assert.equal(deleteWishlistItems(ctx.db, [ids[0], ids[1], ids[1], 99999]), 2);
+    assert.deepEqual(listWishlist(ctx.db).items.map((i) => i.name), ["Serra Angel"]);
+    for (const bad of [[], "1", [0], [1.5], ["2"]]) assert.throws(() => deleteWishlistItems(ctx.db, bad), (e) => e instanceof WishlistError && e.status === 400);
+    assert.throws(() => deleteWishlistItems(ctx.db, Array.from({ length: 1001 }, (_, i) => i + 1)), /At most 1000/);
+  });
+
+  test("buyListText: one line per card, sorted by name, zero/blank rows dropped", () => {
+    assert.equal(buyListText([{ name: "Sol Ring", need: 1 }, { name: "Arcane Signet", need: 2 }, { name: "X", need: 0 }, { need: 3 }]),
+      "2 Arcane Signet\n1 Sol Ring\n");
+    assert.equal(buyListText([{ name: "Bolt", short: 4, need: 9 }], "short"), "4 Bolt\n");
+    assert.equal(buyListText([]), "");
   });
 });
 

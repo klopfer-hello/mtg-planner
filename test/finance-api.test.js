@@ -134,4 +134,31 @@ describe("wishlist API", () => {
     assert.equal((await call("DELETE", `/api/wishlist/${id}`)).status, 404);
     assert.equal((await call("GET", "/api/wishlist/abc")).status, 404);
   });
+
+  test("export as text, bulk remove; deck and built To buy lists as text", async () => {
+    const a = (await call("POST", "/api/wishlist", { scryfall_id: ID.atraxa, quantity: 2, any_printing: true })).body.item;
+    const b = (await call("POST", "/api/wishlist", { name: "Serra Angel", quantity: 1, any_printing: true })).body.item;
+    let r = await fetch(`${base}/api/wishlist/export`);
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get("content-type"), /^text\/plain/);
+    assert.match(r.headers.get("content-disposition"), /attachment; filename="Wishlist\.txt"/);
+    assert.equal(await r.text(), "2 Atraxa, Praetors' Voice\n1 Serra Angel\n");
+    assert.equal((await call("POST", "/api/wishlist/delete", { ids: "x" })).status, 400);
+    assert.equal((await call("GET", "/api/wishlist/delete")).status, 405);
+    const del = await call("POST", "/api/wishlist/delete", { ids: [a.id, b.id] });
+    assert.deepEqual([del.status, del.body.removed], [200, 2]);
+    assert.equal(await (await fetch(`${base}/api/wishlist/export`)).text(), "");
+
+    const deck = await call("POST", "/api/decks", { name: "Buy me", text: "1 Atraxa, Praetors' Voice\n2 Sol Ring\n3 Counterspell" });
+    assert.ok(deck.status === 201 || deck.status === 200, JSON.stringify(deck.body));
+    r = await fetch(`${base}/api/decks/${deck.body.id}/to-buy`);
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get("content-disposition"), /filename="Buy me - to buy\.txt"/);
+    assert.equal(await r.text(), "1 Atraxa, Praetors' Voice\n3 Counterspell\n", "owned Sol Rings are not on it");
+    assert.equal((await fetch(`${base}/api/decks/99999/to-buy`)).status, 404);
+    await call("PATCH", `/api/decks/${deck.body.id}`, { status: "built" });
+    r = await fetch(`${base}/api/shopping-list/export`);
+    assert.equal(r.status, 200);
+    assert.equal(await r.text(), "1 Atraxa, Praetors' Voice\n3 Counterspell\n");
+  });
 });

@@ -43,6 +43,12 @@ Cards you want to buy, outside your decks.
   marked **✓ below your max**.
 - **Got it:** when you own as many copies as you want, the card moves to
   **Got it**. Tap **Remove, I have it** to clear it.
+- **Remove several:** tap **Select**, tick the cards (or **All**), then
+  **Remove**. Tap **Done** to leave without removing.
+- **Export list:** downloads `Wishlist.txt` with the cards you still need to
+  buy, one per line (`2 Sol Ring`). A card wanted in one printing only gets
+  `(SET) number`, foil `*F*`, etched `*E*`. Paste it into a shop's wants
+  list or a deck site. *Got it* cards are left out.
 - **Market → To buy** shows how many wishlist cards are open, with a link
   here.
 - **Claude** can read the wishlist and add cards when you ask (it cannot
@@ -59,6 +65,9 @@ Wishlist cards get their prices refreshed every night, like your collection.
 - **Per deck:** how many cards each deck still has to buy, and how many sit
   in other built decks (you can move those). Tap a deck to open it.
 - Each deck also has its own **To buy** list in the deck view.
+- **Export list** under a To buy list downloads it as a text file, one card per
+  line sorted by name (`3 Counterspell`). Only cards you don't own at all;
+  cards sitting in other decks are not in it.
 - Links: `#value` (last view), `#value/wishlist`, `#value/buy`.
 
 ## How the history is stored
@@ -91,5 +100,9 @@ All JSON, all `GET` unless noted.
 | `POST /api/wishlist` | Body `{scryfall_id | oracle_id | name (+ set, collector_number), any_printing?, finish?, language?, quantity?, max_price_eur?, note?, priority? (high/normal/low)}`. `201 {item, merged:false}`, or `200 {item, merged:true}` when the same card was already on the list (quantity added). |
 | `PATCH /api/wishlist/:id` | Any of `quantity, max_price_eur (null clears), note, priority, finish, language, any_printing`. |
 | `DELETE /api/wishlist/:id` | `204`. |
+| `POST /api/wishlist/delete` | Body `{ids: [1-1000 item ids]}`: removes them, ids that are gone are skipped. `{removed}`; 400 for a bad list. |
+| `GET /api/wishlist/export` | Text download (`Wishlist.txt`): the items still to buy, `<to buy> <name>[ (SET) <number>][ *F*\|*E*]`. |
+| `GET /api/shopping-list/export` | Text download (`To buy.txt`): the built decks' shortage, `<copies> <name>` sorted by name. |
+| `GET /api/decks/:id/to-buy` | Text download (`<deck> - to buy.txt`): the deck's cards not owned at all, `<copies> <name>`; 404 for a missing deck. |
 
 `GET /api/shopping-list` also returns `wishlist{items[{id, name, need, price_eur, cost_eur, max_price_eur, below_max, priority}], total_eur}`.

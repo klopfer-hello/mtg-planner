@@ -17,7 +17,7 @@ import { CARD_FACTS_META, IMPORT_MODES, backfillCardFacts, cardFactsPending, imp
 import { accessoriesForRows, createAccessoryFetcher, ensureAccessoryData } from "./lib/accessories.js";
 import { syncEnglishPrices } from "./lib/prices.js";
 import {
-  DECK_STATUSES, DeckError, bracketVerdict, cardUsage, deckComboRequest, deckDetail, deckPower, draftDeck, eurForFinish, exportDeck, listDecks,
+  DECK_STATUSES, DeckError, bracketVerdict, buyListText, cardUsage, deckComboRequest, deckDetail, deckPower, draftDeck, eurForFinish, exportDeck, listDecks,
   normalizeFormat, parseDecklist, saveDeck, setCommander, shoppingList, updateDeckCard,
 } from "./lib/decks.js";
 import {
@@ -52,7 +52,10 @@ import {
 } from "./lib/binders.js";
 import { deleteCopies, editCopies, listEdits, relanguageScans, undoEdit } from "./lib/edits.js";
 import { cardHistory, ensureSnapshot, financeHistory, financeMovers, financeSummary, financeTop, snapshotValue } from "./lib/finance.js";
-import { WishlistError, addWishlistItem, deleteWishlistItem, getWishlistItem, listWishlist, updateWishlistItem, wishlistShopping } from "./lib/wishlist.js";
+import {
+  WishlistError, addWishlistItem, deleteWishlistItem, deleteWishlistItems, getWishlistItem, listWishlist, updateWishlistItem,
+  wishlistShopping, wishlistText,
+} from "./lib/wishlist.js";
 import { DeckHistoryError, deckVersion, listDeckVersions, recordDeckVersion, restoreDeckVersion } from "./lib/deckhistory.js";
 import { BuildError, buildChecklist, clearBuildPicks, pickedKeys, setBuildPick } from "./lib/deckbuild.js";
 
@@ -688,6 +691,12 @@ async function postCommander(req, id) {
 function exportFilename(name) {
   const ascii = name.replace(/[^\w .()-]+/g, "_").trim() || "deck";
   return `attachment; filename="${ascii}.txt"; filename*=UTF-8''${encodeURIComponent(name)}.txt`;
+}
+
+/** Send a text list as a .txt download (deck exports, wishlist, To buy lists). */
+function sendTextFile(res, name, text) {
+  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Disposition": exportFilename(name), "Cache-Control": "no-store" });
+  return res.end(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -1772,6 +1781,14 @@ async function handleApi(req, res, url) {
   }
   // Global shopping list: built decks' shortage + per deck (lib/decks.js) + the wishlist's open items.
   if (pathname === "/api/shopping-list" && method === "GET") return sendJson(res, 200, { ...shoppingList(db), wishlist: wishlistShopping(db) });
+  // The built decks' shortage as a text list (Market → To buy → Export list).
+  if (pathname === "/api/shopping-list/export" && method === "GET") return sendTextFile(res, "To buy", buyListText(shoppingList(db).built.items, "short"));
+  // One deck's To buy list as text (copies not owned at all; the "buy instead" in-use cards are not in it).
+  if ((m = /^\/api\/decks\/(\d+)\/to-buy$/.exec(pathname))) {
+    if (method !== "GET") throw new HttpError(405, "Method not allowed");
+    const detail = getDeckOr404(Number(m[1]));
+    return sendTextFile(res, `${detail.name} - to buy`, buyListText(detail.shopping?.items, "need"));
+  }
   if (pathname === "/api/wishlist" || pathname.startsWith("/api/wishlist/")) return handleWishlistApi(req, res, url);
   if (pathname.startsWith("/api/finance/")) return handleFinanceApi(req, res, url);
   if ((m = /^\/api\/decks\/(\d+)\/(build(?:\/picks)?|history(?:\/\d+(?:\/restore)?)?)$/.exec(pathname))) {
@@ -1859,10 +1876,22 @@ const wishCall = async (fn) => {
 // GET /api/wishlist → {items, totals}; POST {scryfall_id|oracle_id|name, set?, collector_number?, any_printing?, finish?,
 // language?, quantity?, max_price_eur?, note?, priority?} → 201 {item, merged} (200 when merged into an existing item);
 // PATCH /api/wishlist/:id {quantity?, max_price_eur?, note?, priority?, finish?, language?, any_printing?} → item;
-// DELETE /api/wishlist/:id → 204. Not inside exclusive(): no collection rows change (a missing card row is fetched).
+// DELETE /api/wishlist/:id → 204. GET /api/wishlist/export → text list (items still to buy);
+// POST /api/wishlist/delete {ids} → {removed}. Not inside exclusive(): no collection rows change (a missing card row is fetched).
 async function handleWishlistApi(req, res, url) {
   const { pathname } = url;
   const method = req.method;
+  if (pathname === "/api/wishlist/export") {
+    if (method !== "GET") throw new HttpError(405, "Method not allowed");
+    return sendTextFile(res, "Wishlist", wishlistText(db));
+  }
+  if (pathname === "/api/wishlist/delete") {
+    if (method !== "POST") throw new HttpError(405, "Method not allowed");
+    const body = await readJson(req);
+    const removed = await wishCall(() => deleteWishlistItems(db, body.ids));
+    if (removed) scheduleSnapshot();
+    return sendJson(res, 200, { removed });
+  }
   if (pathname === "/api/wishlist") {
     if (method === "GET") return sendJson(res, 200, listWishlist(db));
     if (method === "POST") {
