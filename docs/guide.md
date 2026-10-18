@@ -188,6 +188,20 @@ and value, grouped by type. **All cards** and **Unsorted** sit there too.
   colour, rarity or type). Cards without a binder are **Unsorted**.
 - **New binder:** tap **New binder**.
 - **Rename or delete:** tap **Manage**.
+- **Find a card's binder:** type in the search box above the binders. Only
+  binders with matching cards stay. Tap one: the search is already filled in.
+- **Favourite:** tap **☆** in a binder's header. **★ Favourites** above the
+  binders shows only those.
+- **Share:** the arrow in a binder's header sends a link to it.
+
+**Lock a binder** (🔒): a locked binder keeps its cards for its own deck.
+Other decks show them as "🔒 in … · locked", not as free.
+
+1. Open the binder.
+2. Tap the **lock** next to the share arrow.
+
+Deck boxes are locked automatically. Details:
+[collection.md](collection.md#binders).
 
 **Move cards:**
 
@@ -243,6 +257,13 @@ Open the **Decks** tab.
 
 **You should now see:** the deck in the list, with its value.
 
+### Find and share decks
+
+- **Favourite:** tap **☆** next to a deck's name.
+- **Filter:** the buttons above the list: **★ Favourites**, **Built**,
+  **Ideas**, formats and colours. **Clear filters** resets them.
+- **Share:** the arrow next to the deck's name sends a link to the deck.
+
 ### Idea or built?
 
 - **Idea** = a plan. It doesn't hold on to any cards.
@@ -268,7 +289,11 @@ To switch:
 
 Basic lands never count as missing. The **To buy** list is below the cards.
 **Market → To buy** collects what all built decks need. Tap a deck there to
-open it.
+open it. **Export list** under a To buy list downloads it as a text file for a
+shop.
+
+**Wishlist** (Market → Wishlist): tap ♡ on any card to add it. To remove
+several, tap **Select**, tick the cards, then **Remove**.
 
 ### Put into deck box
 
