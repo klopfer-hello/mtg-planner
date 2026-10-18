@@ -12,7 +12,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 
 import { SCHEMA_VERSION, cardPrice, getAppMeta, openDb, setAppMeta, stats, transaction } from "./lib/db.js";
-import { QUERY_HELP, SECTION_BYS, collectionSections, searchCollection } from "./lib/query.js";
+import { QUERY_HELP, SECTION_BYS, binderMatches, collectionSections, searchCollection } from "./lib/query.js";
 import { CARD_FACTS_META, IMPORT_MODES, backfillCardFacts, cardFactsPending, importManaBoxCsv, refreshOwnedCards, tokenFactsPending } from "./lib/manabox.js";
 import { accessoriesForRows, createAccessoryFetcher, ensureAccessoryData } from "./lib/accessories.js";
 import { syncEnglishPrices } from "./lib/prices.js";
@@ -529,11 +529,20 @@ function deckStatus(v) {
   return v;
 }
 
-/** PATCH /api/decks/:id {name?, format?, description?, status?, bracket_declared?} -> the deck row. */
+/**
+ * PATCH /api/decks/:id {name?, format?, description?, status?, bracket_declared?, favorite?} -> the deck row.
+ * favorite alone is not a deck change: no updated_at, no history version.
+ */
 async function patchDeck(req, id) {
   const deck = db.prepare("SELECT * FROM decks WHERE id = ?").get(id);
   if (!deck) throw new HttpError(404, "Deck not found");
   const body = await readJson(req);
+  if (body.favorite !== undefined) {
+    if (typeof body.favorite !== "boolean") throw new HttpError(400, "favorite must be true or false");
+    db.prepare("UPDATE decks SET favorite = ? WHERE id = ?").run(body.favorite ? 1 : 0, id);
+    deck.favorite = body.favorite ? 1 : 0;
+    if (Object.keys(body).every((k) => k === "favorite")) return { ...deck, favorite: Boolean(deck.favorite) };
+  }
   const name = body.name === undefined ? deck.name : optString(body.name, "name", 200);
   if (!name) throw new HttpError(400, "name must not be empty");
   const format = body.format === undefined ? deck.format : normalizeFormat(optString(body.format, "format", 50));
@@ -1246,6 +1255,11 @@ async function handleScanApi(req, res, url) {
   }
 
   if (pathname === "/api/binders" && method === "GET") return sendJson(res, 200, listBinders(db));
+  // Binders holding cards that match ?q= (collection query syntax): {q, cards, binders[{name, cards, copies}]}.
+  if (pathname === "/api/binders/search" && method === "GET") {
+    const q = (query.get("q") || "").slice(0, 500);
+    try { return sendJson(res, 200, { q, ...binderMatches(db, { q }) }); } catch (err) { throw new HttpError(400, err.message); }
+  }
   if (pathname === "/api/binders" && method === "POST") {
     const body = await readJson(req);
     return sendJson(res, 201, await exclusive(async () => scanCall(() => createBinder(db, body.name))));
@@ -1257,7 +1271,8 @@ async function handleScanApi(req, res, url) {
       // {name?} renames (merge); {type?, cover_scryfall_id?} set the type / cover (null = auto), {deck_id?} links the
       // deck that owns this deck box (decks.box_binder; null = none), {locked?} true/false/null (auto), after a rename.
       const body = await readJson(req);
-      const props = body.type !== undefined || body.cover_scryfall_id !== undefined || body.deck_id !== undefined || body.locked !== undefined;
+      const props = body.type !== undefined || body.cover_scryfall_id !== undefined || body.deck_id !== undefined || body.locked !== undefined
+        || body.favorite !== undefined;
       return sendJson(res, 200, await exclusive(async () => scanCall(() => {
         if (body.name === undefined && props) return setBinderProps(db, name, body);
         const r = renameBinder(db, name, body.name, { confirm_master: body.confirm_master === true });

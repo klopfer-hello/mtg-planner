@@ -35,7 +35,7 @@ describe("migration v16: binders.locked", () => {
   const cols = (db) => db.prepare("PRAGMA table_info(binders)").all().map((c) => c.name);
 
   test("fresh database has the column; nothing is locked by hand", () => {
-    assert.equal(SCHEMA_VERSION, 16);
+    assert.equal(SCHEMA_VERSION, 17);
     assert.ok(cols(ctx.db).includes("locked"));
     createBinder(ctx.db, "Fresh");
     assert.equal(ctx.db.prepare("SELECT locked FROM binders WHERE name = 'Fresh'").get().locked, null);
@@ -63,6 +63,27 @@ describe("migration v16: binders.locked", () => {
       db.close();
     }
     ctx.db = openDb(ctx.file);
+  });
+});
+
+describe("migration v17 + favourites", () => {
+  test("columns exist and start at 0; favourite set/unset, Unsorted refused, rename and merge keep it", () => {
+    for (const t of ["decks", "binders"]) {
+      assert.ok(ctx.db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === "favorite"), t);
+    }
+    seed([[ID.sol, 1, "Trade"], [ID.lightning, 1, "Bulk"], [ID.serra, 1, "Other"]]);
+    const fav = () => Object.fromEntries(listBinders(ctx.db).binders.map((b) => [b.name, b.favorite]));
+    assert.deepEqual(fav(), { Bulk: false, Other: false, Trade: false });
+    setBinderProps(ctx.db, "Trade", { favorite: true });
+    assert.equal(fav().Trade, true);
+    assert.throws(() => setBinderProps(ctx.db, "", { favorite: true }), /Unsorted/);
+    assert.throws(() => setBinderProps(ctx.db, "Trade", { favorite: 1 }), /true or false/);
+    renameBinder(ctx.db, "Trade", "Trades", { confirm_master: true });
+    assert.equal(fav().Trades, true, "follows a rename");
+    renameBinder(ctx.db, "Trades", "Bulk", { confirm_master: true });
+    assert.equal(fav().Bulk, true, "a merge keeps either favourite");
+    setBinderProps(ctx.db, "Bulk", { favorite: false });
+    assert.equal(fav().Bulk, false);
   });
 });
 

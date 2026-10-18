@@ -241,6 +241,15 @@ label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; 
 }
 .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip.sym-chip { padding: 0 10px; }
+.chip.sym-chip .sym { width: 20px; height: 20px; margin: 0; vertical-align: middle; }
+.chip.sym-chip[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent-ink) inset; }
+.fav-btn span { font-size: 22px; line-height: 1; }
+.fav-btn.on { color: var(--warn); }
+.fav-star { color: var(--warn); }
+.deck-colours { display: inline-flex; gap: 1px; align-items: center; }
+.deck-colours .sym { width: 15px; height: 15px; margin: 0; }
+.filter-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .badge {
   display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px;
   font-size: .74rem; font-weight: 700; line-height: 1.6; background: var(--surface-2); color: var(--muted);
@@ -1051,7 +1060,9 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 .badge.lock { padding: 0 4px; }
 .bulk-ask .grow, .box-ask .grow { flex: 1 1 220px; }
 .binder-title .switch { position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; border-radius: 8px; }
-.binder-title .switch .t { font-size: 1.25rem; font-weight: 750; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* Up to two lines: with share, star, lock and ⋯ a one-line title kept only "Bulk Foil: …" at 390 px. */
+.binder-title .switch .t { font-size: 1.25rem; font-weight: 750; line-height: 1.3; overflow: hidden; min-width: 0; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .binder-title .switch .caret { color: var(--muted); flex: none; }
 .binder-title .switch select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
 .binder-title .switch:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
@@ -2022,18 +2033,24 @@ function CardListRow({ row, group, onOpen, selecting = false, selected = false, 
 // #collection = binder overview, #collection/all = every card,
 // #collection/binder/<name> = one binder, #collection/unsorted = copies without a binder.
 function parseCollectionRoute(hash) {
-  const parts = String(hash || "").replace(/^#/, "").split("/");
+  // A binder search from the overview travels as ?q=… (binder names are encoded, so "?" is never part of one).
+  const raw = String(hash || "").replace(/^#/, "");
+  const qi = raw.indexOf("?");
+  let q = null;
+  if (qi >= 0) { try { q = new URLSearchParams(raw.slice(qi + 1)).get("q") || null; } catch { /* ignore */ } }
+  const parts = (qi < 0 ? raw : raw.slice(0, qi)).split("/");
   if (parts[0] !== "collection") return null;
-  if (parts[1] === "all") return { view: "all" };
-  if (parts[1] === "unsorted") return { view: "binder", binder: "" };
+  const withQ = (r) => (q ? { ...r, q } : r);
+  if (parts[1] === "all") return withQ({ view: "all" });
+  if (parts[1] === "unsorted") return withQ({ view: "binder", binder: "" });
   if (parts[1] === "binder" && parts.length > 2) {
-    try { return { view: "binder", binder: decodeURIComponent(parts.slice(2).join("/")) }; } catch { /* bad escape */ }
+    try { return withQ({ view: "binder", binder: decodeURIComponent(parts.slice(2).join("/")) }); } catch { /* bad escape */ }
   }
   return { view: "overview" };
 }
 const collectionHash = (r) => (r.view === "all" ? "#collection/all"
   : r.view === "binder" ? (r.binder ? `#collection/binder/${encodeURIComponent(r.binder)}` : "#collection/unsorted")
-  : "#collection");
+  : "#collection") + (r.q && r.view !== "overview" ? `?q=${encodeURIComponent(r.q)}` : "");
 /** Change the hash (push, or replace keeping the history state) and tell the listeners. */
 function goHash(h, { replace = false } = {}) {
   if (location.hash === h) return;
@@ -2058,7 +2075,8 @@ function CollectionTab({ dataVersion, homeKey = 0, onOpenCard, onOpenDeck, onGoI
     return last && (last.view === "all" || (last.view === "binder" && typeof last.binder === "string")) ? last : { view: "overview" };
   });
   const binderList = useBinderList(dataVersion);
-  useEffect(() => { store.set("mtg.collection.route", route); }, [route]);
+  // The search (?q=) is not remembered: a restored view opens without it.
+  useEffect(() => { store.set("mtg.collection.route", route.view === "binder" ? { view: "binder", binder: route.binder } : { view: route.view }); }, [route]);
   // A restored view puts its hash in the URL (only while the Collection tab is shown).
   useEffect(() => {
     if (location.hash.slice(1).split("/")[0] === "collection" && location.hash !== collectionHash(route)) goHash(collectionHash(route), { replace: true });
@@ -2094,7 +2112,7 @@ function CollectionTab({ dataVersion, homeKey = 0, onOpenCard, onOpenDeck, onGoI
   }
   const key = collectionHash(route);
   return (
-    <CollectionBrowser key={key} binder={route.view === "binder" ? entry.name : null} entry={entry} binderList={binderList}
+    <CollectionBrowser key={key} binder={route.view === "binder" ? entry.name : null} entry={entry} binderList={binderList} initialQ={route.q ?? null}
       dataVersion={dataVersion} onBack={back} onOpen={open} onOpenCard={onOpenCard} onOpenDeck={onOpenDeck}
       onGoImport={onGoImport} onGoScan={onGoScan} onChanged={onChanged} />
   );
@@ -2114,9 +2132,10 @@ function CardRows({ rows, view, group, onOpenCard, selecting, isSelected, onTogg
  * whole collection (binder = null). Optional sections (by set / colour / rarity / type):
  * only the headers load first, each section fetches its cards when opened.
  */
-function CollectionBrowser({ binder, entry, binderList, dataVersion, onBack, onOpen, onOpenCard, onOpenDeck, onGoImport, onGoScan, onChanged }) {
+function CollectionBrowser({ binder, entry, binderList, initialQ = null, dataVersion, onBack, onOpen, onOpenCard, onOpenDeck, onGoImport, onGoScan, onChanged }) {
   const all = binder == null;
-  const [q, setQ] = useState(() => (all ? store.get("mtg.q", "") : ""));
+  // initialQ: the search the Binders overview found this binder with.
+  const [q, setQ] = useState(() => initialQ ?? (all ? store.get("mtg.q", "") : ""));
   const dq = useDebounced(q.trim(), 300);
   const [group, setGroup] = useState(() => store.get("mtg.group", "card"));
   const [sort, setSort] = useState(() => store.get("mtg.sort", "name"));
@@ -2641,8 +2660,56 @@ function DeckCover({ cover, banner = true }) {
   );
 }
 
+/** Colour chips of the deck and binder filters: [symbol, label, collection query term]. */
+const COLOUR_CHIPS = [["W", "White", "c:w"], ["U", "Blue", "c:u"], ["B", "Black", "c:b"], ["R", "Red", "c:r"], ["G", "Green", "c:g"], ["C", "Colourless", "c:c"]];
+
+/** Star toggle (favourite) on a deck or binder header. */
+function FavButton({ on, busy = false, label, onToggle }) {
+  return (
+    <button type="button" className={`btn ghost icon fav-btn${on ? " on" : ""}`} aria-pressed={on} disabled={busy}
+      aria-label={on ? `Remove ${label} from favourites` : `Add ${label} to favourites`}
+      title={on ? "Favourite. Tap to remove" : "Add to favourites"} onClick={onToggle}><span aria-hidden="true">{on ? "★" : "☆"}</span></button>
+  );
+}
+
+/** A deck's colour identity as mana symbols ('' = colourless). */
+function DeckColours({ colors }) {
+  const cs = String(colors ?? "").split("").filter((c) => "WUBRG".includes(c));
+  return (
+    <span className="deck-colours" aria-label={`Colours: ${cs.length ? cs.join("") : "colourless"}`}>
+      {(cs.length ? cs : ["C"]).map((c) => <img key={c} className="sym" src={symbolUrl(c)} alt="" loading="lazy" decoding="async" />)}
+    </span>
+  );
+}
+
+// Deck list filters, remembered per device: {fav, status idea|built|null, formats[], colors[]}.
+const DECK_FILTER_KEY = "mtg.decks.filter";
+const NO_DECK_FILTER = { fav: false, status: null, formats: [], colors: [] };
+function loadDeckFilter() {
+  const f = store.get(DECK_FILTER_KEY, null) || {};
+  return {
+    fav: f.fav === true,
+    status: f.status === "idea" || f.status === "built" ? f.status : null,
+    formats: asList(f.formats).filter((x) => typeof x === "string"),
+    colors: asList(f.colors).filter((x) => typeof x === "string" && "WUBRGC".includes(x) && x.length === 1),
+  };
+}
+const deckFormatKey = (d) => String(d.format || "").trim().toLowerCase();
+const formatLabel = (f) => f.replace(/\b\w/g, (m) => m.toUpperCase());
+/** Colours: the deck's identity holds every picked colour (like c:wu in a search); C = colourless only. */
+function deckMatches(d, f) {
+  if (f.fav && !d.favorite) return false;
+  if (f.status && d.status !== f.status) return false;
+  if (f.formats.length && !f.formats.includes(deckFormatKey(d))) return false;
+  const id = String(d.colors ?? "");
+  for (const c of f.colors) if (c === "C" ? id !== "" : !id.includes(c)) return false;
+  return true;
+}
+
 function DeckList({ dataVersion, onOpen, refreshKey, notice = null }) {
   const [hideNotice, setHideNotice] = useState(false);
+  const [filter, setFilter] = useState(loadDeckFilter);
+  useEffect(() => { store.set(DECK_FILTER_KEY, filter); }, [filter]);
   useEffect(() => setHideNotice(false), [notice]);
   const [decks, setDecks] = useState(null);
   const [error, setError] = useState(null);
@@ -2652,6 +2719,19 @@ function DeckList({ dataVersion, onOpen, refreshKey, notice = null }) {
     api("/api/decks").then(setDecks).catch((e) => setError(`Could not load decks: ${e.message}`));
   }, []);
   useEffect(load, [load, dataVersion, refreshKey]);
+  const all = decks || [];
+  const formats = [...new Set(all.map(deckFormatKey).filter(Boolean))].sort();
+  // A remembered format that no deck has any more is dropped from the filter.
+  const f = { ...filter, formats: filter.formats.filter((x) => formats.includes(x)) };
+  const active = f.fav || f.status || f.formats.length > 0 || f.colors.length > 0;
+  const shown = all.filter((d) => deckMatches(d, f));
+  const toggleIn = (key, v) => setFilter((cur) => ({ ...cur, [key]: cur[key].includes(v) ? cur[key].filter((x) => x !== v) : [...cur[key], v] }));
+  // Colourless excludes the colours and the other way round.
+  const toggleColour = (c) => setFilter((cur) => {
+    if (cur.colors.includes(c)) return { ...cur, colors: cur.colors.filter((x) => x !== c) };
+    return { ...cur, colors: c === "C" ? ["C"] : [...cur.colors.filter((x) => x !== "C"), c] };
+  });
+  const favCount = all.filter((d) => d.favorite).length;
 
   return (
     <div className="stack-lg">
@@ -2685,13 +2765,44 @@ function DeckList({ dataVersion, onOpen, refreshKey, notice = null }) {
         </div>
       )}
       {decks && decks.length > 0 && (
+        <div className="stack">
+          <div className="chips" role="group" aria-label="Filter decks">
+            <button type="button" className="chip" aria-pressed={f.fav} onClick={() => setFilter((cur) => ({ ...cur, fav: !cur.fav }))}>
+              ★ Favourites{favCount ? <span className="cnt"> {favCount}</span> : null}</button>
+            <button type="button" className="chip" aria-pressed={f.status === "built"} onClick={() => setFilter((cur) => ({ ...cur, status: cur.status === "built" ? null : "built" }))}>Built</button>
+            <button type="button" className="chip" aria-pressed={f.status === "idea"} onClick={() => setFilter((cur) => ({ ...cur, status: cur.status === "idea" ? null : "idea" }))}>Ideas</button>
+            {formats.map((x) => (
+              <button key={x} type="button" className="chip" aria-pressed={f.formats.includes(x)} onClick={() => toggleIn("formats", x)}>{formatLabel(x)}</button>
+            ))}
+          </div>
+          <div className="chips" role="group" aria-label="Filter decks by colour">
+            {COLOUR_CHIPS.map(([c, label]) => (
+              <button key={c} type="button" className="chip sym-chip" aria-pressed={f.colors.includes(c)} aria-label={label} title={label}
+                onClick={() => toggleColour(c)}><img className="sym" src={symbolUrl(c)} alt="" /></button>
+            ))}
+          </div>
+          {active && (
+            <div className="filter-summary small" aria-live="polite">
+              <span className="muted">{shown.length} of {plural(all.length, "deck")}</span>
+              <button type="button" className="btn ghost sm" onClick={() => setFilter(NO_DECK_FILTER)}>Clear filters</button>
+            </div>
+          )}
+          {shown.length === 0 && (
+            <p className="small muted" style={{ margin: 0 }}>{f.fav && !favCount
+              ? <>No favourite decks yet. Open a deck and tap <b>☆</b>.</>
+              : "No deck matches these filters."}</p>
+          )}
+        </div>
+      )}
+      {decks && shown.length > 0 && (
         <div className="deck-list">
-          {decks.map((d) => (
+          {shown.map((d) => (
             <button key={d.id} type="button" className="deck-item" onClick={() => onOpen(d.id)}>
               <DeckCover cover={d.cover} />
               <span className="body">
-              <span className="t">{d.name}</span>
+              <span className="t">{d.favorite && <span className="fav-star" aria-label="Favourite">★ </span>}{d.name}</span>
               <span className="row small">
+                <DeckColours colors={d.colors} />
                 <StatusBadge status={d.status} />
                 <PowerListBadge d={d} />
                 {d.conflict_count > 0 && <span className="badge bad" title="Cards this deck shares with another built deck, without enough copies">⚠ {plural(d.conflict_count, "conflict")}</span>}
@@ -4200,6 +4311,20 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
       setSaving(false);
     }
   };
+  const [favBusy, setFavBusy] = useState(false);
+  const toggleFavorite = async () => {
+    if (!deck || favBusy) return;
+    const next = !deck.favorite;
+    setFavBusy(true);
+    setDeck((d) => (d ? { ...d, favorite: next } : d));
+    try {
+      await api(`/api/decks/${deck.id}`, { method: "PATCH", json: { favorite: next } });
+      onChanged?.();
+    } catch (e) {
+      setDeck((d) => (d ? { ...d, favorite: !next } : d));
+      setActionError(e.message);
+    } finally { setFavBusy(false); }
+  };
   const setStatus = async (status) => {
     if (!deck || deck.status === status || statusBusy) return;
     if (status === "built") {
@@ -4305,6 +4430,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
                   <DeckCover cover={deck.cover} banner={false} />
                   <h2>{deck.name}</h2>
                   <ShareButton title={deck.name} hash={deckHash(deck.id)} />
+                  <FavButton on={Boolean(deck.favorite)} busy={favBusy} label={deck.name} onToggle={toggleFavorite} />
                 </div>
                 <div className="row small">
                   {deck.format && <span className="badge">{deck.format}</span>}
@@ -7835,14 +7961,15 @@ function BinderCover({ cover, icon = <Icon.collection /> }) {
   );
 }
 
-function BinderEntry({ name, label = name, cover, copies, value, badge = null, locked = false, dashed = false, icon, onClick }) {
+function BinderEntry({ name, label = name, cover, copies, value, badge = null, locked = false, favorite = false, dashed = false, icon, sub = null, onClick }) {
+  const line = sub ?? copiesValue(copies, value);
   return (
     <button type="button" className={`binder-entry${dashed ? " dashed" : ""}`} onClick={onClick}
-      aria-label={`${label}${locked ? ", locked" : ""}, ${copiesValue(copies, value)}`}>
+      aria-label={`${label}${favorite ? ", favourite" : ""}${locked ? ", locked" : ""}, ${line}`}>
       <BinderCover cover={cover} icon={icon} />
       <span className="info" aria-hidden="true">
-        <span className="nm"><span className="t">{label}</span>{badge}</span>
-        <span className="sub">{copiesValue(copies, value)}</span>
+        <span className="nm"><span className="t">{favorite && <span className="fav-star">★ </span>}{label}</span>{badge}</span>
+        <span className="sub">{line}</span>
       </span>
       <span className="go" aria-hidden="true"><Icon.back /></span>
     </button>
@@ -7857,13 +7984,43 @@ function BinderOverview({ list, onOpen, onGoImport, onGoScan, onChanged }) {
   const { data, error, reload } = list;
   const [sheet, setSheet] = useState(null); // "new" | "manage"
   const [showToast, toastEl] = useEditToast(() => { reload(); onChanged?.(); });
-  const binders = data?.binders || [];
-  const unsorted = data?.unsorted;
-  const totalCopies = binders.reduce((a, b) => a + (b.copies || 0), 0) + (unsorted?.copies || 0);
-  const totalValue = binders.reduce((a, b) => a + (b.value_eur || 0), 0) + (unsorted?.value_eur || 0);
-  const best = [...binders, unsorted].filter(Boolean).map((b) => b.top).filter(Boolean).sort((a, b) => b.price_eur - a.price_eur)[0];
+  // Search: which binders hold matching cards (GET /api/binders/search); the cards themselves show
+  // only after opening a binder, which gets the same search (#collection/binder/<n>?q=).
+  const [q, setQ] = useState(() => String(store.get("mtg.binders.q", "") || ""));
+  const [favOnly, setFavOnly] = useState(() => store.get("mtg.binders.fav", false) === true);
+  useEffect(() => { store.set("mtg.binders.q", q); }, [q]);
+  useEffect(() => { store.set("mtg.binders.fav", favOnly); }, [favOnly]);
+  const dq = useDebounced(q.trim(), 300);
+  const [found, setFound] = useState(null); // {q, cards, binders} | {q, error}
+  const searchId = useRef(0);
+  useEffect(() => {
+    if (!dq) { setFound(null); return; }
+    const id = ++searchId.current;
+    api(`/api/binders/search?q=${encodeURIComponent(dq)}`)
+      .then((r) => { if (id === searchId.current) setFound(r); })
+      .catch((e) => { if (id === searchId.current) setFound({ q: dq, error: e.status === 400 ? `Search error: ${e.message}` : e.message }); });
+  }, [dq, data]);
+  const tokens = tokenize(q);
+  const hasToken = (term) => tokens.some((t) => t.toLowerCase() === term.toLowerCase());
+  const toggleTerm = (term) => setQ(hasToken(term) ? tokens.filter((t) => t.toLowerCase() !== term.toLowerCase()).join(" ") : [q.trim(), term].filter(Boolean).join(" "));
+  // A cleared field stops filtering at once (the debounced value lags 300 ms).
+  const searching = Boolean(dq) && Boolean(q.trim());
+  const ready = !searching || (found && found.q === dq);
+  const hits = new Map(ready && searching && !found?.error ? asList(found?.binders).map((b) => [b.name.toLowerCase(), b]) : []);
+  const allBinders = data?.binders || [];
+  const binders = allBinders.filter((b) => (!favOnly || b.favorite) && (!searching || hits.has(b.name.toLowerCase())));
+  const unsortedAll = data?.unsorted;
+  const unsorted = favOnly ? null : searching ? (hits.has("") ? unsortedAll : null) : unsortedAll;
+  const totalCopies = allBinders.reduce((a, b) => a + (b.copies || 0), 0) + (unsortedAll?.copies || 0);
+  const totalValue = allBinders.reduce((a, b) => a + (b.value_eur || 0), 0) + (unsortedAll?.value_eur || 0);
+  const best = [...allBinders, unsortedAll].filter(Boolean).map((b) => b.top).filter(Boolean).sort((a, b) => b.price_eur - a.price_eur)[0];
   const groups = BINDER_TYPES.map(([t, , heading]) => [t, heading, binders.filter((b) => (b.type || "binder") === t)]).filter(([, , l]) => l.length);
   const changed = () => { reload(); onChanged?.(); };
+  const hitLine = (name) => { const h = hits.get(String(name).toLowerCase()); return h ? `${plural(h.cards, "card")} match · ${plural(h.copies, "copy", "copies")}` : null; };
+  const withQ = (r) => (searching ? { ...r, q: dq } : r);
+  const favCount = allBinders.filter((b) => b.favorite).length;
+  const filtered = searching || favOnly;
+  const hasCards = data && (totalCopies > 0 || allBinders.length > 0);
   return (
     <div className="stack-lg">
       <div className="row between">
@@ -7875,7 +8032,44 @@ function BinderOverview({ list, onOpen, onGoImport, onGoScan, onChanged }) {
       </div>
       {error && <ErrorNotice error={`Could not load binders: ${error}`} onRetry={reload} />}
       {!data && !error && <Spinner />}
-      {data && totalCopies === 0 && !binders.length && (
+      {hasCards && (
+        <div className="stack">
+          <form className="search" role="search" onSubmit={(e) => { e.preventDefault(); e.currentTarget.querySelector("input")?.blur(); }}>
+            <Icon.search />
+            <label htmlFor="binders-q" className="sr-only">Find binders by the cards they hold</label>
+            <input id="binders-q" className="input" type="search" inputMode="search" enterKeyHint="search"
+              autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck="false"
+              placeholder="Find binders with… e.g. sol ring, t:dragon c:r" value={q} onChange={(e) => setQ(e.target.value)} />
+            {q && <button type="button" className="btn ghost icon clear" aria-label="Clear search" onClick={() => setQ("")}><Icon.close /></button>}
+          </form>
+          <div className="chips" role="group" aria-label="Filter binders">
+            <button type="button" className="chip" aria-pressed={favOnly} onClick={() => setFavOnly(!favOnly)}>★ Favourites{favCount ? <span className="cnt"> {favCount}</span> : null}</button>
+            {COLOUR_CHIPS.map(([c, label, term]) => (
+              <button key={c} type="button" className="chip sym-chip" aria-pressed={hasToken(term)} aria-label={`${label} cards`} title={`${label} cards (${term})`}
+                onClick={() => toggleTerm(term)}><img className="sym" src={symbolUrl(c)} alt="" /></button>
+            ))}
+          </div>
+          <QueryHelp />
+          {filtered && (
+            <div className="filter-summary small" aria-live="polite">
+              <span className="muted">
+                {searching && !ready && "Searching…"}
+                {searching && ready && found?.error && <span style={{ color: "var(--bad)" }}>{found.error}</span>}
+                {ready && !found?.error && (searching
+                  ? `${plural(found?.cards ?? 0, "card")} in ${plural(binders.length + (unsorted ? 1 : 0), "binder")}`
+                  : `${plural(binders.length, "favourite binder")}`)}
+              </span>
+              <button type="button" className="btn ghost sm" onClick={() => { setQ(""); setFavOnly(false); }}>Clear filters</button>
+            </div>
+          )}
+          {ready && filtered && !found?.error && binders.length === 0 && !unsorted && (
+            <p className="small muted" style={{ margin: 0 }}>{favOnly && !favCount
+              ? <>No favourite binders yet. Open a binder and tap <b>☆</b>.</>
+              : searching ? <>No {favOnly ? "favourite " : ""}binder holds cards matching <code>{dq}</code>.</> : "No binders match."}</p>
+          )}
+        </div>
+      )}
+      {data && totalCopies === 0 && !allBinders.length && (
         <div className="empty card">
           <h3>Your collection is empty</h3>
           <p style={{ margin: 0 }}>Scan your cards with the camera, or export your collection from ManaBox as CSV and import it here.</p>
@@ -7885,13 +8079,15 @@ function BinderOverview({ list, onOpen, onGoImport, onGoScan, onChanged }) {
           </div>
         </div>
       )}
-      {data && (totalCopies > 0 || binders.length > 0) && (
+      {hasCards && (
         <div className="binder-grid top">
           <BinderEntry name="All cards" cover={best ? { ...best, image: best.image_normal, image_small: best.image_small } : null}
-            icon={<Icon.search />} copies={totalCopies} value={totalValue} onClick={() => onOpen({ view: "all" })} />
+            icon={<Icon.search />} copies={totalCopies} value={totalValue}
+            sub={searching && ready && !found?.error ? `${plural(found?.cards ?? 0, "card")} match` : null}
+            onClick={() => onOpen(withQ({ view: "all" }))} />
           {unsorted?.copies > 0 && (
             <BinderEntry name={UNSORTED} cover={unsorted.cover} copies={unsorted.copies} value={unsorted.value_eur} dashed
-              onClick={() => onOpen({ view: "binder", binder: "" })} />
+              sub={searching ? hitLine("") : null} onClick={() => onOpen(withQ({ view: "binder", binder: "" }))} />
           )}
         </div>
       )}
@@ -7901,16 +8097,17 @@ function BinderOverview({ list, onOpen, onGoImport, onGoScan, onChanged }) {
           <div className="binder-grid">
             {items.map((b) => (
               <BinderEntry key={b.name} name={b.name} cover={b.cover} copies={b.copies} value={b.value_eur} locked={Boolean(b.locked)}
+                favorite={Boolean(b.favorite)} sub={searching ? hitLine(b.name) : null}
                 badge={<>
                   {b.locked && <span className="badge lock" role="img" aria-label="Locked" title="Locked: these cards are kept for their own deck">🔒</span>}
                   {b.type_suggest === "bulk" && <span className="badge warn">bulk?</span>}
                 </>}
-                onClick={() => onOpen({ view: "binder", binder: b.name })} />
+                onClick={() => onOpen(withQ({ view: "binder", binder: b.name }))} />
             ))}
           </div>
         </section>
       ))}
-      {data && binders.length === 0 && totalCopies > 0 && (
+      {data && allBinders.length === 0 && totalCopies > 0 && (
         <p className="small muted" style={{ margin: 0 }}>No binders yet. Create one, open <b>All cards</b>, tap <b>Select</b> and move cards into it.</p>
       )}
       {sheet === "new" && (
@@ -7980,6 +8177,9 @@ function BinderHeader({ binder, entry, list, onBack, onOpen, onOpenDeck, onMenu,
           <span className="small muted">{all ? "Every copy you own" : binder ? binderTypeLabel(entry?.type) : "Copies without a binder"}</span>
         </div>
         <ShareButton title={all ? "All cards" : binder || UNSORTED} hash={collectionHash(all ? { view: "all" } : { view: "binder", binder })} />
+        {binder && entry && (
+          <FavButton on={Boolean(entry.favorite)} busy={busy} label={binder} onToggle={() => patchBinder({ favorite: !entry.favorite })} />
+        )}
         {binder && entry && (
           <button type="button" className="btn ghost icon lock-btn" aria-pressed={locked} disabled={busy}
             aria-label={locked ? `${binder} is locked. Unlock` : `Lock ${binder}`}

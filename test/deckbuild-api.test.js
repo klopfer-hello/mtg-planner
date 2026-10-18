@@ -102,6 +102,32 @@ describe("build checklist API", () => {
   });
 });
 
+describe("favourites + binder search API", () => {
+  test("PATCH favorite: no history version, no updated_at change; list rows carry favorite + colors", async () => {
+    const before = (await call("GET", `/api/decks/${deckId}/history`)).body.versions.length;
+    const row0 = (await call("GET", "/api/decks")).body.find((d) => d.id === deckId);
+    assert.deepEqual([row0.favorite, typeof row0.colors], [false, "string"]);
+    let r = await call("PATCH", `/api/decks/${deckId}`, { favorite: true });
+    assert.deepEqual([r.status, r.body.favorite], [200, true]);
+    const row = (await call("GET", "/api/decks")).body.find((d) => d.id === deckId);
+    assert.deepEqual([row.favorite, row.updated_at], [true, row0.updated_at]);
+    assert.equal((await call("GET", `/api/decks/${deckId}/history`)).body.versions.length, before);
+    assert.equal((await call("PATCH", `/api/decks/${deckId}`, { favorite: "yes" })).status, 400);
+    r = await call("PATCH", `/api/decks/${deckId}`, { favorite: false });
+    assert.equal(r.body.favorite, false);
+  });
+
+  test("binder favourite via PATCH; GET /api/binders/search", async () => {
+    let r = await call("PATCH", `/api/binders/${encodeURIComponent("Box A")}`, { favorite: true });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.binders.find((b) => b.name === "Box A").favorite, true);
+    // Lightning Bolt stays in Unsorted (the build tests above moved Sol Ring into the deck box).
+    r = await call("GET", `/api/binders/search?q=${encodeURIComponent("lightning")}`);
+    assert.deepEqual([r.status, r.body.cards, r.body.binders], [200, 1, [{ name: "", cards: 1, copies: 2 }]]);
+    assert.equal((await call("GET", "/api/binders/search?q=zzz:1")).status, 400);
+  });
+});
+
 describe("deck history API", () => {
   test("PATCH and card edits add versions; detail shows the diff; restore needs confirm", async () => {
     assert.equal((await call("PATCH", `/api/decks/${deckId}`, { name: "Burn!", bracket_declared: 2 })).status, 200);

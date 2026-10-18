@@ -84,6 +84,16 @@ list, on a wide screen a grid of tiles. Binders are grouped by **type**:
 | *Binder* | automatically for everything else |
 | *Bulk*, *Trade*, *Other* | by you |
 
+**Find binders.** The search box above the binders finds the binders that hold
+matching cards (same [search syntax](#search-syntax) as everywhere). Only those
+binders stay on the page, each with how many cards match. Tap one: it opens
+with the search already filled in, so you see the matching cards right away.
+
+- The colour buttons add `c:w`, `c:u`, … to the search (colourless = `c:c`).
+- **★ Favourites** shows only your favourite binders. Mark one with the **☆**
+  in the binder's header (Unsorted can't be a favourite).
+- **Clear filters** resets the search and the favourites filter.
+
 **Locked binders** (🔒). A locked binder keeps its cards for its own deck:
 other decks, the build list and the planner don't count them as free
 ("🔒 in … · locked"). A locked binder without a deck is kept from every deck.
@@ -216,9 +226,10 @@ same-origin request.
 
 | Route | |
 | --- | --- |
-| `GET /api/binders` | `{binders: [{name, cards, unique_cards, copies, sources, by_source, created_at, empty, type, type_auto, type_set, type_suggest, value_eur, top, cover, decks, locked, locked_set, locked_auto, reserved, box_deck, deck_suggest}], unsorted, collection_master}`; `type` is `binder`, `deck_box`, `bulk`, `trade` or `other` (`type_set` = picked by the user, else `type_auto`); `type_suggest: "bulk"` for a big untyped binder; `cover {scryfall_id, name, image, image_small, chosen}`; `top` = the most valuable card; `decks` = decks boxed in or synced from it; `locked` = effective lock (`locked_set` = set by the user, else `locked_auto` = it is a deck box; `reserved` = the same as `locked`); `box_deck {id, name, status, via link\|manabox\|name}` = the deck that owns a locked binder or deck box (null = nobody); `deck_suggest {id, name, status, similarity}` = a deck whose name closely matches an unowned box |
+| `GET /api/binders` | `{binders: [{name, cards, unique_cards, copies, sources, by_source, created_at, empty, type, type_auto, type_set, type_suggest, value_eur, top, cover, decks, locked, locked_set, locked_auto, reserved, box_deck, deck_suggest, favorite}], unsorted, collection_master}`; `type` is `binder`, `deck_box`, `bulk`, `trade` or `other` (`type_set` = picked by the user, else `type_auto`); `type_suggest: "bulk"` for a big untyped binder; `cover {scryfall_id, name, image, image_small, chosen}`; `top` = the most valuable card; `decks` = decks boxed in or synced from it; `locked` = effective lock (`locked_set` = set by the user, else `locked_auto` = it is a deck box; `reserved` = the same as `locked`); `box_deck {id, name, status, via link\|manabox\|name}` = the deck that owns a locked binder or deck box (null = nobody); `deck_suggest {id, name, status, similarity}` = a deck whose name closely matches an unowned box |
 | `POST /api/binders {name}` | create an empty binder: 201, 409 if it exists, 400 if empty or longer than 100 |
-| `PATCH /api/binders/:name {name?, type?, cover_scryfall_id?, deck_id?, locked?, confirm_master?}` | rename (merging into an existing binder; type, cover and lock come along); `locked` true / false, null = automatic (400 otherwise, also for Unsorted); `type` null = automatic; `cover_scryfall_id` must be a printing in the binder, null = most valuable card; `deck_id` links the deck that owns this box (sets that deck's `box_binder`, clears any other deck's link to this binder and the deck's previous box; null unlinks; 400 not an id, 404 no such deck) |
+| `GET /api/binders/search?q=` | binders holding cards that match `q` (search syntax): `{q, cards, binders: [{name, cards, copies}]}` (`''` = Unsorted; `cards` = matching cards in the whole collection); 400 for a bad query |
+| `PATCH /api/binders/:name {name?, type?, cover_scryfall_id?, deck_id?, locked?, favorite?, confirm_master?}` | rename (merging into an existing binder; type, cover, lock and favourite come along); `favorite` true / false (400 for Unsorted); `locked` true / false, null = automatic (400 otherwise, also for Unsorted); `type` null = automatic; `cover_scryfall_id` must be a printing in the binder, null = most valuable card; `deck_id` links the deck that owns this box (sets that deck's `box_binder`, clears any other deck's link to this binder and the deck's previous box; null unlinks; 400 not an id, 404 no such deck) |
 | `DELETE /api/binders/:name?cards=unsort\|delete&confirm_master=1` | delete; `unsort` (default) moves the cards to Unsorted, `delete` deletes them (logged in the edit log, undoable) |
 | `POST /api/collection/move` | `{items, to_binder, create?, confirm_master?}`; an item is `{scryfall_id, finish, language, condition, binder, source?, quantity}` (copies of one row key), `{oracle_id, from_binder?}` (every copy of a card) or `{printing_id, from_binder?}` (every copy of a printing); `to_binder: ""` is Unsorted |
 | `GET /api/collection?binder=` | the collection list filtered by exact binder (`binder=` = Unsorted); `section_by=set\|color\|rarity\|type&section=<key>` = one section |

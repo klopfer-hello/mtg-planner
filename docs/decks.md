@@ -5,6 +5,7 @@ the build list, the deck history, deck stats and the power level (bracket and
 score) work.
 
 - [Adding decks](#adding-decks)
+- [Favourites and filters](#favourites-and-filters)
 - [What a deck shows](#what-a-deck-shows)
 - [Deck stats](#deck-stats)
 - [Bracket and power score](#bracket-and-power-score)
@@ -27,6 +28,17 @@ score) work.
   [scanner.md](scanner.md#scan-list--binder-or-deck)).
 
 Decks can be exported as a text list you can import elsewhere.
+
+## Favourites and filters
+
+- Tap **☆** next to a deck's name to make it a favourite (★). It is not a deck
+  change: no new version in the history.
+- Above the deck list: **★ Favourites**, **Built**, **Ideas**, one button per
+  format your decks use, and the colours. Filters combine.
+- A colour shows decks whose colour identity includes it (two colours = both).
+  Colourless shows only colourless decks.
+- Each deck row shows its colour identity as mana symbols.
+- The filters are remembered on the device. **Clear filters** resets them.
 
 ## What a deck shows
 

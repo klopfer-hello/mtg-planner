@@ -251,7 +251,7 @@ describe("types and covers (migration v14)", () => {
     migrate(ctx.db);
     assert.equal(ctx.db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
     const cols = ctx.db.prepare("PRAGMA table_info(binders)").all().map((c) => c.name);
-    assert.deepEqual(cols, ["name", "origin", "created_at", "locked", "type", "cover_scryfall_id"]);
+    assert.deepEqual(cols, ["name", "origin", "created_at", "locked", "favorite", "type", "cover_scryfall_id"]);
     assert.deepEqual(ctx.db.prepare("SELECT name, type, cover_scryfall_id FROM binders ORDER BY name").all().map((r) => ({ ...r })),
       [{ name: "Empty", type: null, cover_scryfall_id: null }]);
     ctx.db.exec("PRAGMA user_version = 13");

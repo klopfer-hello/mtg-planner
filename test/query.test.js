@@ -2,7 +2,7 @@
 
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { collectionSections, compileQuery, QUERY_HELP, searchCollection } from "../lib/query.js";
+import { binderMatches, collectionSections, compileQuery, QUERY_HELP, searchCollection } from "../lib/query.js";
 import { cardPrice, formatPrice, stats } from "../lib/db.js";
 import { ID, seedCards, seedCollection, tempDb } from "./fixtures.js";
 
@@ -239,6 +239,17 @@ describe("searchCollection", () => {
 
   test("bad query throws", () => {
     assert.throws(() => searchCollection(ctx.db, { q: "zzz:1" }), /Unknown search key/);
+  });
+
+  test("binderMatches: binders holding matching cards, per binder counts, Unsorted as ''", () => {
+    assert.deepEqual(binderMatches(ctx.db, { q: "sol ring" }), { cards: 1, binders: [{ name: "Trade Binder", cards: 1, copies: 2 }] });
+    assert.deepEqual(binderMatches(ctx.db, { q: "lightning" }), { cards: 1, binders: [{ name: "", cards: 1, copies: 4 }] });
+    const all = binderMatches(ctx.db, {});
+    assert.equal(all.cards, 7);
+    assert.deepEqual(all.binders.map((b) => [b.name, b.cards]), [["", 6], ["Trade Binder", 1]]);
+    assert.deepEqual(binderMatches(ctx.db, { q: "qty>=4" }).binders.map((b) => b.name), [""], "HAVING counts per binder");
+    assert.deepEqual(binderMatches(ctx.db, { q: "nothing-like-this" }), { cards: 0, binders: [] });
+    assert.throws(() => binderMatches(ctx.db, { q: "zzz:1" }), /Unknown search key/);
   });
 
   test("stats() totals and EUR value", () => {
