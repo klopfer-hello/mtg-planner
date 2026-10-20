@@ -85,28 +85,28 @@ describe("binder API", () => {
     let r = await call("PATCH", `/api/binders/${enc("Scans")}`, { deck_id: deckId });
     assert.equal(r.status, 200);
     const scans = r.body.binders.find((b) => b.name === "Scans");
-    assert.deepEqual([scans.type, scans.reserved, scans.box_deck?.id], ["deck_box", true, deckId]);
+    assert.deepEqual([scans.type, scans.locked, scans.box_deck?.id], ["deck_box", true, deckId]);
     assert.equal((await call("PATCH", `/api/binders/${enc("Scans")}`, { deck_id: "x" })).status, 400);
     assert.equal((await call("PATCH", `/api/binders/${enc("Scans")}`, { deck_id: 9999 })).status, 404);
     r = await call("PATCH", `/api/binders/${enc("Scans")}`, { deck_id: null });
-    assert.deepEqual(["type", "reserved", "box_deck"].map((k) => r.body.binders.find((b) => b.name === "Scans")[k]), ["binder", false, null]);
+    assert.deepEqual(["type", "locked", "box_deck"].map((k) => r.body.binders.find((b) => b.name === "Scans")[k]), ["binder", false, null]);
     const again = openDb(path.join(dir, "app.db"));
     again.prepare("DELETE FROM decks WHERE id = ?").run(deckId);
     again.close();
   });
 
   test("PATCH /api/binders/:name {locked} locks, unlocks and goes back to auto; combines with other fields", async () => {
-    const lockOf = (body, name) => ["locked", "locked_set", "reserved"].map((k) => body.binders.find((b) => b.name === name)[k]);
+    const lockOf = (body, name) => ["locked", "locked_set"].map((k) => body.binders.find((b) => b.name === name)[k]);
     let r = await call("PATCH", `/api/binders/${enc("Scans")}`, { locked: true });
     assert.equal(r.status, 200);
-    assert.deepEqual(lockOf(r.body, "Scans"), [true, true, true]);
+    assert.deepEqual(lockOf(r.body, "Scans"), [true, true]);
     r = await call("PATCH", `/api/binders/${enc("Scans")}`, { locked: false, type: "trade" });
-    assert.deepEqual([...lockOf(r.body, "Scans"), r.body.binders.find((b) => b.name === "Scans").type], [false, true, false, "trade"]);
+    assert.deepEqual([...lockOf(r.body, "Scans"), r.body.binders.find((b) => b.name === "Scans").type], [false, true, "trade"]);
     assert.equal((await call("PATCH", `/api/binders/${enc("Scans")}`, { locked: "yes" })).status, 400);
     assert.equal((await call("PATCH", `/api/binders/${enc("Nope")}`, { locked: true })).status, 404);
     r = await call("PATCH", `/api/binders/${enc("Scans")}`, { locked: null, type: null });
-    assert.deepEqual(lockOf(r.body, "Scans"), [false, false, false]);
-    assert.deepEqual(lockOf((await call("GET", "/api/binders")).body, "Scans"), [false, false, false]);
+    assert.deepEqual(lockOf(r.body, "Scans"), [false, false]);
+    assert.deepEqual(lockOf((await call("GET", "/api/binders")).body, "Scans"), [false, false]);
   });
 
   test("GET /api/collection/sections + section filter on /api/collection", async () => {
@@ -205,16 +205,12 @@ describe("deck allocation API", () => {
     assert.deepEqual(list.map((d) => [d.name, d.status, d.conflict_count]).sort(), [["Built1", "built", 0], ["Idea1", "idea", 0]]);
     let d = (await call("GET", `/api/decks/${idea}`)).body;
     const sol = d.cards.find((c) => c.name === "Sol Ring");
-    assert.deepEqual([sol.owned, sol.available_for_this, sol.missing, sol.to_buy, sol.in_use, sol.conflict], [1, 0, 0, 0, 1, false]);
-    assert.deepEqual([d.missing_count, d.to_buy_count, d.in_use_count, d.in_use_eur], [0, 0, 1, 1.5]);
+    assert.deepEqual([sol.owned, sol.available_for_this, sol.to_buy, sol.in_use, sol.conflict], [1, 0, 0, 1, false]);
+    assert.deepEqual([d.to_buy_count, d.in_use_count, d.in_use_eur, d.missing_count], [0, 1, 1.5, undefined]);
     assert.deepEqual(d.shopping.in_use.map((i) => [i.name, i.quantity, i.decks, i.conflict]), [["Sol Ring", 1, [{ id: built, name: "Built1" }], false]]);
     assert.deepEqual(sol.used_elsewhere.map((u) => [u.deck_id, u.name, u.status, u.quantity]), [[built, "Built1", "built", 1]]);
 
     assert.equal((await call("PATCH", `/api/decks/${idea}`, { status: "bogus" })).status, 400);
-    r = await call("GET", `/api/decks/${idea}/status-preview?status=built`);
-    assert.deepEqual([r.status, r.body.from, r.body.to, r.body.in_use_count, r.body.in_use.map((i) => i.name)], [200, "idea", "built", 1, ["Sol Ring"]]);
-    assert.equal((await call("GET", `/api/decks/${idea}/status-preview?status=done`)).status, 400);
-    assert.equal((await call("GET", "/api/decks/999/status-preview?status=built")).status, 404);
     r = await call("PATCH", `/api/decks/${idea}`, { status: "built" });
     assert.equal(r.status, 200);
     assert.equal(r.body.status, "built");
@@ -222,8 +218,6 @@ describe("deck allocation API", () => {
       ["idea", "built", 1, 1]);
     assert.equal(r.body.status_change.in_use[0].decks[0].name, "Built1");
     assert.equal((await call("PATCH", `/api/decks/${idea}`, { status: "built" })).body.status_change, undefined, "no change, no status_change");
-    r = await call("GET", `/api/decks/${idea}/status-preview?status=built`);
-    assert.equal(r.body.in_use_count, 0, "already built");
     d = (await call("GET", `/api/decks/${idea}`)).body;
     assert.equal(d.conflict_count, 1);
     assert.deepEqual(d.conflicts.map((c) => [c.name, c.owned, c.demand, c.decks.length]), [["Sol Ring", 1, 2, 2]]);
@@ -235,8 +229,8 @@ describe("deck allocation API", () => {
     r = await call("GET", "/api/shopping-list");
     assert.deepEqual(r.body.built.items.map((i) => [i.name, i.short, i.decks.length]), [["Sol Ring", 1, 2]]);
     assert.equal(r.body.built.total_eur, 1.5);
-    assert.deepEqual(r.body.per_deck.map((x) => [x.name, x.status, x.missing_count, x.to_buy_count, x.in_use_count]),
-      [["Built1", "built", 0, 0, 1], ["Idea1", "built", 0, 0, 1]]);
+    assert.deepEqual(r.body.per_deck.map((x) => [x.name, x.status, x.to_buy_count, x.in_use_count]),
+      [["Built1", "built", 0, 1], ["Idea1", "built", 0, 1]]);
 
     r = await call("GET", `/api/cards/${ID.sol}`);
     assert.deepEqual([r.body.usage.owned, r.body.usage.built_demand, r.body.usage.available], [1, 2, -1]);

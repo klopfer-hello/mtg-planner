@@ -1,31 +1,17 @@
-// Error translation for the HTTP layer: the lib/ modules throw their own error
-// classes with a status (a binder that doesn't exist, a deck version that
+// Error translation for the HTTP layer: the lib/ modules throw StatusError
+// subclasses (lib/errors.js: a binder that doesn't exist, a deck version that
 // can't be restored, ...); the server answers them with that status. Scryfall
 // failures during imports are split into "the file was wrong" (400) and "the
 // service failed" (502).
 
 import { HttpError } from "./http.js";
-import { BackupError } from "../lib/backups.js";
-import { BinderError } from "../lib/binders.js";
-import { PerfError } from "../lib/debugperf.js";
-import { DebugError } from "../lib/debugsessions.js";
-import { BuildError } from "../lib/deckbuild.js";
-import { DeckHistoryError } from "../lib/deckhistory.js";
-import { DeckError } from "../lib/deckrules.js";
-import { DownloadError } from "../lib/downloads.js";
-import { ScanError } from "../lib/scanrow.js";
+import { StatusError } from "../lib/errors.js";
 import { SpellbookError } from "../lib/spellbook.js";
-import { WishlistError } from "../lib/wishlist.js";
 
-const LIB_ERRORS = [
-  BackupError, BinderError, BuildError, DebugError, DeckError, DeckHistoryError, DownloadError, PerfError, ScanError, SpellbookError,
-  WishlistError,
-];
-
-/** A lib/ error class with a status → HttpError (keeping `extra`, e.g. {code: 'confirm_master'}); null for anything else. */
+/** A lib/ error with a status → HttpError (keeping `extra`, e.g. {code: 'confirm_master'}); null for anything else. */
 export function libHttpError(err) {
   if (err instanceof HttpError) return err;
-  if (LIB_ERRORS.some((cls) => err instanceof cls)) return new HttpError(err.status ?? 400, err.message, err.extra ?? null);
+  if (err instanceof StatusError || err instanceof SpellbookError) return new HttpError(err.status ?? 400, err.message, err.extra ?? null);
   return null;
 }
 

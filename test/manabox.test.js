@@ -2,11 +2,12 @@
 
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { fetchCollectionPolitely, importManaBoxCsv, parseCsv, refreshOwnedCards } from "../lib/manabox.js";
-import { LIMITED_INTERVAL_MS, fetchCollection } from "../lib/scryfall.js";
+import { importManaBoxCsv, parseCsv, refreshOwnedCards } from "../lib/manabox.js";
+import { LIMITED_INTERVAL_MS, fetchCollection, setThrottle } from "../lib/scryfall.js";
 import { deckDetail, listDecks } from "../lib/decks.js";
 import { setCommander, updateDeckCard } from "../lib/deckedit.js";
 import { ID, stubScryfall, tempDb } from "./fixtures.js";
+import { manaboxCsv as csv, manaboxLine } from "./helpers/csv.js";
 
 describe("parseCsv", () => {
   test("header keys are lower-cased and trimmed, values trimmed", () => {
@@ -45,11 +46,8 @@ describe("parseCsv", () => {
   });
 });
 
-// A ManaBox collection export (binder export columns included).
-const HEADER = "Binder Name,Binder Type,Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,ManaBox ID,Scryfall ID,Purchase price,Misprint,Altered,Condition,Language,Purchase price currency";
-const row = (binder, type, name, set, num, foil, qty, scryfallId, { price = "", condition = "near_mint", lang = "en" } = {}) =>
-  [binder, type, `"${name}"`, set, "", num, foil, "", qty, "", scryfallId, price, "false", "false", condition, lang, price ? "EUR" : ""].join(",");
-const csv = (...rows) => [HEADER, ...rows].join("\n") + "\n";
+// A ManaBox collection export line (test/helpers/csv.js) in this file's argument order.
+const row = (binder, type, name, set, num, foil, qty, scryfallId, opts = {}) => manaboxLine(binder, name, set, num, qty, scryfallId, { type, foil, ...opts });
 
 describe("importManaBoxCsv", () => {
   let ctx;
@@ -178,7 +176,7 @@ describe("importManaBoxCsv", () => {
     assert.equal(decks[0].source, "manabox");
     assert.equal(decks[0].card_count, 2);
     const detail = deckDetail(ctx.db, decks[0].id);
-    assert.equal(detail.missing_count, 0);
+    assert.equal(detail.to_buy_count, 0);
     assert.equal(detail.cards.find((c) => c.name === "Counterspell").owned, 2, "ownership spans printings and binders");
 
     // Re-syncing updates the same deck instead of creating a duplicate.
@@ -280,17 +278,16 @@ describe("importManaBoxCsv", () => {
     assert.equal(listDecks(ctx.db)[0].id, id, "same deck");
   });
 
-  test("fetchCollectionPolitely batches by 75 and spaces requests", async () => {
+  test("fetchCollection batches by 75", async () => {
     const ids = Array.from({ length: 160 }, (_, i) => ({ id: `00000000-0000-0000-0000-${String(1000 + i).padStart(12, "0")}` }));
-    const t0 = Date.now();
-    const res = await fetchCollectionPolitely(ids, { intervalMs: 50 });
+    const res = await fetchCollection(ids);
     assert.deepEqual(stub.calls.map((c) => c.length), [75, 75, 10]);
     assert.equal(res.notFound.length, 160);
-    assert.ok(Date.now() - t0 >= 100, "two gaps between three requests");
   });
 
-  test("plain fetchCollection (saveDeck, resolveDeckItems) also keeps /cards/collection at 2 req/s", async () => {
+  test("fetchCollection keeps /cards/collection at 2 req/s", async () => {
     const ids = Array.from({ length: 160 }, (_, i) => ({ id: `00000000-0000-0000-0000-${String(2000 + i).padStart(12, "0")}` }));
+    setThrottle(); // the real limits (stubScryfall turns them off; its restore() resets them anyway)
     const inner = globalThis.fetch;
     const times = [];
     globalThis.fetch = (url, init) => { times.push(Date.now()); return inner(url, init); };

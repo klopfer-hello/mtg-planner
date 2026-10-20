@@ -8,7 +8,7 @@ import { cardKey, isBasicLand } from "../../lib/deckrules.js";
 import { listDecks } from "../../lib/decks.js";
 import { listBinders } from "../../lib/binders.js";
 import { getDb } from "../context.js";
-import { boxText, colorLabel, deckLine, int, likeEsc, mainType, oneLine, OWNED_BY_NAME, parseJson, setNum, ToolError } from "../format.js";
+import { boxText, colorLabel, deckLine, int, likeEsc, mainType, nameArgs, nameMatch, oneLine, OWNED_BY_NAME, parseJson, setNum, ToolError } from "../format.js";
 
 const SEARCH_EXAMPLES = [
   't:creature c:g cmc<=3            green creatures with mana value 3 or less',
@@ -233,9 +233,9 @@ function checkOwned(args) {
   const lines = [];
   let ownedCount = 0;
   for (const name of names) {
-    const rows = stmt.all(name, likeEsc(name));
+    const rows = stmt.all(...nameArgs(name));
     if (!rows.length) {
-      const use = builtUse(cardKey(d.prepare("SELECT oracle_id FROM cards WHERE name = ? COLLATE NOCASE OR name LIKE ? || ' // %' ESCAPE '\\' LIMIT 1").get(name, likeEsc(name))?.oracle_id ?? null, name));
+      const use = builtUse(cardKey(d.prepare(`SELECT oracle_id FROM cards WHERE ${nameMatch("name")} LIMIT 1`).get(...nameArgs(name))?.oracle_id ?? null, name));
       lines.push(`${name}: NOT OWNED${use ? ` (needed by built decks: ${use})` : ""}`);
       continue;
     }
@@ -277,7 +277,7 @@ function getCard(args) {
     SELECT c.*, (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE scryfall_id = c.scryfall_id) AS own_qty
       FROM cards c WHERE ${where}
      ORDER BY own_qty DESC, c.fetched_at DESC LIMIT 1`;
-  let card = d.prepare(pickSql("c.name = ? COLLATE NOCASE OR c.name LIKE ? || ' // %' ESCAPE '\\'")).get(name, likeEsc(name));
+  let card = d.prepare(pickSql(nameMatch())).get(...nameArgs(name));
   if (!card) {
     const candidates = d.prepare("SELECT DISTINCT name FROM cards WHERE name LIKE ? ESCAPE '\\' ORDER BY name LIMIT 11").all(`%${likeEsc(name)}%`).map((r) => r.name);
     if (candidates.length === 1) card = d.prepare(pickSql("c.name = ?")).get(candidates[0]);

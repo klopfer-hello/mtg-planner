@@ -7,10 +7,9 @@ import { generateGuide, guideMeta, latestGuide } from "../../lib/deckguide.js";
 import { fetchGuideImages, renderGuidePdf } from "../../lib/guidepdf.js";
 import { DECK_STATUSES, normalizeFormat, parseDecklist } from "../../lib/deckrules.js";
 import { addDeckCard, bulkDeckCards, setCommander, updateDeckCard } from "../../lib/deckedit.js";
-import { bracketVerdict, deckComboRequest, deckPower, draftDeck } from "../../lib/deckpower.js";
+import { bracketVerdict, deckComboRequest, evaluateDraft } from "../../lib/deckpower.js";
 import { buyListText, exportDeck } from "../../lib/decktext.js";
 import { deckDetail, listDecks, saveDeck, shoppingList } from "../../lib/decks.js";
-import { accessoriesForRows, ensureAccessoryData } from "../../lib/accessories.js";
 import { deckToBinder } from "../../lib/binders.js";
 import { buildChecklist, clearBuildPicks, pickedKeys, setBuildPick } from "../../lib/deckbuild.js";
 import { deckVersion, listDeckVersions, recordDeckVersion, restoreDeckVersion } from "../../lib/deckhistory.js";
@@ -114,15 +113,12 @@ export function deckRoutes(router, app) {
       : optString(body.commander, "commander", 300) || null;
     const target = body.target_bracket == null ? null : bracketDeclared(body.target_bracket);
     if (!parseDecklist(text).items.length) throw new HttpError(400, "The decklist is empty");
-    const draft = await draftDeck(app.db, { text, format, commander }).catch(throwImportError);
-    const combos = draft.request ? await app.spellbook.evaluate(draft.request, { waitMs: 8000 }) : undefined;
-    const p = deckPower(app.db, draft.deck, draft.rows, { combos });
-    // Tokens & extras: fetch what the draft's cards miss (≤4 s, errors → card text only).
-    await ensureAccessoryData(app.db, draft.rows, { timeoutMs: 4000 });
-    const accessories = accessoriesForRows(app.db, draft.rows.map(({ all_parts: _p, ...r }) => r));
-    if (accessories.fetch_ids.length) accessories.status = "unavailable";
+    // Tokens & extras: what the draft's cards miss is fetched for ≤4 s (errors → card text only).
+    const { draft, ...p } = await evaluateDraft(app.db, { text, format, commander }, {
+      evaluate: (request, opts) => app.spellbook.evaluate(request, opts), waitMs: 8000, accessoryTimeoutMs: 4000,
+    }).catch(throwImportError);
     return {
-      stats: p.stats, power: p.power, combos: p.combos, accessories, unresolved: draft.unresolved, parse_errors: draft.parse_errors,
+      stats: p.stats, power: p.power, combos: p.combos, accessories: p.accessories, unresolved: draft.unresolved, parse_errors: draft.parse_errors,
       ...(target != null ? { verdict: bracketVerdict(p.power, target) } : {}),
     };
   });
@@ -285,8 +281,7 @@ export function deckRoutes(router, app) {
 
   router.get(`/api/decks/${ID}/export`, ({ res, params }) => {
     const detail = getDeckOr404(Number(params.id));
-    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Disposition": attachment(detail.name, "txt", "deck"), "Cache-Control": "no-store" });
-    res.end(exportDeck(detail));
+    return sendTextFile(res, detail.name, exportDeck(detail));
   });
 
   router.get(`/api/decks/${ID}`, ({ params }) => getDeckOr404(Number(params.id)));

@@ -7,7 +7,6 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
 import { gzipSync } from "node:zlib";
 import os from "node:os";
 import path from "node:path";

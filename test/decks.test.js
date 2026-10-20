@@ -108,25 +108,25 @@ describe("decks", () => {
     assert.deepEqual(d.counts, { commander: 1, main: 37, side: 1, maybe: 3 });
     assert.equal(d.cards[0].board, "commander", "commander first");
 
-    assert.equal(card("commander", "Atraxa, Praetors' Voice").missing, 1);
+    assert.equal(card("commander", "Atraxa, Praetors' Voice").to_buy, 1);
     assert.equal(card("main", "Counterspell").owned, 1);
-    assert.equal(card("main", "Counterspell").missing, 0);
-    assert.equal(card("main", "Lightning Bolt").missing, 0);
-    assert.equal(card("side", "Lightning Bolt").missing, 1, "the single owned Bolt is already used by the main deck");
+    assert.equal(card("main", "Counterspell").to_buy, 0);
+    assert.equal(card("main", "Lightning Bolt").to_buy, 0);
+    assert.equal(card("side", "Lightning Bolt").to_buy, 1, "the single owned Bolt is already used by the main deck");
     assert.equal(card("main", "Sol Ring").owned, 2);
-    assert.equal(card("main", "Sol Ring").missing, 0);
+    assert.equal(card("main", "Sol Ring").to_buy, 0);
     const forest = card("main", "Forest");
     assert.equal(forest.basic, true);
-    assert.equal(forest.missing, 0);
-    assert.equal(card("main", "Mystery Card").missing, 2);
+    assert.equal(forest.to_buy, 0);
+    assert.equal(card("main", "Mystery Card").to_buy, 2);
     assert.equal(card("main", "Mystery Card").price, null);
-    assert.equal(card("maybe", "Serra Angel").missing, 3);
+    assert.equal(card("maybe", "Serra Angel").to_buy, 3);
     assert.deepEqual(card("main", "Azorius Charm").price, { value: 0.3, currency: "$" });
 
     // Missing (maybeboard excluded): Atraxa 1 + Azorius 1 + Mystery 2 + side Bolt 1 = 5
-    assert.equal(d.missing_count, 5);
+    assert.equal(d.to_buy_count, 5);
     // EUR only: Atraxa 20 + Bolt 2 (Azorius has only USD, Mystery has no price)
-    assert.equal(d.missing_cost_eur, 22);
+    assert.equal(d.to_buy_eur, 22);
 
     const text = deckToText(d);
     assert.match(text, /^Deck #\d+ "Test" \[commander\] \(source: manual, status: idea/);
@@ -160,7 +160,7 @@ describe("decks", () => {
     const deckId = saveDeckRows(ctx.db, { name: "N", rows: [{ board: "main", name: "serra angel", scryfall_id: null, quantity: 3 }] });
     const c = deckDetail(ctx.db, deckId).cards[0];
     assert.equal(c.owned, 2);
-    assert.equal(c.missing, 1);
+    assert.equal(c.to_buy, 1);
   });
 
   test("exportDeck writes an importable list", () => {
@@ -286,7 +286,7 @@ describe("deck value (EUR)", () => {
     ] });
     const d = deckDetail(ctx.db, id);
     assert.deepEqual(d.value, { total_eur: 31.5, owned_eur: 8, to_buy_eur: 23.5, in_use_eur: 0, maybe_eur: 0.3, no_eur_price: 3 });
-    assert.equal(d.missing_cost_eur, 23.5);
+    assert.equal(d.to_buy_eur, 23.5);
     const bolt = d.cards.find((c) => c.name === "Lightning Bolt");
     assert.equal(bolt.eur, 2);
     assert.equal(bolt.value_eur, 7);

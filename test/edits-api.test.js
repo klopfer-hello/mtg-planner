@@ -1,18 +1,15 @@
 // HTTP layer of lib/edits.js (server.js): POST /api/collection/edit|delete,
-// GET /api/collection/edits, POST /api/collection/edits/:id/undo and
-// POST /api/maintenance/relanguage-scans: status codes, error codes
+// GET /api/collection/edits and POST /api/collection/edits/:id/undo: status codes, error codes
 // (confirm_master, manabox_rows, conflict, undone) and the CSRF / content-type
 // guards. Starts the real server on a free port against a seeded temp DB; no
 // request needs Scryfall (every printing used is in the cards table).
 
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { openDb, upsertCards } from "../lib/db.js";
-import { normalizeCard } from "../lib/scryfall.js";
-import { ID, SCRYFALL_CARDS, seedCards } from "./fixtures.js";
+import { openDb } from "../lib/db.js";
+import { ID, seedCards } from "./fixtures.js";
 import { startServer } from "./helpers/server.js";
 
-const BOLT_IT = { ...SCRYFALL_CARDS.find((c) => c.id === ID.lightning), id: "00000000-0000-0000-0000-0000000000a1", lang: "it", prices: {} };
 let srv, call;
 
 before(async () => {
@@ -21,17 +18,10 @@ before(async () => {
     seed: (dbFile) => {
       const db = openDb(dbFile);
       seedCards(db);
-      upsertCards(db, [normalizeCard(BOLT_IT)]);
       const ins = db.prepare("INSERT INTO collection (scryfall_id, finish, language, condition, binder, quantity, source) VALUES (?, 'normal', 'en', 'near_mint', ?, ?, ?)");
       ins.run(ID.sol, "Box", 3, "manabox");
       ins.run(ID.lightning, "Scans", 2, "scan");
       ins.run(ID.counterspell, "", 1, "scan");
-      const now = new Date().toISOString();
-      db.prepare(
-        `INSERT INTO scans (id, created_at, updated_at, status, printing_id, store_printing_id, oracle_id, name, finish, condition, quantity,
-                            lang_detected, store_lang, committed_at, committed_to)
-         VALUES (7, ?, ?, 'committed', ?, ?, 'o-bolt', 'Lightning Bolt', 'normal', 'near_mint', 1, 'it', 'en', ?, ?)`,
-      ).run(now, now, BOLT_IT.id, ID.lightning, now, JSON.stringify({ type: "binder", name: "Scans" }));
       db.close();
     },
   });
@@ -117,30 +107,11 @@ describe("edit / delete / undo API", () => {
     assert.ok(list.every((e) => e.undone_at && !e.undoable));
   });
 
-  test("POST /api/maintenance/relanguage-scans: dry run by default, apply, undo", async () => {
-    assert.equal((await call("POST", "/api/maintenance/relanguage-scans", {})).status, 400);
-    let r = await call("POST", "/api/maintenance/relanguage-scans", { scan_ids: [7] });
-    assert.equal(r.status, 200);
-    assert.equal(r.body.applied, false);
-    assert.deepEqual(r.body.changes, [{
-      scan_id: 7, name: "Lightning Bolt", from: { scryfall_id: ID.lightning, language: "en" }, to: { scryfall_id: BOLT_IT.id, language: "it" },
-      copies: 1, binder: "Scans",
-    }]);
-    assert.deepEqual(await owned(ID.lightning), ["en/near_mint/Scans/scan=2"]);
-    r = await call("POST", "/api/maintenance/relanguage-scans", { scan_ids: [7], dry_run: false });
-    assert.equal(r.body.applied, true);
-    assert.deepEqual(await owned(ID.lightning), ["en/near_mint/Scans/scan=1", "it/near_mint/Scans/scan=1"]);
-    const [entry] = (await call("GET", "/api/collection/edits?limit=1")).body.edits;
-    assert.deepEqual([entry.id, entry.kind, entry.actor, entry.undoable], [r.body.edit_id, "relanguage", "maintenance", true]);
-    assert.equal((await call("POST", `/api/collection/edits/${r.body.edit_id}/undo`)).status, 200);
-    assert.deepEqual(await owned(ID.lightning), ["en/near_mint/Scans/scan=2"]);
-  });
-
   test("GET /api/collection/edits: limit, newest first", async () => {
     const all = (await call("GET", "/api/collection/edits?limit=500")).body.edits;
-    assert.equal(all.length, 4);
+    assert.equal(all.length, 3);
     assert.deepEqual(all.map((e) => e.id), [...all.map((e) => e.id)].sort((a, b) => b - a));
     assert.equal((await call("GET", "/api/collection/edits?limit=1")).body.edits.length, 1);
-    assert.equal((await call("GET", "/api/collection/edits?limit=nope")).body.edits.length, 4);
+    assert.equal((await call("GET", "/api/collection/edits?limit=nope")).body.edits.length, 3);
   });
 });
