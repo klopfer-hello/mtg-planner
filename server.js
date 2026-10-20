@@ -10,11 +10,9 @@
 // Unauthenticated by design: meant for a trusted LAN (see docs/backups-and-security.md).
 
 import http from "node:http";
-import { existsSync } from "node:fs";
 import path from "node:path";
 
-import * as claudeLib from "./lib/claude.js";
-import { claudeConfigured, killAll, prepareMcpConfig } from "./lib/claude.js";
+import { claudeCliStatus, claudeConfigured, killAll, prepareMcpConfig } from "./lib/claude.js";
 import { checkpointIndex } from "./lib/cardindex.js";
 import { getAppMeta, setAppMeta } from "./lib/db.js";
 import { ensureSnapshot, snapshotValue } from "./lib/finance.js";
@@ -64,19 +62,13 @@ async function handleApi(req, res, url) {
 // ---------------------------------------------------------------------------
 // /healthz
 
-/**
- * Claude CLI presence: lib/claude.js's claudeCliStatus() when it provides one,
- * else whether CLAUDE_BIN (set by the image's entrypoint) exists.
- */
+/** Claude CLI presence (lib/claude.js claudeCliStatus; never fails the health check). */
 function claudeCliHealth() {
   try {
-    if (typeof claudeLib.claudeCliStatus === "function") return claudeLib.claudeCliStatus();
+    return claudeCliStatus();
   } catch (err) {
     return { status: "missing", version: null, error: err.message };
   }
-  const bin = process.env.CLAUDE_BIN;
-  if (!bin) return { status: "unknown", version: null };
-  return { status: existsSync(bin) ? "installed" : "missing", version: process.env.CLAUDE_CODE_VERSION || null };
 }
 
 /** Spellbook state (never fails the health check). */

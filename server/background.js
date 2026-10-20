@@ -15,11 +15,10 @@ import { snapshotValue } from "../lib/finance.js";
 import { CARD_FACTS_META, backfillCardFacts, cardFactsPending, tokenFactsPending } from "../lib/manabox.js";
 import { syncEnglishPrices } from "../lib/prices.js";
 import { schedulerConfig } from "../lib/scheduler.js";
-import { HttpError } from "./http.js";
 
 const CARD_FACTS_RETRY_MS = 60_000;
 
-/** `app` gives db, importBusy, restoring, shuttingDown, exclusive() and scanner.indexPrices(). */
+/** `app` gives db, importBusy, restoring, shuttingDown, exclusiveUnlessRestoring() and scanner.indexPrices(). */
 export function createBackground(app) {
   const busy = () => app.importBusy || app.restoring;
   const later = (timer, fn, delay) => {
@@ -74,12 +73,7 @@ export function createBackground(app) {
     try {
       const db = app.db;
       if (!cardFactsPending(db).length && !tokenFactsPending(db).length && getAppMeta(db, CARD_FACTS_META)) return;
-      const r = await backfillCardFacts(() => app.db, {
-        runChunk: (fn) => {
-          if (app.restoring) throw new HttpError(503, "restore running");
-          return app.exclusive(fn);
-        },
-      });
+      const r = await backfillCardFacts(() => app.db, { runChunk: app.exclusiveUnlessRestoring });
       if (r.refreshed || r.skipped) console.log(`[cards] card facts (v9/v15): ${r.refreshed} refreshed (incl. tokens), ${r.skipped} skipped`);
     } catch (err) {
       console.warn(`[cards] card facts: ${err.message}; retrying in ${CARD_FACTS_RETRY_MS / 1000} s`);
