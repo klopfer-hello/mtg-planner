@@ -1,6 +1,6 @@
 // EUR prices in the card index (v0.5.0 scan sounds): refreshIndex fills
 // eur/eur_foil/eur_etched from the bulk `prices`, openIndex adds the columns
-// to an older index (idempotent), and scanPriceEur picks the stored printing
+// to an older index (idempotent), and scanPriceEur / priceScans pick the stored printing
 // + finish price with the app `cards` table and the English twin as fallbacks.
 // Offline: a local bulk file.
 
@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { gzipSync } from "node:zlib";
 import os from "node:os";
 import path from "node:path";
-import { getPrinting, lookupCollector, openIndex, printingPriceEur, printingPricesEur, refreshIndex, storagePrinting } from "../lib/cardindex.js";
+import { getPrinting, lookupCollector, openIndex, printingPriceEur, printingPricesEur, refreshIndex } from "../lib/cardindex.js";
 import { priceScans } from "../lib/scans.js";
 import { scanPriceEur } from "../lib/scanner.js";
 import { tempDb } from "./fixtures.js";
@@ -85,19 +85,20 @@ describe("index prices", () => {
 
 describe("scanPriceEur", () => {
   const res = (store, finish = "normal", o = {}) => ({ status: "auto", printing: store, store, finish, ...o });
+  const indexPrices = async (items) => printingPricesEur(idx, items);
 
   test("index price of the stored printing for the decided finish", async () => {
     const en = getPrinting(idx, "p-0001");
-    assert.deepEqual(await scanPriceEur(res(en)), { price_eur: 1.5, price_source: "index" });
-    assert.deepEqual(await scanPriceEur(res(en, "foil")), { price_eur: 7.25, price_source: "index" });
-    assert.deepEqual(await scanPriceEur(res(en, "nonfoil")), { price_eur: 1.5, price_source: "index" });
-    assert.deepEqual(await scanPriceEur(res(getPrinting(idx, "p-0003"), "etched")), { price_eur: 12, price_source: "index" });
+    assert.deepEqual(await scanPriceEur(res(en), { indexPrices }), { price_eur: 1.5, price_source: "index" });
+    assert.deepEqual(await scanPriceEur(res(en, "foil"), { indexPrices }), { price_eur: 7.25, price_source: "index" });
+    assert.deepEqual(await scanPriceEur(res(en, "nonfoil"), { indexPrices }), { price_eur: 1.5, price_source: "index" });
+    assert.deepEqual(await scanPriceEur(res(getPrinting(idx, "p-0003"), "etched"), { indexPrices }), { price_eur: 12, price_source: "index" });
   });
 
   test("failed results and missing printings have no price", async () => {
     assert.deepEqual(await scanPriceEur({ status: "failed", printing: null }), { price_eur: null, price_source: null });
     assert.deepEqual(await scanPriceEur(null), { price_eur: null, price_source: null });
-    assert.deepEqual(await scanPriceEur(res(getPrinting(idx, "p-0005"))), { price_eur: null, price_source: null });
+    assert.deepEqual(await scanPriceEur(res(getPrinting(idx, "p-0005")), { indexPrices }), { price_eur: null, price_source: null });
   });
 
   test("falls back to the app cards table (EUR only, finish-aware), then to the English twin", async () => {
@@ -107,17 +108,43 @@ describe("scanPriceEur", () => {
       ins.run("p-0005", "o-No Prices", "No Prices", JSON.stringify({ eur: "3.10", eur_foil: null, usd: "9" }));
       ins.run("p-0004", "o-Junk", "Junk Price", JSON.stringify({ usd: "50" }));
       const np = getPrinting(idx, "p-0005");
-      assert.deepEqual(await scanPriceEur(res(np), { db: app.db }), { price_eur: 3.1, price_source: "cards" });
-      assert.deepEqual(await scanPriceEur(res(np, "foil"), { db: app.db }), { price_eur: null, price_source: null }, "no foil price, never USD");
-      assert.deepEqual(await scanPriceEur(res(getPrinting(idx, "p-0004")), { db: app.db }), { price_eur: null, price_source: null });
+      assert.deepEqual(await scanPriceEur(res(np), { db: app.db, indexPrices }), { price_eur: 3.1, price_source: "cards" });
+      assert.deepEqual(await scanPriceEur(res(np, "foil"), { db: app.db, indexPrices }), { price_eur: null, price_source: null }, "no foil price, never USD");
+      assert.deepEqual(await scanPriceEur(res(getPrinting(idx, "p-0004")), { db: app.db, indexPrices }), { price_eur: null, price_source: null });
 
       // German store printing: no price of its own, the English twin's
       const de = getPrinting(idx, "p-0002");
-      const lookupEn = async (p) => storagePrinting(idx, p, "en");
-      assert.deepEqual(await scanPriceEur(res(de, "foil"), { db: app.db, lookupEn }), { price_eur: 7.25, price_source: "index_en" });
-      assert.deepEqual(await scanPriceEur(res(de), { db: app.db }), { price_eur: null, price_source: null }, "no lookup: no twin");
+      assert.deepEqual(await scanPriceEur(res(de, "foil"), { db: app.db, indexPrices }), { price_eur: 7.25, price_source: "index_en" });
+      assert.deepEqual(await scanPriceEur(res(de), { db: app.db }), { price_eur: null, price_source: null }, "no index: no twin");
       const boom = async () => { throw new Error("worker gone"); };
-      assert.deepEqual(await scanPriceEur(res(de), { db: app.db, lookupEn: boom }), { price_eur: null, price_source: null });
+      assert.deepEqual(await scanPriceEur(res(de), { db: app.db, indexPrices: boom }), { price_eur: null, price_source: null });
+    } finally {
+      app.cleanup();
+    }
+  });
+
+  test("a foreign printing with only its twin's price (cards *_en keys) is priced the same as in the staged list", async () => {
+    const app = tempDb();
+    try {
+      // The German row carries only the English twin's prices (lib/prices.js eur_en / eur_foil_en).
+      app.db.prepare("INSERT INTO cards (scryfall_id, oracle_id, name, prices, fetched_at) VALUES (?, ?, ?, ?, 'x')")
+        .run("p-0002", "o-Lightning Bolt", "Lightning Bolt", JSON.stringify({ eur: null, eur_en: "1.40", eur_foil_en: "6.90", usd: "3" }));
+      const de = getPrinting(idx, "p-0002");
+      // Without the index (worker gone): the cards row's twin keys, never USD.
+      for (const [finish, want] of [["normal", 1.4], ["foil", 6.9], ["etched", null]]) {
+        const scan = await scanPriceEur(res(de, finish), { db: app.db });
+        const rows = [{ store_printing_id: "p-0002", finish, quantity: 1, match_status: "auto" }];
+        await priceScans(app.db, rows);
+        assert.equal(scan.price_eur, want, finish);
+        assert.equal(rows[0].price_eur, scan.price_eur, `${finish}: scan answer = staged list`);
+        if (want != null) assert.equal(scan.price_source, "cards");
+      }
+      // With the index: the cards row (incl. its twin keys) comes before the index twin.
+      const scan = await scanPriceEur(res(de), { db: app.db, indexPrices });
+      const rows = [{ store_printing_id: "p-0002", finish: "normal", quantity: 1, match_status: "auto" }];
+      await priceScans(app.db, rows, { indexPrices });
+      assert.deepEqual(scan, { price_eur: 1.4, price_source: "cards" });
+      assert.equal(rows[0].price_eur, 1.4);
     } finally {
       app.cleanup();
     }

@@ -5,11 +5,11 @@
 // scanning) when the index can't be opened.
 
 import {
-  fetchBulkInfo, getMeta, indexBrief, openIndex, refreshIndex, refreshIndexInWorker, setMeta,
+  fetchBulkInfo, getMeta, indexBrief, openIndex, refreshIndexInWorker, setMeta,
 } from "../lib/cardindex.js";
 import * as indexModule from "../lib/cardindex.js";
 import { visionCap, claudeConfigured } from "../lib/claude.js";
-import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker } from "../lib/fingerprint.js";
+import { MatcherWorker, buildFingerprintsInWorker } from "../lib/fingerprint.js";
 import { ocrHelperStatus, ocrTools } from "../lib/ocr.js";
 import { ProbeRunner, createScanSlots } from "../lib/scans.js";
 import { HttpError } from "./http.js";
@@ -35,9 +35,8 @@ export function createScanner(app) {
   const indexJob = { running: null, last: null, controller: null };
   try {
     idx = openIndex(INDEX_FILE);
-    // Fingerprint loading/hashing/matching run in a worker thread (started
-    // after listen); an in-memory index (tests) can only match in-process.
-    matcher = INDEX_FILE === ":memory:" ? new Matcher(idx) : new MatcherWorker(INDEX_FILE, { waitMs: SCAN_MATCHER_WAIT_MS });
+    // Fingerprint loading/hashing/matching run in a worker thread (started after listen).
+    matcher = new MatcherWorker(INDEX_FILE, { waitMs: SCAN_MATCHER_WAIT_MS });
     // The hourly Claude vision cap survives restarts (best effort).
     try { visionCap.restore(JSON.parse(getMeta(idx, "vision_calls") || "[]")); } catch { /* fresh window */ }
     // Skipped while the refresh worker holds the index's write lock (a busy wait would block the event loop).
@@ -45,8 +44,6 @@ export function createScanner(app) {
   } catch (err) {
     console.warn(`[scanner] card index unavailable: ${err.message}`);
   }
-
-  const isWorker = () => matcher instanceof MatcherWorker;
 
   function requireIndex() {
     if (!idx) throw new HttpError(503, "The card index is not available");
@@ -63,19 +60,10 @@ export function createScanner(app) {
 
   /**
    * The matcher for a scan. The worker waits for its own warm-up inside
-   * hashImage (bounded) and skips hashing without fingerprints; the in-process
-   * matcher only once it has fingerprints (else hashing a scan is wasted work).
+   * hashImage (bounded) and skips hashing without fingerprints.
    */
   function readyMatcher() {
-    if (!matcher) return null;
-    if (isWorker()) return matcher.state === "closed" ? null : matcher;
-    try {
-      matcher.ensureLoaded();
-      return matcher.size > 0 ? matcher : null;
-    } catch (err) {
-      console.warn(`[scanner] fingerprints unavailable: ${err.message}`);
-      return null;
-    }
+    return matcher && matcher.state !== "closed" ? matcher : null;
   }
 
   /**
@@ -83,11 +71,11 @@ export function createScanner(app) {
    * of them (title search ~70 ms warm, >1 s on a cold cache; collector lookups
    * blocked >1 s in a row cold). Errors of a call (also a timeout) are thrown,
    * never retried on the main thread; while the worker respawns after a crash
-   * a lookup waits for it (bounded). In-process only for an in-memory index or
-   * a worker that is closed or gave up.
+   * a lookup waits for it (bounded). In-process only for a worker that is
+   * closed or gave up.
    */
   async function indexLookup(fn, ...args) {
-    if (isWorker() && matcher.available) {
+    if (matcher?.available) {
       if (!(await matcher.whenRunning(INDEX_LOOKUP_WAIT_MS))) throw new HttpError(503, "The card index is restarting; try again shortly");
       return matcher.indexCall(fn, args);
     }
@@ -121,14 +109,12 @@ export function createScanner(app) {
       if (p && typeof p === "object") for (const [k, v] of Object.entries(p)) if (!["kind", "state", "running"].includes(k)) state[k] = v;
     };
     // Both jobs run in a worker thread (the refresh's finalize step and the
-    // fingerprint job's whole-table statements are seconds of synchronous
-    // SQLite work); an in-memory index can only run them in-process.
+    // fingerprint job's whole-table statements are seconds of synchronous SQLite work).
     const source = process.env.INDEX_BULK_SOURCE || undefined;
-    const inProcess = INDEX_FILE === ":memory:";
     const opts = { signal: controller.signal, onProgress };
     const work = kind === "refresh"
-      ? (inProcess ? refreshIndex(idx, { ...opts, source }) : refreshIndexInWorker(INDEX_FILE, { ...opts, source }))
-      : (inProcess ? buildFingerprints(idx, opts) : buildFingerprintsInWorker(INDEX_FILE, opts));
+      ? refreshIndexInWorker(INDEX_FILE, { ...opts, source })
+      : buildFingerprintsInWorker(INDEX_FILE, opts);
     console.log(`[scanner] ${kind} job started`);
     const finished = work.then(
       (result) => {
@@ -185,13 +171,11 @@ export function createScanner(app) {
   const scanSlots = createScanSlots(SCAN_MAX_CONCURRENT);
   // Probes answer 'busy' while the fingerprint matcher is still loading: a
   // probe must never sit on a slot for the SCAN_MATCHER_WAIT_MS warm-up.
-  const prober = new ProbeRunner({ slots: scanSlots, warming: () => isWorker() && matcher.state === "loading" });
+  const prober = new ProbeRunner({ slots: scanSlots, warming: () => matcher?.state === "loading" });
 
   /** scanner.matcher for /healthz: loading | ready | error (+ size, load time), never cached. */
   function matcherHealth() {
-    if (!matcher) return { state: "unavailable" };
-    if (isWorker()) return matcher.status();
-    return { state: "in-process", size: matcher.size, load_ms: matcher.loadMs ?? null };
+    return matcher ? matcher.status() : { state: "unavailable" };
   }
 
   // Index counts for /healthz, stale-while-revalidate: the COUNT(*)s run on the
@@ -245,7 +229,7 @@ export function createScanner(app) {
 
   /** After listen: preload the fingerprints so the first scan doesn't pay for it; `onReady` after the warm-up. */
   function start(onReady) {
-    if (!isWorker()) return false;
+    if (!matcher) return false;
     matcher.start();
     matcher.whenReady(10 * 60 * 1000).then((ok) => {
       const st = matcher.status();
@@ -258,7 +242,7 @@ export function createScanner(app) {
   /** Shutdown: abort the index job, stop the worker (the index connection closes in close()). */
   function stop() {
     indexJob.controller?.abort();
-    if (isWorker()) matcher.close().catch(() => {});
+    matcher?.close().catch(() => {});
   }
 
   return {

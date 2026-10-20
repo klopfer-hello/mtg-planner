@@ -17,14 +17,13 @@ import { deleteBinder, listBinders, renameBinder } from "../lib/binders.js";
 import { deleteScan, incrementScan, listScans, recordTruth, stageScan, undoLast, updateScan } from "../lib/scans.js";
 import { exportCalibration } from "../lib/scanlabels.js";
 import { ID, SCRYFALL_CARDS, seedCards, seedCollection, stubScryfall, tempDb } from "./fixtures.js";
+import { asPrinting as basePrinting } from "./helpers/scan.js";
 
 // Index-shaped printings for fixture cards (same ids, so the Scryfall stub resolves them).
 const fx = (id) => SCRYFALL_CARDS.find((c) => c.id === id);
-const asPrinting = (c, extra = {}) => ({
-  id: c.id, oracle_id: c.oracle_id, name: c.name, printed_name: null, lang: c.lang, set_code: c.set, set_name: c.set_name,
-  collector_number: c.collector_number, rarity: c.rarity, finishes: ["nonfoil", "foil"], faces: [],
-  image_small: `https://cards.scryfall.io/small/${c.id}.jpg`, image_normal: `https://cards.scryfall.io/normal/${c.id}.jpg`,
-  type_line: c.type_line, mana_cost: c.mana_cost, ...extra,
+// With image URLs (the staged row's thumbnails).
+const asPrinting = (c, extra = {}) => basePrinting(c, {
+  image_small: `https://cards.scryfall.io/small/${c.id}.jpg`, image_normal: `https://cards.scryfall.io/normal/${c.id}.jpg`, ...extra,
 });
 const BOLT = asPrinting(fx(ID.lightning));
 const SOL = asPrinting(fx(ID.sol));

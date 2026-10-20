@@ -12,33 +12,14 @@ import { gzipSync } from "node:zlib";
 import os from "node:os";
 import path from "node:path";
 import { fingerprintMetaPending, getMeta, indexBrief, indexStatus, openIndex, refreshIndex, syncFingerprintMeta, warmIndex } from "../lib/cardindex.js";
-import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker, decodeJpeg, encodeJpeg, hasCjpeg, hasDjpeg, hashQuery, rotate180 } from "../lib/fingerprint.js";
+import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker, decodeJpeg, encodeJpeg, hashQuery, rotate180 } from "../lib/fingerprint.js";
 import { identify, identifyOriented, DEFAULT_THRESHOLDS } from "../lib/scanner.js";
-import { nameSimilarity } from "../lib/ocr.js";
+import { hasBinary, nameSimilarity } from "../lib/ocr.js";
 import { startServer } from "./helpers/server.js";
+import { synth } from "./helpers/images.js";
 
-// Seeded procedural "card" (as in fingerprint.test.js).
-function synth(seed, w = 146, h = 204) {
-  let s = seed * 9301 + 49297;
-  const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-  const data = new Uint8Array(w * h * 3);
-  const bg = [rnd() * 255, rnd() * 255, rnd() * 255];
-  const shapes = Array.from({ length: 14 }, () => ({
-    x0: rnd() * w, y0: rnd() * h, rx: 8 + rnd() * w / 3, ry: 8 + rnd() * h / 3, c: [rnd() * 255, rnd() * 255, rnd() * 255], e: rnd() < 0.5,
-  }));
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let c = bg;
-      for (const sh of shapes) {
-        const dx = (x - sh.x0) / sh.rx, dy = (y - sh.y0) / sh.ry;
-        if (sh.e ? dx * dx + dy * dy < 1 : Math.abs(dx) < 1 && Math.abs(dy) < 1) c = sh.c;
-      }
-      const shade = 60 * (x / w) - 50 * (y / h);
-      data.set(c.map((v) => Math.max(0, Math.min(255, Math.round(v * 0.7 + shade + 40)))), (y * w + x) * 3);
-    }
-  }
-  return { width: w, height: h, channels: 3, data };
-}
+const HAS_DJPEG = await hasBinary("djpeg");
+const HAS_CJPEG = await hasBinary("cjpeg");
 
 const ID = (i) => `00000000-0000-0000-0000-${String(i).padStart(12, "0")}`;
 const URL_OF = (i) => `https://cards.scryfall.io/small/front/0/0/${ID(i)}.jpg`;
@@ -229,7 +210,7 @@ describe("MatcherWorker", () => {
       const t0 = Date.now();
       assert.equal(await late.whenReady(), true);
       assert.ok(Date.now() - t0 >= 350);
-      if (hasDjpeg() && !spawnSync("cjpeg", ["-version"], { stdio: "ignore" }).error) {
+      if (HAS_DJPEG && HAS_CJPEG) {
         const img = synth(3, 292, 408);
         const ppm = Buffer.concat([Buffer.from(`P6\n${img.width} ${img.height}\n255\n`), Buffer.from(img.data)]);
         const jpg = spawnSync("cjpeg", ["-quality", "95"], { input: ppm }).stdout;
@@ -241,7 +222,7 @@ describe("MatcherWorker", () => {
     }
   });
 
-  test("upside-down card: the worker hashes the turned pixels; identifyOriented finds the card", { skip: !(hasDjpeg() && hasCjpeg()) && "djpeg/cjpeg not installed" }, async () => {
+  test("upside-down card: the worker hashes the turned pixels; identifyOriented finds the card", { skip: !(HAS_DJPEG && HAS_CJPEG) && "djpeg/cjpeg not installed" }, async () => {
     const jpg = await encodeJpeg(rotate180(synth(3, 292, 408)), { quality: 95 });
     // Title OCR stub: reads the card only from the turned PGM the retry hands it.
     const ocr = {

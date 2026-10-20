@@ -7,7 +7,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
-  classifySeparator, cropFrac, decodeGray, digitize, encodePgm, invert, matchSetCode, nameSimilarity,
+  classifySeparator, cropFrac, decodeGray, digitize, encodePgm, hasBinary, invert, matchSetCode, nameSimilarity,
   ocrTools, parseCollectorText, parseLegacy, parsePnm, parseTsv, PRINTED_LANGS, readCollectorLine, readTitle, rotateGray180,
   rotatedOcrInputs, tessLangFor, wlev,
 } from "../lib/ocr.js";
@@ -356,7 +356,7 @@ describe("nameSimilarity", () => {
 // Binary-dependent tests (run in the app image, skipped elsewhere)
 
 const tools = await ocrTools();
-const hasCjpeg = spawnSync("cjpeg", ["-version"]).error == null;
+const hasCjpeg = await hasBinary("cjpeg");
 const skipBins = !(tools.tesseract && tools.djpeg && hasCjpeg) && "tesseract/djpeg/cjpeg not installed";
 
 function jpegOf(img) {

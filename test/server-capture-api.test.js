@@ -1,5 +1,5 @@
 // HTTP layer of the v0.5.0 scanner additions (server.js): POST /api/scan's
-// capture / dup_of validation and price_eur, the /increment {capture} body,
+// capture validation and price_eur, the /increment {capture} body,
 // GET /api/scans/capture-log and the record-session routes
 // (/api/debug/frames, /api/debug/sessions) and the perf beacon (/api/debug/perf). Real server on a free port,
 // temp DB, a one-printing card index; offline.
@@ -14,14 +14,11 @@ import { openIndex, refreshIndex } from "../lib/cardindex.js";
 import { stageScan } from "../lib/scans.js";
 import { ID, SCRYFALL_CARDS, seedCards } from "./fixtures.js";
 import { startServer } from "./helpers/server.js";
+import { fakeJpeg } from "./helpers/scan.js";
 
 let srv, dir, base, call, debugDir, staged;
 
-// A JPEG header the size check accepts (SOF0 64x64); its data is garbage, so identify() fails cleanly.
-function fakeJpeg() {
-  const sof = Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x40, 0x00, 0x40, 0x03, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
-  return Buffer.concat([Buffer.from([0xff, 0xd8]), sof, Buffer.alloc(200, 0x55), Buffer.from([0xff, 0xd9])]);
-}
+// fakeJpeg: a JPEG header the size check accepts (SOF0 64x64); its data is garbage, so identify() fails cleanly.
 const smallJpeg = (n = 2000) => { const b = Buffer.alloc(n, 3); b[0] = 0xff; b[1] = 0xd8; b[2] = 0xff; return b; };
 
 before(async () => {
@@ -58,12 +55,10 @@ before(async () => {
 after(() => srv?.stop());
 
 describe("POST /api/scan capture fields", () => {
-  test("bad capture / dup_of are 400 before anything runs", async () => {
+  test("a bad capture is 400 before anything runs", async () => {
     const card = fakeJpeg().toString("base64");
     assert.equal((await call("POST", "/api/scan", { card, capture: [1] })).status, 400);
     assert.equal((await call("POST", "/api/scan", { card, capture: "x" })).status, 400);
-    assert.equal((await call("POST", "/api/scan", { card, dup_of: "abc" })).status, 400);
-    assert.equal((await call("POST", "/api/scan", { card, dup_of: -2 })).status, 400);
     const bad = await call("POST", "/api/scan", { card, settings: { precise: "yes" } });
     assert.equal(bad.status, 400);
     assert.match(bad.body.error, /precise/);
@@ -76,7 +71,7 @@ describe("POST /api/scan capture fields", () => {
 
   test("an unidentifiable photo: result carries price_eur null; its capture record reaches the log", async () => {
     const r = await call("POST", "/api/scan", {
-      card: fakeJpeg().toString("base64"), allowClaude: false, capture: { kind: "new", d: 0.3, fallback: true, quad_source: "default", junk: "x" },
+      card: fakeJpeg().toString("base64"), allowClaude: false, capture: { kind: "manual", d: 0.3, fallback: true, quad_source: "default", junk: "x" },
     });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.scan, null);
@@ -97,11 +92,11 @@ describe("POST /api/scans/:id/increment", () => {
     assert.equal(r.status, 200);
     r = await call("POST", `/api/scans/${staged.id}/increment`, {});
     assert.equal(r.status, 200);
-    r = await call("POST", `/api/scans/${staged.id}/increment`, { capture: { kind: "chip", d: 0.05, chip: { label: "same", d: 0.05 } } });
+    r = await call("POST", `/api/scans/${staged.id}/increment`, { capture: { kind: "manual", d: 0.05, chip: { label: "same" } } });
     assert.equal(r.status, 200);
     assert.equal(r.body.quantity, 4);
     const f = (await call("GET", `/api/scans/${staged.id}?features=1`)).body.features;
-    assert.deepEqual(f.capture_events.map((e) => [e.event, e.q, e.capture.chip.label]), [["increment", 4, "same"]]);
+    assert.deepEqual(f.capture_events.map((e) => [e.event, e.q, e.capture.d, e.capture.chip]), [["increment", 4, 0.05, undefined]]);
     const log = await call("GET", "/api/scans/capture-log");
     assert.equal(log.status, 200);
     assert.ok(log.body.scans.some((s) => s.id === staged.id && s.capture_events.length === 1));
