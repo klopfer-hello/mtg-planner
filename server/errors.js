@@ -13,7 +13,7 @@ import { BuildError } from "../lib/deckbuild.js";
 import { DeckHistoryError } from "../lib/deckhistory.js";
 import { DeckError } from "../lib/deckrules.js";
 import { DownloadError } from "../lib/downloads.js";
-import { ScanError } from "../lib/scans.js";
+import { ScanError } from "../lib/scanrow.js";
 import { SpellbookError } from "../lib/spellbook.js";
 import { WishlistError } from "../lib/wishlist.js";
 

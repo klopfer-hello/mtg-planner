@@ -11,10 +11,11 @@ import path from "node:path";
 import { SCHEMA_VERSION, openDb } from "../lib/db.js";
 import { importManaBoxCsv } from "../lib/manabox.js";
 import { deckDetail } from "../lib/decks.js";
-import {
-  ScanError, commitScans, deleteBinder, deleteScan, exportCalibration, getScan, incrementScan, listBinders, listScans,
-  recordTruth, renameBinder, scanImagePath, scanStripPath, stageScan, undoLast, updateScan,
-} from "../lib/scans.js";
+import { ScanError, getScan, scanImagePath, scanStripPath } from "../lib/scanrow.js";
+import { commitScans } from "../lib/scancommit.js";
+import { deleteBinder, listBinders, renameBinder } from "../lib/binders.js";
+import { deleteScan, incrementScan, listScans, recordTruth, stageScan, undoLast, updateScan } from "../lib/scans.js";
+import { exportCalibration } from "../lib/scanlabels.js";
 import { ID, SCRYFALL_CARDS, seedCards, seedCollection, stubScryfall, tempDb } from "./fixtures.js";
 
 // Index-shaped printings for fixture cards (same ids, so the Scryfall stub resolves them).

@@ -17,9 +17,9 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { openDb } from "../lib/db.js";
 import { openIndex, refreshIndex } from "../lib/cardindex.js";
-import {
-  PROBE_SESSION_RE, ProbeRunner, captureLog, createScanSlots, deleteScan, getScan, listScans, probeKey, stageScan, undoLast,
-} from "../lib/scans.js";
+import { PROBE_SESSION_RE, ProbeRunner, createScanSlots, deleteScan, listScans, probeKey, stageScan, undoLast } from "../lib/scans.js";
+import { captureLog } from "../lib/scancapture.js";
+import { getScan } from "../lib/scanrow.js";
 import { ID, SCRYFALL_CARDS, seedCards, tempDb } from "./fixtures.js";
 
 const fx = (id) => SCRYFALL_CARDS.find((c) => c.id === id);

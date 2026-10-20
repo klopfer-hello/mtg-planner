@@ -18,7 +18,8 @@ import * as indexModule from "../lib/cardindex.js";
 import { deckDetail, saveDeckRows } from "../lib/decks.js";
 import { eurForFinish, eurOfPrinting } from "../lib/prices.js";
 import { syncEnglishPrices } from "../lib/prices.js";
-import { commitScans, priceScans, stageScan, updateScan, listScans } from "../lib/scans.js";
+import { commitScans } from "../lib/scancommit.js";
+import { priceScans, stageScan, updateScan, listScans } from "../lib/scans.js";
 import { searchCollection } from "../lib/query.js";
 import { tempDb } from "./fixtures.js";
 

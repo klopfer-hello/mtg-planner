@@ -8,10 +8,13 @@ import { STORE_AS_SCANNED } from "../../lib/cardindex.js";
 import { checkJpegSize } from "../../lib/fingerprint.js";
 import { learningReport } from "../../lib/learning.js";
 import { decideFinish, identifyOriented, printingSummary, scanPriceEur } from "../../lib/scanner.js";
+import { CONDITIONS, getScan, normFinish, scanImagePath, scanStripPath } from "../../lib/scanrow.js";
+import { LABEL_SOURCES, exportCalibration } from "../../lib/scanlabels.js";
 import {
-  CONDITIONS, LABEL_SOURCES, PROBE_SESSION_RE, captureLog, commitScans, deleteScan, exportCalibration, getScan, incrementScan,
-  listScans, normFinish, priceScans, probeKey, recordTruth, scanImagePath, scanStripPath, stageScan, undoLast, updateScan,
+  PROBE_SESSION_RE, deleteScan, incrementScan, listScans, priceScans, probeKey, recordTruth, stageScan, undoLast, updateScan,
 } from "../../lib/scans.js";
+import { captureLog } from "../../lib/scancapture.js";
+import { commitScans } from "../../lib/scancommit.js";
 import { throwImportError } from "../errors.js";
 import { HttpError, optString, readJson, sendEmpty, sendFile, sendJson } from "../http.js";
 

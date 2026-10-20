@@ -8,9 +8,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  CAPTURE_EVENTS_MAX, CAPTURE_MAX_BYTES, captureLog, commitScans, getScan, incrementScan, sanitizeCapture, stageScan, undoLast,
-} from "../lib/scans.js";
+import { CAPTURE_EVENTS_MAX, CAPTURE_MAX_BYTES, captureLog, sanitizeCapture } from "../lib/scancapture.js";
+import { commitScans } from "../lib/scancommit.js";
+import { getScan } from "../lib/scanrow.js";
+import { incrementScan, stageScan, undoLast } from "../lib/scans.js";
 import { ID, SCRYFALL_CARDS, seedCards, stubScryfall, tempDb } from "./fixtures.js";
 
 const fx = (id) => SCRYFALL_CARDS.find((c) => c.id === id);

@@ -12,10 +12,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb } from "../lib/db.js";
-import {
-  ProbeRunner, commitScans, createScanSlots, exportCalibration, getScan, incrementScan, recordTruth, scanImagePath, stageScan, undoLast,
-  updateScan,
-} from "../lib/scans.js";
+import { ProbeRunner, createScanSlots, incrementScan, recordTruth, stageScan, undoLast, updateScan } from "../lib/scans.js";
+import { commitScans } from "../lib/scancommit.js";
+import { exportCalibration } from "../lib/scanlabels.js";
+import { getScan, scanImagePath } from "../lib/scanrow.js";
 import { DEFAULT_THRESHOLDS } from "../lib/scanner.js";
 import { LEARNING_METRICS, blockersOf, evidenceOf, learningReport, relaxOf } from "../lib/learning.js";
 import { ID, SCRYFALL_CARDS, seedCards, stubScryfall, tempDb } from "./fixtures.js";

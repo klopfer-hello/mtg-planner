@@ -10,7 +10,7 @@ import {
   backupConfig, backupPath, createBackup, dbCounts, deleteBackup, gunzipToFile, listBackups, swapDatabase, validateBackupDb,
 } from "../../lib/backups.js";
 import { SCHEMA_VERSION, openDb, setAppMeta } from "../../lib/db.js";
-import { defaultImageDir } from "../../lib/scans.js";
+import { defaultImageDir } from "../../lib/scanrow.js";
 import { pruneSpellbookCache, seedSpellbookSettings, spellbookOptedOut } from "../../lib/spellbook.js";
 import { HttpError, contentType, decodeParam, readBody, readJson, sendEmpty, sendFile, sendJson } from "../http.js";
 

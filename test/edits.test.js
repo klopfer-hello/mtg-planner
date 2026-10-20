@@ -13,7 +13,7 @@ import { deckDetail, saveDeckRows } from "../lib/decks.js";
 import { importManaBoxCsv } from "../lib/manabox.js";
 import { deleteCopies, editCopies, listEdits, relanguageScans, undoEdit } from "../lib/edits.js";
 import { normalizeCard } from "../lib/scryfall.js";
-import { commitScans } from "../lib/scans.js";
+import { commitScans } from "../lib/scancommit.js";
 import { ID, SCRYFALL_CARDS, seedCards, stubScryfall, tempDb } from "./fixtures.js";
 
 let ctx;
