@@ -157,11 +157,11 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
     try {
       const res = await api(`/api/decks/${id}/cards/bulk`, { method: "POST", json: {
         action, to_board: toBoard, items: rows.map((c) => ({ name: c.name, board: c.board })) } });
-      if (res && Array.isArray(res.cards)) setDeck(res); else load();
+      setDeck(res);
       stopSelecting();
       showToast(action === "remove"
-        ? `Removed ${plural(res?.change?.rows ?? rows.length, "card")}.`
-        : `Moved ${plural(res?.change?.rows ?? rows.length, "card")} to ${BOARD_LABEL[toBoard]}.`);
+        ? `Removed ${plural(res.change.rows, "card")}.`
+        : `Moved ${plural(res.change.rows, "card")} to ${BOARD_LABEL[toBoard]}.`);
       onChanged();
     } catch (err) {
       setActionError(err.message);
@@ -172,7 +172,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
   };
   const afterAdd = (res) => {
     setAdding(null);
-    if (res && Array.isArray(res.cards)) setDeck(res); else load();
+    if (res) setDeck(res);
     const c = res?.change;
     if (c) showToast(`Added ${c.added}× ${c.name} to ${BOARD_LABEL[c.board] || c.board}.`);
     onChanged();
@@ -184,12 +184,10 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
     setCardBusy(true);
     setCardError(null);
     try {
-      const res = await api(path, { method, json });
-      const next = res && Array.isArray(res.cards) ? res : res && Array.isArray(res.deck?.cards) ? res.deck : null;
-      if (next) setDeck(next);
-      else load();
+      const next = await api(path, { method, json });
+      setDeck(next);
       if (kind !== "qty") setActionCard(null);
-      else if (next) {
+      else {
         const c = next.cards.find((x) => x.board === json.board && x.name === json.name);
         setActionCard(c ? { board: c.board, name: c.name } : null);
       }

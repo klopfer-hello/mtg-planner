@@ -80,31 +80,22 @@ function BarList({ rows, label }) {
 const CHANGE_PERIODS = [["today", "Today"], ["d7", "7 days"], ["d30", "30 days"]];
 
 function ValueOverview({ dataVersion, onOpenCard }) {
-  const [sum, setSum] = useState(null);
-  const [error, setError] = useState(null);
+  const valueError = (e) => `Could not load the collection value: ${e.message}`;
+  const sumQ = useApi("/api/finance/summary", [dataVersion], { error: valueError });
+  const topQ = useApi("/api/finance/top?limit=20", [dataVersion], { error: valueError });
   const [range, setRange] = useState(() => store.get("mtg.value.range", 90));
-  const [hist, setHist] = useState(null);
   const [period, setPeriod] = useState(null);
   const [moverDays, setMoverDays] = useState(7);
-  const [movers, setMovers] = useState(null);
-  const [top, setTop] = useState(null);
-  const load = useCallback(() => {
-    setError(null);
-    Promise.all([api("/api/finance/summary"), api("/api/finance/top?limit=20")])
-      .then(([s, t]) => { setSum(s); setTop(t); })
-      .catch((e) => setError(`Could not load the collection value: ${e.message}`));
-  }, []);
-  useEffect(load, [load, dataVersion]);
-  useEffect(() => {
-    store.set("mtg.value.range", range);
-    api(`/api/finance/history?days=${range}`).then(setHist).catch(() => setHist(null));
-  }, [range, dataVersion]);
-  useEffect(() => {
-    api(`/api/finance/movers?days=${moverDays}&limit=8`).then(setMovers).catch(() => setMovers(null));
-  }, [moverDays, dataVersion]);
+  useEffect(() => { store.set("mtg.value.range", range); }, [range]);
+  const histQ = useApi(`/api/finance/history?days=${range}`, [dataVersion]);
+  const moversQ = useApi(`/api/finance/movers?days=${moverDays}&limit=8`, [dataVersion]);
+  const sum = sumQ.data, top = topQ.data;
+  const hist = histQ.error ? null : histQ.data;
+  const movers = moversQ.error ? null : moversQ.data;
 
-  if (error) return <ErrorNotice error={error} onRetry={load} />;
-  if (!sum) return <Spinner label="Loading value…" />;
+  const error = sumQ.error ?? topQ.error;
+  if (error) return <ErrorNotice error={error} onRetry={() => { sumQ.reload(); topQ.reload(); }} />;
+  if (!sum || !top) return <Spinner label="Loading value…" />;
   const ch = sum.changes || {};
   const sel = period && ch[period] ? period : CHANGE_PERIODS.map(([k]) => k).find((k) => ch[k]) || null;
   const c = sel ? ch[sel] : null;
@@ -235,25 +226,23 @@ const ADD_BOARDS = ["main", "side", "maybe", "commander"];
  * POST /api/decks/:id/cards; onDone(res) gets the deck detail + change.
  */
 function AddToDeckSheet({ card, deck: fixedDeck = null, onClose, onDone }) {
-  const [decks, setDecks] = useState(fixedDeck ? [fixedDeck] : null);
+  const { data: loaded, error: decksError } = useApi(fixedDeck ? null : "/api/decks", [], {
+    map: (d) => d.slice().sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || ""))),
+    error: (e) => `Could not load decks: ${e.message}`,
+  });
+  const decks = fixedDeck ? [fixedDeck] : loaded;
   const [deckId, setDeckId] = useState(fixedDeck?.id ?? null);
   const [board, setBoard] = useState("main");
   const [qty, setQty] = useState(1);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
+  const [actionError, setError] = useState(null);
+  const error = actionError ?? decksError;
+  // The last deck used, else the newest one.
   useEffect(() => {
-    if (fixedDeck) return undefined;
-    let live = true;
-    api("/api/decks").then((d) => {
-      if (!live) return;
-      const list = asList(d).slice().sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
-      setDecks(list);
-      const last = Number(store.get("mtg.addToDeck.last", 0));
-      setDeckId(list.some((x) => x.id === last) ? last : list[0]?.id ?? null);
-    }).catch((e) => { if (live) setError(`Could not load decks: ${e.message}`); });
-    return () => { live = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!loaded) return;
+    const last = Number(store.get("mtg.addToDeck.last", 0));
+    setDeckId(loaded.some((x) => x.id === last) ? last : loaded[0]?.id ?? null);
+  }, [loaded]);
   const target = decks?.find((d) => d.id === deckId) ?? null;
   const submit = async (e) => {
     e.preventDefault();
@@ -420,16 +409,13 @@ function WishRow({ it, onEdit, onRemove, selecting = false, selected = false, on
 }
 
 function WishlistView({ dataVersion, onChanged }) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
+  const { data, error: loadError, reload } = useApi("/api/wishlist", [dataVersion], { error: (e) => `Could not load the wishlist: ${e.message}` });
+  const [actionError, setError] = useState(null);
+  const error = actionError ?? loadError;
+  const load = () => { setError(null); reload(); };
   const [picking, setPicking] = useState(false);
   const [sheet, setSheet] = useState(null); // {card} | {item}
   const [notice, setNotice] = useState(null);
-  const load = useCallback(() => {
-    setError(null);
-    api("/api/wishlist").then(setData).catch((e) => setError(`Could not load the wishlist: ${e.message}`));
-  }, []);
-  useEffect(load, [load, dataVersion]);
   const done = (res) => {
     setSheet(null);
     setNotice(res?.removed ? `Removed ${res.removed.name}.` : res?.merged ? `${res.item.name}: now ${res.item.quantity} wanted.` : res?.item ? `Saved ${res.item.name}.` : null);

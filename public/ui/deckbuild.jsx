@@ -17,17 +17,12 @@ const BUILD_GROUP_HINT = {
  * (stored on the server, so it works across devices), then "Put into deck box" / "Mark as built".
  */
 function BuildSheet({ deck, onClose, onSetBuilt, onCollectionChanged, onOpenCard }) {
-  const [list, setList] = useState(null);
+  const { data: list, error: loadError, reload: load, setData: setList } = useApi(`/api/decks/${deck.id}/build`);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(null); // line id being saved
   const [hidePicked, setHidePicked] = useState(false);
   const [boxing, setBoxing] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
-  const load = useCallback(() => {
-    setError(null);
-    api(`/api/decks/${deck.id}/build`).then(setList).catch((e) => setError(e.message));
-  }, [deck.id]);
-  useEffect(load, [load]);
 
   const lineId = (l) => `${l.key}\u0000${l.source}`;
   const toggle = async (l) => {
@@ -76,8 +71,8 @@ function BuildSheet({ deck, onClose, onSetBuilt, onCollectionChanged, onOpenCard
   );
   return (
     <Sheet title={`Build: ${deck.name}`} onClose={onClose} pinned={progress}>
-      {!list && !error && <Spinner label="Loading the list…" />}
-      <ErrorNotice error={error} onRetry={list ? null : load} onDismiss={list ? () => setError(null) : null} />
+      {!list && !loadError && <Spinner label="Loading the list…" />}
+      <ErrorNotice error={error ?? loadError} onRetry={list ? null : load} onDismiss={list && error ? () => setError(null) : null} />
       {list && (
         <div className="stack">
           {total === 0 && <div className="empty"><h3>Nothing to pick</h3><span>This deck has no cards yet.</span></div>}
@@ -116,7 +111,7 @@ function BuildSheet({ deck, onClose, onSetBuilt, onCollectionChanged, onOpenCard
                           {l.local_name && l.local_name !== l.name && <span className="de">({l.local_name})</span>}
                           {l.mana_cost ? <ManaCost cost={l.mana_cost} /> : null}
                           {l.commander && <span className="badge accent">commander</span>}
-                          {g.kind === "other" && <span className="small muted">{(l.locked ?? l.box) ? "🔒 " : ""}in {l.binder || UNSORTED}{(l.locked ?? l.box) && !asList(l.decks).length ? " · locked" : ""}{asList(l.decks).length ? ` · ${asList(l.decks).join(", ")}` : ""}</span>}
+                          {g.kind === "other" && <span className="small muted">{l.locked ? "🔒 " : ""}in {l.binder || UNSORTED}{l.locked && !asList(l.decks).length ? " · locked" : ""}{asList(l.decks).length ? ` · ${asList(l.decks).join(", ")}` : ""}</span>}
                           {l.token && l.pt && <span className="badge">{l.pt}</span>}
                           {l.token && <span className="small muted">{l.need ? `need · you own none${l.estimate_note ? ` · ${l.estimate_note}` : ""}` : `in ${l.binder || UNSORTED}`}</span>}
                           {l.marker && asList(l.from).length > 0 && <span className="small muted">{asList(l.from).join(", ")}</span>}
@@ -202,15 +197,10 @@ function DeckDiff({ diff, empty = "No card changes." }) {
 
 /** Deck history: versions newest first; tap one for its changes and "Restore this version". */
 function HistorySheet({ deck, onClose, onRestored }) {
-  const [data, setData] = useState(null);
+  const { data, error: loadError, reload: load } = useApi(`/api/decks/${deck.id}/history`);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(null); // version detail
   const [busy, setBusy] = useState(false);
-  const load = useCallback(() => {
-    setError(null);
-    api(`/api/decks/${deck.id}/history`).then(setData).catch((e) => setError(e.message));
-  }, [deck.id]);
-  useEffect(load, [load]);
   const show = async (v) => {
     setError(null);
     setBusy(true);
@@ -234,7 +224,8 @@ function HistorySheet({ deck, onClose, onRestored }) {
     <Sheet title={open ? "Version" : `History: ${deck.name}`} onClose={onClose}
       actions={open ? <button type="button" className="btn ghost sm" onClick={() => setOpen(null)}><Icon.back /> List</button> : null}>
       <ErrorNotice error={error} onDismiss={() => setError(null)} />
-      {!open && !data && !error && <Spinner label="Loading history…" />}
+      <ErrorNotice error={loadError} onRetry={load} />
+      {!open && !data && !loadError && <Spinner label="Loading history…" />}
       {!open && data && (
         <div className="stack" style={{ gap: 8 }}>
           <p className="small muted" style={{ margin: 0 }}>Every change is saved. Tap a version to see what changed. The newest {fmtInt(data.keep)} are kept.</p>
@@ -280,16 +271,10 @@ function HistorySheet({ deck, onClose, onRestored }) {
 
 /** Market → To buy: everything short across all BUILT decks, plus what each deck still misses. */
 function ShoppingListView({ dataVersion, onOpenDeck, onOpenWishlist, onWishChanged }) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-  const load = useCallback(() => {
-    setError(null);
-    api("/api/shopping-list").then(setData).catch((e) => setError(`Could not load the shopping list: ${e.message}`));
-  }, []);
-  useEffect(load, [load, dataVersion]);
-  const items = asList(data?.built?.items).filter((x) => x && x.name);
-  const perDeck = asList(data?.per_deck).filter((d) => d && d.id != null);
-  const wishItems = asList(data?.wishlist?.items).filter((x) => x && x.name);
+  const { data, error, reload: load } = useApi("/api/shopping-list", [dataVersion], { error: (e) => `Could not load the shopping list: ${e.message}` });
+  const items = asList(data?.built?.items);
+  const perDeck = asList(data?.per_deck);
+  const wishItems = asList(data?.wishlist?.items);
   const wish = useWishAdd(() => { onWishChanged?.(); load(); });
   return (
     <div className="stack-lg">
@@ -306,7 +291,7 @@ function ShoppingListView({ dataVersion, onOpenDeck, onOpenWishlist, onWishChang
                   <span className="small muted">Cards your built decks need together, minus what you own.</span>
                   <BuyList items={items} qtyKey="short" total={data.built?.total_eur}
                     onWish={(it) => wish.add([{ ...it, qty: it.short }])} isWished={wish.isAdded}
-                    sub={(it) => asList(it.decks).length > 0 && <span className="sub">{asList(it.decks).map(refName).join(", ")}</span>} />
+                    sub={(it) => asList(it.decks).length > 0 && <span className="sub">{asList(it.decks).map((d) => d.name).join(", ")}</span>} />
                   <div className="list-actions">
                     <a className="btn sm" href="/api/shopping-list/export" download="To buy.txt"><Icon.download /> Export list</a>
                   </div>

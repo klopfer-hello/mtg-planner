@@ -180,9 +180,9 @@ function ScanTab({ active, health, onCommitted }) {
   const loadScans = useCallback(async () => {
     try {
       const d = await api("/api/scans?status=staged");
-      const list = asList(d, "scans", "rows").slice().sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
+      const list = asList(d, "scans").slice().sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
       setScans(list);
-      setScanTotals(d && !Array.isArray(d) ? d.totals?.staged ?? null : null);
+      setScanTotals(d.totals?.staged ?? null);
       setListError(null);
       setSelected((sel) => new Set([...sel].filter((id) => list.some((s) => s.id === id))));
     } catch (e) {
@@ -474,13 +474,11 @@ function ScanTab({ active, health, onCommitted }) {
     if (settingsRef.current.calibration) setSheet((sh) => sh || { type: "truth", entry: { scan, result: r, preview, payload: body } });
   }
 
-  // Re-send a body already sent once (Send again, Retry, Different card, Ask Claude). The server's
-  // dup_of (the removed beta.1 "Same card?" chip) is never sent by this UI.
+  // Re-send a body already sent once (Send again, Retry, Different card, Ask Claude).
   const resend = (body, preview, extra = {}) => {
     const b = { ...body, ...extra };
     for (const k of Object.keys(b)) if (b[k] == null) delete b[k];
     delete b.mode;
-    delete b.dup_of;
     if (!queueRef.current) return;
     const { capture, allowClaude, force, ...rest } = b;
     pushItem({ id: null, payload: { body: rest, preview }, capture: capture || null, allowClaude: allowClaude !== false, force: Boolean(force) });
@@ -489,7 +487,7 @@ function ScanTab({ active, health, onCommitted }) {
   // The upload queue's callbacks (latest closures).
   handlers.current = {
     send: (item) => {
-      const { capture: _c, allowClaude: _a, dup_of: _d, force: _f, ...rest } = item.payload?.body || {};
+      const { capture: _c, allowClaude: _a, force: _f, ...rest } = item.payload?.body || {};
       const body = { ...rest, allowClaude: item.allowClaude !== false };
       if (item.capture) body.capture = item.capture;
       if (item.force) body.force = true;

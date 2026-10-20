@@ -12,16 +12,14 @@ const Bullets = ({ items }) => (items?.length ? <ul className="guide-ul">{items.
  * polls every 4 s while pending; facts only without a Claude token). Shows the whole guide.
  */
 function GuideSheet({ deck, onClose }) {
-  const [state, setState] = useState(null);
+  const { data: state, error: loadError, reload, setData: setState } = useApi(`/api/decks/${deck.id}/guide`);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const load = useCallback(() => api(`/api/decks/${deck.id}/guide`).then(setState).catch((e) => setError(e.message)), [deck.id]);
-  useEffect(() => { load(); }, [load]);
   useEffect(() => {
     if (state?.status !== "pending") return undefined;
-    const t = setTimeout(load, 4000);
+    const t = setTimeout(reload, 4000);
     return () => clearTimeout(t);
-  }, [state, load]);
+  }, [state, reload]);
   const write = async (factsOnly = false) => {
     setBusy(true); setError(null);
     try { setState(await api(`/api/decks/${deck.id}/guide`, { method: "POST", json: factsOnly ? { facts_only: true } : {} })); }
@@ -36,7 +34,8 @@ function GuideSheet({ deck, onClose }) {
     <Sheet title={`Guide: ${deck.name}`} onClose={onClose}>
       <div className="stack guide">
         <ErrorNotice error={error} onDismiss={() => setError(null)} />
-        {!state && !error && <Spinner />}
+        <ErrorNotice error={loadError} onRetry={reload} />
+        {!state && !error && !loadError && <Spinner />}
         {pending && (
           <div className="notice" role="status"><Spinner label="" /><div className="grow">Claude is writing your guide. This takes about half a minute; you can close this and come back.</div></div>
         )}

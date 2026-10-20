@@ -117,7 +117,7 @@ function DeckImportForm({ onCreated, onCancel }) {
   );
 }
 
-/** Compact "✗ 80 to buy" / "⇄ 8 in use" for list rows (old servers: missing_count). */
+/** Compact "✗ 80 to buy" / "⇄ 8 in use" for list rows. */
 function DeckNeedBadges({ d }) {
   const { toBuy, inUse } = deckCounts(d);
   return (
@@ -199,14 +199,8 @@ function DeckList({ dataVersion, onOpen, refreshKey, notice = null, onCollection
   const [filter, setFilter] = useState(loadDeckFilter);
   useEffect(() => { store.set(DECK_FILTER_KEY, filter); }, [filter]);
   useEffect(() => setHideNotice(false), [notice]);
-  const [decks, setDecks] = useState(null);
-  const [error, setError] = useState(null);
+  const { data: decks, error, reload: load } = useApi("/api/decks", [dataVersion, refreshKey], { error: (e) => `Could not load decks: ${e.message}` });
   const [showForm, setShowForm] = useState(false);
-  const load = useCallback(() => {
-    setError(null);
-    api("/api/decks").then(setDecks).catch((e) => setError(`Could not load decks: ${e.message}`));
-  }, []);
-  useEffect(load, [load, dataVersion, refreshKey]);
   const all = decks || [];
   const formats = [...new Set(all.map(deckFormatKey).filter(Boolean))].sort();
   // A remembered format that no deck has any more is dropped from the filter.
@@ -314,39 +308,28 @@ function DeckList({ dataVersion, onOpen, refreshKey, notice = null, onCollection
   );
 }
 
-// Allocation per deck row (v0.3.1): to_buy = copies you don't own at all
-// (the only "missing" ones); in_use = owned copies claimed by other built
-// decks (can be moved). Older servers only send `missing`: then it is to_buy.
-const cardToBuy = (c) => (c && !c.basic ? Math.max(0, Number(c.to_buy ?? c.missing) || 0) : 0);
+// Allocation per deck row (v0.3.1): to_buy = copies you don't own at all;
+// in_use = owned copies claimed by other built decks (can be moved).
+const cardToBuy = (c) => (c && !c.basic ? Math.max(0, Number(c.to_buy) || 0) : 0);
 const cardInUse = (c) => (c && !c.basic ? Math.max(0, Number(c.in_use) || 0) : 0);
 /** Other BUILT decks that use this card (names for the visible in-use line). */
-const builtElsewhereOf = (c) => {
-  const own = asList(c?.in_use_decks).filter((u) => u && (u.name || typeof u === "string"));
-  if (own.length) return own;
-  return asList(c?.used_elsewhere).filter((u) => u && (typeof u === "string" || (u.name && (!u.status || u.status === "built"))));
-};
-const deckNames = (list) => list.map(refName).filter((n, i, a) => a.indexOf(n) === i).join(", ");
+const builtElsewhereOf = (c) => asList(c?.used_elsewhere).filter((u) => u.status === "built");
+const deckNames = (list) => list.map((d) => d.name).filter((n, i, a) => a.indexOf(n) === i).join(", ");
 /** Locked binders holding this card (kept for another deck or for all): "X, Y". */
-const lockedOf = (c) => asList(c?.in_locked ?? c?.in_boxes).filter((b) => b && b.binder);
-const boxNames = (c) => lockedOf(c).map((b) => b.binder).filter((n, i, a) => a.indexOf(n) === i).join(", ");
+const boxNames = (c) => asList(c?.in_locked).map((b) => b.binder).filter((n, i, a) => a.indexOf(n) === i).join(", ");
 /** Copies of a deck row that lie in locked binders (part of in_use). */
-const cardInLocked = (c) => (c && !c.basic ? Math.max(0, Number(c.in_use_locked ?? c.in_use_box) || 0) : 0);
-/** Deck-level counts with fallbacks to the pre-0.3.1 fields. */
-function deckCounts(deck) {
-  const cards = asList(deck?.cards).filter((c) => c && c.board !== "maybe");
-  const toBuy = deck?.to_buy_count ?? deck?.missing_count ?? cards.reduce((a, c) => a + cardToBuy(c), 0);
-  const inUse = deck?.in_use_count ?? cards.reduce((a, c) => a + cardInUse(c), 0);
-  return {
-    toBuy: Number(toBuy) || 0,
-    inUse: Number(inUse) || 0,
-    toBuyEur: deck?.to_buy_eur ?? deck?.missing_cost_eur ?? deck?.missing_eur ?? deck?.value?.to_buy_eur ?? null,
-    inUseEur: deck?.in_use_eur ?? deck?.value?.in_use_eur ?? null,
-  };
-}
+const cardInLocked = (c) => (c && !c.basic ? Math.max(0, Number(c.in_use_locked) || 0) : 0);
+/** Deck-level counts of a deck detail, a deck list row or a shopping-list per_deck row. */
+const deckCounts = (deck) => ({
+  toBuy: Number(deck?.to_buy_count) || 0,
+  inUse: Number(deck?.in_use_count) || 0,
+  toBuyEur: deck?.to_buy_eur ?? null,
+  inUseEur: deck?.in_use_eur ?? null,
+});
 
 function DeckCardRow({ card, onOpenCard, onActions, selecting = false, selected = false, onToggle }) {
   const [peek, setPeek] = useState(false);
-  const elsewhere = asList(card.used_elsewhere).filter((u) => u && (u.name || typeof u === "string"));
+  const elsewhere = asList(card.used_elsewhere);
   const free = card.available_for_this;
   const hasFree = !card.basic && typeof free === "number";
   const freeText = hasFree ? `own ${card.owned ?? 0} · ${Math.max(0, free)} free` : null;
@@ -381,7 +364,7 @@ function DeckCardRow({ card, onOpenCard, onActions, selecting = false, selected 
     if (!inUse && !toBuy) {
       // Covered. Another built deck also using it (enough copies) stays a hint.
       const sharedTitle = builtElsewhere.length
-        ? `${conflict ? `Not enough copies (own ${card.owned ?? 0}). ` : ""}Also used in: ${builtElsewhere.map((u) => (typeof u === "string" ? u : `${u.name}${u.quantity ? ` (${u.quantity}×)` : ""}`)).join(", ")}`
+        ? `${conflict ? `Not enough copies (own ${card.owned ?? 0}). ` : ""}Also used in: ${builtElsewhere.map((u) => `${u.name}${u.quantity ? ` (${u.quantity}×)` : ""}`).join(", ")}`
         : null;
       if (sharedTitle && !conflict) badges.push(<span key="s" className={`badge ${conflict ? "bad" : "warn"}`} role="img" aria-label={sharedTitle} title={sharedTitle}>⚠</span>);
       badges.push(<span key="ok" className="badge ok" aria-label={`Owned (${card.owned})`} title={`You own ${card.owned}`}>✓</span>);
@@ -431,7 +414,7 @@ function DeckCardRow({ card, onOpenCard, onActions, selecting = false, selected 
               <span>In {asList(card.binders).length === 1 ? "binder" : "binders"}: {asList(card.binders).map((b) => `${b.binder || "Unsorted"} (${b.quantity})`).join(", ")}</span>
             )}
             {elsewhere.length > 0 && (
-              <span className="muted">Also in: {elsewhere.map((u) => (typeof u === "string" ? u : `${u.name}${u.status ? ` (${u.status})` : ""}${u.quantity ? ` ${u.quantity}×` : ""}`)).join(", ")}</span>
+              <span className="muted">Also in: {elsewhere.map((u) => `${u.name}${u.status ? ` (${u.status})` : ""}${u.quantity ? ` ${u.quantity}×` : ""}`).join(", ")}</span>
             )}
             <button type="button" className="btn sm" style={{ justifySelf: "start" }} onClick={() => onOpenCard(card.scryfall_id)}>Card details</button>
           </div>
@@ -442,11 +425,8 @@ function DeckCardRow({ card, onOpenCard, onActions, selecting = false, selected 
 }
 
 const MOVE_BOARDS = ["main", "side", "maybe"];
-/** commander_suggestions may be names or card objects. */
-const commanderSuggestions = (deck) => asList(deck?.commander_suggestions, "cards", "suggestions")
-  .map((x) => (typeof x === "string" ? { name: x } : x))
-  .filter((x) => x && x.name)
-  .filter((x, i, a) => a.findIndex((y) => y.name === x.name) === i);
+/** commander_suggestions: card objects, one per name (lib/decks.js commanderSuggestions). */
+const commanderSuggestions = (deck) => asList(deck?.commander_suggestions);
 // Same rule as the server (lib/decks.js isCommanderFormat): trimmed, case-insensitive.
 const isCommanderFormat = (deck) => String(deck?.format || "").trim().toLowerCase() === "commander";
 const hasCommander = (deck) => (deck?.counts?.commander ?? 0) > 0 || (deck?.cards || []).some((c) => c.board === "commander");

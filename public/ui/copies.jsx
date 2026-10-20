@@ -70,7 +70,7 @@ function EditCopySheet({ card, row, onClose, onDone }) {
   useEffect(() => {
     let alive = true;
     api(`/api/printings?${new URLSearchParams({ oracle_id: card.oracle_id })}`)
-      .then((d) => { if (alive) setPrints(asList(d, "printings", "rows").map(normPrinting).filter((p) => p && p.id)); })
+      .then((d) => { if (alive) setPrints(asList(d).map(normPrinting).filter((p) => p && p.id)); })
       .catch((e) => { if (alive) setPrintsError(e.status === 503 ? "The card index is not ready, so only this printing can be used." : e.message); });
     return () => { alive = false; };
   }, [card.oracle_id]);
@@ -372,18 +372,11 @@ function ExportPanel() {
 }
 
 function RecentChanges({ dataVersion, onChanged }) {
-  const [edits, setEdits] = useState(null);
-  const [error, setError] = useState(null);
-  const [missing, setMissing] = useState(false);
+  const { data: edits, error, reload: load } = useApi("/api/collection/edits?limit=50", [dataVersion],
+    { map: (d) => d.edits, error: (e) => `Could not load recent changes: ${e.message}` });
   const [busy, setBusy] = useState(null); // edit id being undone
   const [rowError, setRowError] = useState(null); // {id, text}
   const [all, setAll] = useState(false);
-  const load = useCallback(() => {
-    api("/api/collection/edits?limit=50")
-      .then((d) => { setEdits(asList(d, "edits")); setError(null); })
-      .catch((e) => { if (e.status === 404) setMissing(true); else setError(`Could not load recent changes: ${e.message}`); });
-  }, []);
-  useEffect(load, [load, dataVersion]);
   const undo = async (ed) => {
     if (!window.confirm(`Undo this change?\n\n${ed.summary}\n\nAn undo can't be redone.`)) return;
     setBusy(ed.id); setRowError(null);
@@ -395,7 +388,6 @@ function RecentChanges({ dataVersion, onChanged }) {
       setRowError({ id: ed.id, text: e.data?.code === "conflict" ? "Can't undo: these copies were changed again since. Undo the newer change first." : e.message });
     } finally { setBusy(null); }
   };
-  if (missing) return null;
   const shown = edits ? (all ? edits : edits.slice(0, 8)) : [];
   return (
     <section className="card stack" aria-labelledby="changes-title">

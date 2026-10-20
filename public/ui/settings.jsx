@@ -19,26 +19,20 @@ const IMPORT_AS_FILE = "\u0000file";
 const IMPORT_NEW_BINDER = "\u0000new";
 
 /**
- * Delta import lists: entries may be strings or objects
- * ({name, quantity|added|delta, binder, set_code, collector_number}).
+ * Delta import lists (lib/manabox.js): {name, set_code, collector_number, finish, binder, quantity}
+ * (negative for a decrease).
  */
-function deltaEntries(list, kind) {
-  return asList(list, "items", "cards").map((x, i) => {
-    if (typeof x === "string") return { key: i, text: x };
-    if (!x || typeof x !== "object") return null;
-    const raw = kind === "added"
-      ? (x.added ?? x.quantity ?? x.delta ?? x.diff ?? x.count)
-      : (x.decrease ?? x.decreased ?? x.fewer ?? x.missing ?? x.delta ?? x.diff ?? x.quantity ?? x.count);
-    const n = raw == null ? null : Math.abs(Number(raw));
+function deltaEntries(list) {
+  return asList(list).map((x, i) => {
     const where = [x.set_code ? `${String(x.set_code).toUpperCase()}${x.collector_number ? ` #${x.collector_number}` : ""}` : null,
       x.finish && x.finish !== "normal" ? x.finish : null, x.binder ? `in ${x.binder}` : null].filter(Boolean).join(" · ");
-    return { key: i, name: x.name || x.card || "?", n, where };
-  }).filter(Boolean);
+    return { key: i, name: x.name, n: Math.abs(x.quantity), where };
+  });
 }
 
 function DeltaLists({ s }) {
-  const added = deltaEntries(s.added ?? s.delta?.added, "added");
-  const fewer = deltaEntries(s.decreased ?? s.decreases ?? s.delta?.decreased, "decreased");
+  const added = deltaEntries(s.added);
+  const fewer = deltaEntries(s.decreased);
   if (!added.length && !fewer.length) {
     return s.mode === "delta" ? <p className="small muted" style={{ margin: 0 }}>Nothing new since the last ManaBox export.</p> : null;
   }
@@ -47,7 +41,7 @@ function DeltaLists({ s }) {
       {added.length > 0 && (
         <Collapsible label={`Added: ${plural(added.length, "row")}`}>
           <ul className="delta-list">
-            {added.map((a) => <li key={a.key}>{a.text ?? <><b>+{a.n ?? "?"}</b> {a.name}{a.where && <span className="muted"> · {a.where}</span>}</>}</li>)}
+            {added.map((a) => <li key={a.key}><b>+{a.n}</b> {a.name}{a.where && <span className="muted"> · {a.where}</span>}</li>)}
           {s.added_truncated > 0 && <li className="muted">… and {fmtInt(s.added_truncated)} more</li>}
           </ul>
         </Collapsible>
@@ -58,7 +52,7 @@ function DeltaLists({ s }) {
           <div className="grow stack" style={{ gap: 6 }}>
             <span><b>ManaBox has fewer copies of {plural(fewer.length, "card")}.</b> Nothing was removed here; delete them yourself if they are really gone.</span>
             <ul className="delta-list">
-              {fewer.map((f) => <li key={f.key}>{f.text ?? <>ManaBox has fewer copies of <b>{f.name}</b> (−{f.n ?? "?"}){f.where && <span> · {f.where}</span>}</>}</li>)}
+              {fewer.map((f) => <li key={f.key}>ManaBox has fewer copies of <b>{f.name}</b> (−{f.n}){f.where && <span> · {f.where}</span>}</li>)}
             {s.decreased_truncated > 0 && <li>… and {fmtInt(s.decreased_truncated)} more</li>}
             </ul>
           </div>
@@ -74,14 +68,14 @@ function ImportSummary({ s }) {
   const stats = [
     s.total_cards_before != null || s.total_cards_after != null
       ? [`${fmtInt(s.total_cards_before)} → ${fmtInt(s.total_cards_after)}`, `Copies (${delta >= 0 ? "+" : ""}${fmtInt(delta)})`] : null,
-    (s.added_copies ?? s.copies_added) != null && s.mode === "delta" ? [`+${fmtInt(s.added_copies ?? s.copies_added)}`, "Copies added"] : null,
+    s.added_copies != null && s.mode === "delta" ? [`+${fmtInt(s.added_copies)}`, "Copies added"] : null,
     s.printings_added != null && s.mode !== "delta" ? [`+${fmtInt(s.printings_added)}`, "Printings added"] : null,
     s.kept_app_copies ? [fmtInt(s.kept_app_copies), "Already sorted here"] : null,
     s.matched_edit_copies ? [fmtInt(s.matched_edit_copies), "Already edited here"] : null,
     s.deleted_in_app_copies ? [fmtInt(s.deleted_in_app_copies), "Deleted here"] : null,
     s.printings_removed != null && s.mode !== "delta" ? [`−${fmtInt(s.printings_removed)}`, "Printings removed"] : null,
     s.printings_changed != null && s.mode !== "delta" ? [fmtInt(s.printings_changed), "Qty changed"] : null,
-    (s.decreased_copies ?? s.copies_decreased) ? [`−${fmtInt(s.decreased_copies ?? s.copies_decreased)}`, "Fewer in ManaBox"] : null,
+    s.decreased_copies ? [`−${fmtInt(s.decreased_copies)}`, "Fewer in ManaBox"] : null,
   ].filter(Boolean);
   return (
     <div className="stack">
@@ -184,20 +178,17 @@ function RestoreConfirmSheet({ target, current, busy, onConfirm, onCancel }) {
 
 /** Import tab: manual backups of the app data (create, download, delete) and restore from a stored or uploaded one. */
 function BackupPanel({ dataVersion, onRestored }) {
-  const [list, setList] = useState(null);
-  const [listError, setListError] = useState(null);
+  const { data: list, error: listError, reload: load } = useApi("/api/backups", [dataVersion],
+    { map: (d) => d.backups, error: (e) => `Could not load backups: ${e.message}` });
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState(null);
   const [fresh, setFresh] = useState(null); // name of the backup just made
   const [confirm, setConfirm] = useState(null); // RestoreConfirmSheet target
-  const [current, setCurrent] = useState(null);
+  // What the restore replaces: the current counts, fetched again each time the confirm opens.
+  const stats = useApi(confirm ? "/api/stats" : null, [confirm]);
+  const current = stats.loading || stats.error ? null : stats.data;
   const [restoring, setRestoring] = useState(false);
   const fileInput = useRef(null);
-  const load = useCallback(() => {
-    setListError(null);
-    api("/api/backups").then((d) => setList(d.backups)).catch((e) => setListError(`Could not load backups: ${e.message}`));
-  }, []);
-  useEffect(load, [load, dataVersion]);
 
   const create = async () => {
     setCreating(true); setError(null);
@@ -215,8 +206,6 @@ function BackupPanel({ dataVersion, onRestored }) {
   const askRestore = (t) => {
     setError(null);
     setConfirm(t);
-    setCurrent(null);
-    api("/api/stats").then(setCurrent).catch(() => setCurrent(null));
   };
   const restore = async () => {
     setRestoring(true); setError(null);
@@ -297,10 +286,7 @@ const SETTINGS_SECTIONS = [
 ];
 
 function PhoneAppPanel({ dataVersion }) {
-  const [list, setList] = useState(null);
-  useEffect(() => {
-    api("/api/downloads").then((d) => setList(d.downloads)).catch(() => setList([]));
-  }, [dataVersion]);
+  const { data: list } = useApi("/api/downloads", [dataVersion], { map: (d) => d.downloads });
   if (!list || list.length === 0) return null;
   return (
     <>
@@ -407,17 +393,16 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
   const [file, setFile] = useState(null);
   const [mode, setMode] = useState("replace");
   const modeTouched = useRef(false);
+  const settings = useApi("/api/settings", [dataVersion], { error: (e) => `Could not load settings: ${e.message}` });
   const [master, setMaster] = useState(null);
   const [masterState, setMasterState] = useState({ busy: false, error: null });
-  const loadMaster = useCallback(() => {
-    api("/api/settings").then((d) => {
-      const m = d?.collection_master === "app" ? "app" : "manabox";
-      setMaster(m);
-      // The default import mode follows the master until the user picks one.
-      if (!modeTouched.current) setMode(m === "app" ? "delta" : "replace");
-    }).catch((e) => setMasterState((st) => ({ ...st, error: `Could not load settings: ${e.message}` })));
-  }, []);
-  useEffect(loadMaster, [loadMaster, dataVersion]);
+  useEffect(() => {
+    if (!settings.data) return;
+    const m = settings.data.collection_master === "app" ? "app" : "manabox";
+    setMaster(m);
+    // The default import mode follows the master until the user picks one.
+    if (!modeTouched.current) setMode(m === "app" ? "delta" : "replace");
+  }, [settings.data]);
   const switchMaster = async (to) => {
     if (to === "manabox" && !window.confirm("Make ManaBox the master again? The import mode defaults to Replace again, which replaces every card that came from ManaBox. Cards you organised or edited here stay where they are; a replace counts them against the file instead of adding them again. Copies you deleted here stay deleted.")) return;
     setMasterState({ busy: true, error: null });
@@ -433,25 +418,17 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
   // Where the cards go: as in the file (default), Unsorted, one binder or a new one. Picked per import.
   const [target, setTarget] = useState(IMPORT_AS_FILE);
   const [newBinder, setNewBinder] = useState("");
-  const [binderNames, setBinderNames] = useState([]);
-  useEffect(() => {
-    api("/api/binders").then((d) => setBinderNames((d?.binders || []).map((b) => b.name))).catch(() => setBinderNames([]));
-  }, [dataVersion]);
+  const binderList = useBinderList(dataVersion);
+  const binderNames = (binderList.data?.binders ?? []).map((b) => b.name);
   const [busy, setBusy] = useState(false);
   const [started, setStarted] = useState(null);
   const [elapsed, setElapsed] = useState(0);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [refresh, setRefresh] = useState({ busy: false, result: null, error: null });
-  const [history, setHistory] = useState(null);
-  const [historyError, setHistoryError] = useState(null);
+  const { data: history, error: historyError, reload: loadHistory } = useApi("/api/imports", [dataVersion],
+    { error: (e) => `Could not load import history: ${e.message}` });
   const fileInput = useRef(null);
-
-  const loadHistory = useCallback(() => {
-    setHistoryError(null);
-    api("/api/imports").then(setHistory).catch((e) => setHistoryError(`Could not load import history: ${e.message}`));
-  }, []);
-  useEffect(loadHistory, [loadHistory, dataVersion]);
 
   // Elapsed-time counter while a request runs.
   useEffect(() => {
@@ -643,7 +620,7 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
                   <div className="row small">
                     <span className={`badge ${h.mode === "add" ? "warn" : h.mode === "delta" ? "accent" : ""}`}>{h.mode === "delta" ? "new copies" : h.mode || h.kind}</span>
                     <span className="muted">{fmtInt(s.total_cards_before)} → {fmtInt(s.total_cards_after)} copies{h.mode === "delta" || s.mode === "delta"
-                      ? `${(s.added_copies ?? s.copies_added) != null ? ` · +${fmtInt(s.added_copies ?? s.copies_added)} new` : ""}`
+                      ? `${s.added_copies != null ? ` · +${fmtInt(s.added_copies)} new` : ""}`
                       : ` · +${fmtInt(s.printings_added)} / −${fmtInt(s.printings_removed)} / ~${fmtInt(s.printings_changed)} printings`}</span>
                     {s.unresolved?.length > 0 && <span className="badge warn">{s.unresolved.length} unresolved</span>}
                   </div>
@@ -660,7 +637,7 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
       {section === "collection" && (
         <Sheet title="Collection" onClose={closeSection}>
           <div className="stack settings-sheet">
-      <MasterPanel master={master} busy={masterState.busy} error={masterState.error} onSwitch={switchMaster} />
+      <MasterPanel master={master} busy={masterState.busy} error={masterState.error ?? settings.error} onSwitch={switchMaster} />
       <ExportPanel />
       <RecentChanges dataVersion={dataVersion} onChanged={onImported} />
           </div>

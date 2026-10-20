@@ -180,7 +180,7 @@ function PrintingPicker({ title, candidates = [], oracleId = null, lang = "", cu
     const params = new URLSearchParams({ oracle_id: oid });
     if (plang) params.set("lang", plang);
     api(`/api/printings?${params}`)
-      .then((d) => { if (alive) setAll(asList(d, "printings", "rows").map(normPrinting).filter((p) => p && p.id)); })
+      .then((d) => { if (alive) setAll(asList(d).map(normPrinting).filter((p) => p && p.id)); })
       .catch((e) => { if (alive) setError(e.message); });
     return () => { alive = false; };
   }, [mode, oid, plang]);
@@ -192,7 +192,7 @@ function PrintingPicker({ title, candidates = [], oracleId = null, lang = "", cu
     const params = new URLSearchParams({ q: dq });
     if (plang) params.set("lang", plang);
     api(`/api/printings/search?${params}`)
-      .then((d) => { if (alive) setHits(asList(d, "results", "rows", "printings")); })
+      .then((d) => { if (alive) setHits(asList(d)); })
       .catch((e) => { if (alive) setError(e.message); });
     return () => { alive = false; };
   }, [mode, dq, plang]);
@@ -255,8 +255,12 @@ function PrintingPicker({ title, candidates = [], oracleId = null, lang = "", cu
 function CommitSheet({ ids, onClose, onDone }) {
   const saved = store.get("mtg.scan.target", {}) || {};
   const [type, setType] = useState(saved.type === "deck" ? "deck" : "binder");
-  const [binders, setBinders] = useState(null);
-  const [decks, setDecks] = useState(null);
+  // Failures leave empty lists (new binder / new deck stays possible).
+  const binderList = useBinderList();
+  const binders = binderList.data?.binders ?? (binderList.error ? [] : null);
+  // Decks synced from ManaBox are rebuilt by the next replace import: not a target.
+  const deckList = useApi("/api/decks", [], { map: (d) => d.filter((dk) => dk.source !== "manabox") });
+  const decks = deckList.data ?? (deckList.error ? [] : null);
   const [binder, setBinder] = useState(saved.type === "binder" && saved.name ? saved.name : "");
   const [newBinder, setNewBinder] = useState("");
   const [deckId, setDeckId] = useState(saved.type === "deck" && saved.id ? String(saved.id) : "");
@@ -265,20 +269,13 @@ function CommitSheet({ ids, onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
+  // Default targets once the lists are in: the remembered one when it still exists, else the first, else new.
   useEffect(() => {
-    api("/api/binders").then((d) => {
-      // The unnamed bucket ("no binder") can't be a target: scans always go into a named binder.
-      const list = asList(d, "binders").filter((x) => x.name);
-      setBinders(list);
-      setBinder((b) => (b && (b === "__new" || list.some((x) => x.name === b)) ? b : list[0]?.name || "__new"));
-    }).catch(() => { setBinders([]); setBinder("__new"); });
-    api("/api/decks").then((d) => {
-      // Decks synced from ManaBox are rebuilt by the next replace import: not a target.
-      const list = asList(d, "decks").filter((dk) => dk.source !== "manabox");
-      setDecks(list);
-      setDeckId((x) => (x && (x === "__new" || list.some((dk) => String(dk.id) === x)) ? x : list[0] ? String(list[0].id) : "__new"));
-    }).catch(() => { setDecks([]); setDeckId("__new"); });
-  }, []);
+    if (binders) setBinder((b) => (b && (b === "__new" || binders.some((x) => x.name === b)) ? b : binders[0]?.name || "__new"));
+  }, [binderList.data, binderList.error]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (decks) setDeckId((x) => (x && (x === "__new" || decks.some((dk) => String(dk.id) === x)) ? x : decks[0] ? String(decks[0].id) : "__new"));
+  }, [deckList.data, deckList.error]); // eslint-disable-line react-hooks/exhaustive-deps
 
   let target = null, label = "";
   if (type === "binder") {

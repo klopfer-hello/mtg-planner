@@ -3,7 +3,6 @@
 // ---------------------------------------------------------------------------
 // Deck allocation: idea / built status, conflicts, shopping lists, deck boxes
 
-const refName = (d) => (typeof d === "string" ? d : d?.name || "?");
 function StatusBadge({ status }) {
   if (status !== "built" && status !== "idea") return null;
   return status === "built"
@@ -58,16 +57,16 @@ function ConflictBanner({ deck, onOpenDeck }) {
         {list.length > 0 && (
           <ul className="conflict-list">
             {list.map((c, i) => {
-              const others = asList(c.decks).filter((d) => !(d && typeof d === "object" && (d.deck_id ?? d.id) === deck.id));
+              const others = asList(c.decks).filter((d) => d.deck_id !== deck.id);
               return (
                 <li key={`${c.name}-${i}`}>
                   <b>{c.name}</b>: own {c.owned ?? "?"}, built decks need {c.demand ?? "?"}
                   {others.length > 0 && <>{" · "}{others.map((d, j) => (
                     <React.Fragment key={j}>{j > 0 && ", "}
-                      {typeof d === "object" && (d.deck_id ?? d.id) != null && onOpenDeck
-                        ? <button type="button" className="linkbtn" onClick={() => onOpenDeck(d.deck_id ?? d.id)}>{d.name}</button>
-                        : refName(d)}
-                      {typeof d === "object" && d.quantity ? ` ${d.quantity}×` : ""}
+                      {onOpenDeck
+                        ? <button type="button" className="linkbtn" onClick={() => onOpenDeck(d.deck_id)}>{d.name}</button>
+                        : d.name}
+                      {d.quantity ? ` ${d.quantity}×` : ""}
                     </React.Fragment>))}</>}
                 </li>
               );
@@ -84,7 +83,7 @@ function DeckNeedNotice({ deck }) {
   const { toBuy, inUse, toBuyEur, inUseEur } = deckCounts(deck);
   const built = deck?.status === "built";
   // Copies only free in locked binders (deck boxes, binders the user locked).
-  const locked = Math.max(0, Number(deck?.in_use_locked_count ?? deck?.in_use_box_count) || 0);
+  const locked = Math.max(0, Number(deck?.in_use_locked_count) || 0);
   const inDecks = Math.max(0, inUse - locked);
   if (!toBuy && !inUse) {
     return <div className="notice ok"><span aria-hidden="true">✓</span><div className="grow"><b>You own every card in this deck.</b></div></div>;
@@ -116,44 +115,21 @@ function DeckNeedNotice({ deck }) {
   );
 }
 
-/** In-use list: shopping.in_use from the server, else derived from the rows. */
-function inUseItemsOf(deck) {
-  const listed = asList(deck?.shopping?.in_use).filter((x) => x && x.name);
-  if (listed.length || Array.isArray(deck?.shopping?.in_use)) return listed;
-  const byName = new Map();
-  for (const c of asList(deck?.cards)) {
-    const n = cardInUse(c);
-    if (!n || c.board === "maybe") continue;
-    const prev = byName.get(c.name);
-    const unit = c.eur ?? c.price_eur ?? null;
-    if (prev) { prev.quantity += n; if (prev.price_eur != null) prev.cost_eur = prev.price_eur * prev.quantity; continue; }
-    byName.set(c.name, {
-      name: c.name, oracle_id: c.oracle_id, quantity: n,
-      decks: builtElsewhereOf(c).map((u) => (typeof u === "string" ? { name: u } : { id: u.deck_id ?? u.id, name: u.name })),
-      price_eur: unit == null ? null : Number(unit), cost_eur: unit == null ? null : Number(unit) * n,
-    });
-  }
-  return [...byName.values()];
-}
-
 /** Deck names as links (tap opens that deck). */
 function DeckLinks({ decks, boxes, onOpenDeck, shared = false }) {
-  const list = asList(decks).filter(Boolean);
-  const boxList = asList(boxes).filter((b) => b && b.binder);
+  const list = asList(decks);
+  const boxList = asList(boxes);
   if (!list.length && !boxList.length) return null;
   return (
     <span className="sub">in {boxList.map((b, j) => (
       <React.Fragment key={`b${j}`}>{j > 0 && ", "}🔒 {b.binder}</React.Fragment>
-    ))}{boxList.length > 0 && list.length > 0 && ", "}{list.map((d, j) => {
-      const did = typeof d === "object" ? (d.id ?? d.deck_id) : null;
-      return (
-        <React.Fragment key={j}>{j > 0 && ", "}
-          {did != null && onOpenDeck
-            ? <button type="button" className="linkbtn" onClick={() => onOpenDeck(did)}>{refName(d)}</button>
-            : refName(d)}
-        </React.Fragment>
-      );
-    })}{shared ? " · conflict" : list.length ? " · can be moved" : " · locked"}</span>
+    ))}{boxList.length > 0 && list.length > 0 && ", "}{list.map((d, j) => (
+      <React.Fragment key={j}>{j > 0 && ", "}
+        {onOpenDeck
+          ? <button type="button" className="linkbtn" onClick={() => onOpenDeck(d.id)}>{d.name}</button>
+          : d.name}
+      </React.Fragment>
+    ))}{shared ? " · conflict" : list.length ? " · can be moved" : " · locked"}</span>
   );
 }
 
@@ -192,20 +168,17 @@ function useWishAdd(onWishChanged) {
 function DeckShopping({ deck, onOpenDeck, onWishChanged }) {
   const wish = useWishAdd(onWishChanged);
   const shopping = deck?.shopping;
-  const items = asList(shopping?.items).filter((x) => x && x.name)
-    .map((x) => ({ ...x, qty: x.to_buy ?? x.need ?? x.quantity ?? 1 }));
-  const inUse = inUseItemsOf(deck).map((x) => ({ ...x, qty: x.quantity ?? x.in_use ?? x.need ?? 1 }));
+  const items = asList(shopping?.items).map((x) => ({ ...x, qty: x.need }));
+  const inUse = asList(shopping?.in_use).map((x) => ({ ...x, qty: x.quantity }));
   if (!items.length && !inUse.length) return null;
-  const inUseCards = inUse.reduce((a, x) => a + (Number(x.qty) || 1), 0);
-  const lineEur = lineEurOf("qty");
-  const inUseTotal = shopping?.in_use_eur ?? deck?.in_use_eur ?? deck?.value?.in_use_eur
-    ?? (inUse.some((x) => lineEur(x) != null) ? inUse.reduce((a, x) => a + (lineEur(x) || 0), 0) : null);
+  const inUseCards = inUse.reduce((a, x) => a + x.qty, 0);
+  const inUseTotal = shopping.in_use_eur;
   const built = deck?.status === "built";
-  const anyBoxed = inUse.some((x) => (x.in_box ?? 0) > 0);
-  const boxedOnly = anyBoxed && inUse.every((x) => (x.in_box ?? 0) >= (x.quantity ?? 0));
+  const anyBoxed = inUse.some((x) => x.in_box > 0);
+  const boxedOnly = anyBoxed && inUse.every((x) => x.in_box >= x.quantity);
   return (
     <section className="stack" style={{ gap: 8 }} aria-labelledby="deck-shop-title">
-      <h3 id="deck-shop-title" className="row" style={{ gap: 8 }}>To buy <span className="muted small">{items.length ? plural(items.reduce((a, x) => a + (Number(x.qty) || 1), 0), "card") : "nothing"}</span></h3>
+      <h3 id="deck-shop-title" className="row" style={{ gap: 8 }}>To buy <span className="muted small">{items.length ? plural(items.reduce((a, x) => a + x.qty, 0), "card") : "nothing"}</span></h3>
       {items.length > 0
         ? <>
           <BuyList items={items} qtyKey="qty" total={shopping?.total_eur} onWish={(it) => wish.add([it])} isWished={wish.isAdded} />
@@ -229,8 +202,8 @@ function DeckShopping({ deck, onOpenDeck, onWishChanged }) {
               ? "You own these; they are in your built decks or in locked binders (kept for their own deck). Move them over, unlock the binder, or buy extra copies."
               : "You own these; they are in your built decks now. Move them over when you build this deck, or buy extra copies."}</span>
           <BuyList items={inUse} qtyKey="qty" total={inUseTotal} label="Buy instead"
-            sub={(it) => <DeckLinks decks={(it.quantity ?? 0) - (it.in_box ?? 0) > 0 ? it.decks : []} boxes={it.in_box ? it.boxes : []}
-              onOpenDeck={onOpenDeck} shared={it.conflict || (built && (it.quantity ?? 0) - (it.in_box ?? 0) > 0)} />} />
+            sub={(it) => <DeckLinks decks={it.quantity - it.in_box > 0 ? it.decks : []} boxes={it.in_box ? it.boxes : []}
+              onOpenDeck={onOpenDeck} shared={it.conflict || (built && it.quantity - it.in_box > 0)} />} />
         </details>
       )}
     </section>
@@ -253,9 +226,8 @@ function DeckBoxSheet({ deck, pickedOnly = false, onClose, onDone }) {
       if (res) { setResult(res); onDone?.(res); }
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
-  const moved = asList(result?.moved, "items", "cards");
-  const missing = asList(result?.missing, "items", "cards");
-  const movedCopies = result?.moved_copies ?? moved.reduce((a, m) => a + (Number(m.quantity ?? m.moved) || 0), 0);
+  const moved = asList(result?.moved);
+  const missing = asList(result?.missing);
   return (
     <Sheet title={pickedOnly ? "Put picked cards into deck box" : "Put into deck box"} onClose={onClose}>
       {!result ? (
@@ -275,19 +247,18 @@ function DeckBoxSheet({ deck, pickedOnly = false, onClose, onDone }) {
       ) : (
         <div className="stack">
           <div className="notice ok" role="status"><span aria-hidden="true">✓</span><div className="grow">
-            Moved <b>{plural(movedCopies || 0, "copy", "copies")}</b> to {result.to_binder || result.binder || name.trim()}.
+            Moved <b>{plural(result.moved_copies, "copy", "copies")}</b> to {result.binder}.
           </div></div>
           {moved.length > 0 && (
             <Collapsible label={`Moved: ${plural(moved.length, "card")}`}>
               <ul className="delta-list">
-                {moved.map((m, i) => <li key={i}>{typeof m === "string" ? m : <><b>{m.quantity ?? m.moved ?? ""}{m.quantity ?? m.moved ? "× " : ""}</b>{m.name}{m.from_binder != null ? <span className="muted"> · from {m.from_binder || UNSORTED}</span>
-                  : asList(m.from).length > 0 && <span className="muted"> · from {asList(m.from).map((f) => `${f.binder || UNSORTED}${asList(m.from).length > 1 ? ` ${f.quantity}×` : ""}`).join(", ")}</span>}</>}</li>)}
+                {moved.map((m, i) => <li key={i}><b>{m.quantity}× </b>{m.name}{m.from.length > 0 && <span className="muted"> · from {m.from.map((f) => `${f.binder || UNSORTED}${m.from.length > 1 ? ` ${f.quantity}×` : ""}`).join(", ")}</span>}</li>)}
               </ul>
             </Collapsible>
           )}
           {asList(result?.removed).length > 0 && (
             <div className="notice warn" role="status"><span aria-hidden="true">↩</span><div className="grow">
-              <b>Take out of the box: {plural(result.removed_copies ?? asList(result.removed).reduce((a, m) => a + m.quantity, 0), "copy", "copies")}</b>
+              <b>Take out of the box: {plural(result.removed_copies, "copy", "copies")}</b>
               <span className="small"> (no longer in the deck, now in {UNSORTED})</span>
               <ul className="delta-list" style={{ marginTop: 4 }}>
                 {asList(result.removed).map((m, i) => <li key={i}>{m.quantity}× {m.name}</li>)}
@@ -298,7 +269,7 @@ function DeckBoxSheet({ deck, pickedOnly = false, onClose, onDone }) {
             <div className="notice warn"><span aria-hidden="true">✗</span><div className="grow">
               <b>Still missing {plural(missing.length, "card")}:</b>
               <ul className="delta-list" style={{ marginTop: 4 }}>
-                {missing.map((m, i) => <li key={i}>{typeof m === "string" ? m : <>{m.quantity ?? m.missing ?? m.need ?? 1}× {m.name}</>}</li>)}
+                {missing.map((m, i) => <li key={i}>{m.quantity}× {m.name}</li>)}
               </ul>
             </div></div>
           ) : <span className="small muted">Every owned card the deck needs is in the deck box now.</span>}

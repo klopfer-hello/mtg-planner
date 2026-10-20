@@ -142,15 +142,12 @@ const fmtElapsed = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); retur
  * `recording` = the session being recorded now (not deletable, list reloads when it stops).
  */
 function RecordedSessions({ recording }) {
-  const [list, setList] = useState(null);
-  const [error, setError] = useState(null);
+  const { data: list, error: loadError, reload: load } = useApi("/api/debug/sessions", [recording],
+    { map: (d) => d.sessions, error: (e) => `Could not load recorded sessions: ${e.message}` });
+  const [actionError, setError] = useState(null);
+  const error = actionError ?? loadError;
   const [ask, setAsk] = useState(null); // id awaiting the inline "Delete?" confirm
   const [busy, setBusy] = useState(null);
-  const load = useCallback(() => {
-    api("/api/debug/sessions").then((d) => { setList(d.sessions || []); setError(null); })
-      .catch((e) => setError(`Could not load recorded sessions: ${e.message}`));
-  }, []);
-  useEffect(load, [load, recording]);
   const remove = async (id) => {
     setBusy(id); setError(null);
     try { await api(`/api/debug/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }); setAsk(null); load(); }
