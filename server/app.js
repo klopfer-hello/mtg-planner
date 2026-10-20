@@ -46,7 +46,10 @@ export function createApp({ version }) {
     },
 
     /** True when chat turns + vision + guide runs fill the Claude concurrency limit. */
-    claudeBusy: () => app.runs.size + activeClaudeRuns().vision + activeClaudeRuns().guide >= MAX_CONCURRENT,
+    claudeBusy: () => {
+      const { vision, guide } = activeClaudeRuns();
+      return app.runs.size + vision + guide >= MAX_CONCURRENT;
+    },
 
     /** SQLite's datetime('now'): decks.updated_at uses it, so "decks changed since" works across a write. */
     sqlNow: () => app.db.prepare("SELECT datetime('now') AS t").get().t,
