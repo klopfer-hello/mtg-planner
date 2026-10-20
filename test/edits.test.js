@@ -16,6 +16,7 @@ import { deleteCopies, editCopies, listEdits, undoEdit } from "../lib/edits.js";
 import { normalizeCard } from "../lib/scryfall.js";
 import { commitScans } from "../lib/scancommit.js";
 import { ID, SCRYFALL_CARDS, seedCards, stubScryfall, tempDb } from "./fixtures.js";
+import { manaboxCsv, manaboxLine } from "./helpers/csv.js";
 
 let ctx;
 beforeEach(() => { ctx = tempDb(); seedCards(ctx.db); });
@@ -318,12 +319,10 @@ describe("deck allocation after edits", () => {
   });
 });
 
-// ManaBox CSV (as test/manabox.test.js).
-const HEADER = "Binder Name,Binder Type,Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,ManaBox ID,Scryfall ID,Purchase price,Misprint,Altered,Condition,Language,Purchase price currency";
-const csvRow = (binder, name, set, num, qty, id) => [binder, "binder", `"${name}"`, set, "", num, "normal", "", qty, "", id, "", "false", "false", "near_mint", "en", ""].join(",");
-const FILE = [HEADER, csvRow("Box", "Sol Ring", "c21", "263", "3", ID.sol)].join("\n") + "\n";
-const csvRowX = (binder, name, set, num, qty, id, { language = "en", condition = "near_mint" } = {}) =>
-  [binder, "binder", `"${name}"`, set, "", num, "normal", "", qty, "", id, "", "false", "false", condition, language, ""].join(",");
+// ManaBox CSV (test/helpers/csv.js).
+const csvRow = (binder, name, set, num, qty, id, { language = "en", condition = "near_mint" } = {}) =>
+  manaboxLine(binder, name, set, num, qty, id, { lang: language, condition });
+const FILE = manaboxCsv(csvRow("Box", "Sol Ring", "c21", "263", "3", ID.sol));
 
 describe("ManaBox imports after edits / deletes", () => {
   let stub;
@@ -367,7 +366,7 @@ describe("ManaBox imports after edits / deletes", () => {
     await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });
     const e1 = await editCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", source: "manabox" })], set: { language: "de" }, confirm_master: true });
     // ManaBox: 2 en + 1 de (same fix there).
-    const fixed = [HEADER, csvRow("Box", "Sol Ring", "c21", "263", "2", ID.sol), csvRowX("Box", "Sol Ring", "c21", "263", "1", ID.sol, { language: "de" })].join("\n") + "\n";
+    const fixed = manaboxCsv(csvRow("Box", "Sol Ring", "c21", "263", "2", ID.sol), csvRow("Box", "Sol Ring", "c21", "263", "1", ID.sol, { language: "de" }));
     const delta = await importManaBoxCsv(ctx.db, fixed);
     assert.equal(delta.mode, "delta");
     assert.equal(delta.added_copies, 0);
@@ -389,8 +388,8 @@ describe("ManaBox imports after edits / deletes", () => {
     // Condition fix: edit en NM -> LP, ManaBox the same; a real new copy on top is still added.
     const e2 = await editCopies(ctx.db, { items: [item(ID.sol, 1, { binder: "Box", source: "manabox" })], set: { condition: "light_played" } });
     assert.ok(e2.edit_id);
-    const lp = [HEADER, csvRow("Box", "Sol Ring", "c21", "263", "1", ID.sol), csvRowX("Box", "Sol Ring", "c21", "263", "1", ID.sol, { language: "de" }),
-      csvRowX("Box", "Sol Ring", "c21", "263", "2", ID.sol, { condition: "light_played" })].join("\n") + "\n";
+    const lp = manaboxCsv(csvRow("Box", "Sol Ring", "c21", "263", "1", ID.sol), csvRow("Box", "Sol Ring", "c21", "263", "1", ID.sol, { language: "de" }),
+      csvRow("Box", "Sol Ring", "c21", "263", "2", ID.sol, { condition: "light_played" }));
     const d2 = await importManaBoxCsv(ctx.db, lp);
     assert.equal(d2.matched_edit_copies, 1);
     assert.equal(d2.added_copies, 1, "the second LP copy is new");
@@ -406,9 +405,9 @@ describe("ManaBox imports after edits / deletes", () => {
     assert.equal(total(), 3);
   });
 
-  const fileOf = (...rows) => [HEADER, ...rows].join("\n") + "\n";
+  const fileOf = manaboxCsv;
   const solEn = (q) => csvRow("Box", "Sol Ring", "c21", "263", String(q), ID.sol);
-  const solDe = (q) => csvRowX("Box", "Sol Ring", "c21", "263", String(q), ID.sol, { language: "de" });
+  const solDe = (q) => csvRow("Box", "Sol Ring", "c21", "263", String(q), ID.sol, { language: "de" });
 
   test("deleted ManaBox copy: neither delta nor replace brings it back; undo still works", async () => {
     await importManaBoxCsv(ctx.db, FILE, { mode: "replace" });

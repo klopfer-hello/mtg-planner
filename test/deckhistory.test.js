@@ -14,6 +14,7 @@ import {
 } from "../lib/deckhistory.js";
 import { importManaBoxCsv } from "../lib/manabox.js";
 import { ID, seedCards, stubScryfall, tempDb } from "./fixtures.js";
+import { manaboxCsv, manaboxLine } from "./helpers/csv.js";
 
 const items = (text) => parseDecklist(text).items;
 const versions = (db, id) => listDeckVersions(db, id).versions;
@@ -96,9 +97,8 @@ describe("deck history", () => {
   });
 
   test("ManaBox imports record actor import (once per real change)", async () => {
-    const HEADER = "Binder Name,Binder Type,Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,ManaBox ID,Scryfall ID,Purchase price,Misprint,Altered,Condition,Language,Purchase price currency";
-    const row = (name, set, num, qty, sid) => ["My Deck", "deck", `"${name}"`, set, "", num, "normal", "", qty, "", sid, "", "false", "false", "near_mint", "en", ""].join(",");
-    const csv = (...rows) => [HEADER, ...rows].join("\n") + "\n";
+    const row = (name, set, num, qty, sid) => manaboxLine("My Deck", name, set, num, qty, sid, { type: "deck" });
+    const csv = manaboxCsv;
     await importManaBoxCsv(ctx.db, csv(row("Sol Ring", "c21", "263", "1", ID.sol)));
     const id = ctx.db.prepare("SELECT id FROM decks WHERE source = 'manabox'").get().id;
     await importManaBoxCsv(ctx.db, csv(row("Sol Ring", "c21", "263", "1", ID.sol)), { mode: "replace" });

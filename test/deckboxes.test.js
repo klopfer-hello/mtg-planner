@@ -15,19 +15,14 @@ import { SCHEMA_VERSION, migrate, openDb } from "../lib/db.js";
 import { buildChecklist } from "../lib/deckbuild.js";
 import { searchCollection } from "../lib/query.js";
 import { boxNameSimilarity, boxNameWords, boxSuggestion, effectiveLock, lockedBinders } from "../lib/deckboxes.js";
-import { ID, seedCards, tempDb } from "./fixtures.js";
+import { ID, seedCards, seedCollection, tempDb } from "./fixtures.js";
 
 let ctx;
 beforeEach(() => { ctx = tempDb(); seedCards(ctx.db); });
 afterEach(() => ctx.cleanup());
 
 /** rows of [scryfall_id, quantity, binder] */
-function seed(rows) {
-  const stmt = ctx.db.prepare(
-    "INSERT INTO collection (scryfall_id, finish, language, condition, binder, quantity, source) VALUES (?, 'normal', 'en', 'near_mint', ?, ?, 'app')",
-  );
-  for (const [id, qty, binder = ""] of rows) stmt.run(id, binder, qty);
-}
+const seed = (rows) => seedCollection(ctx.db, rows.map(([id, qty, binder = ""]) => [id, qty, { binder, source: "app" }]));
 const row = (name, id, quantity, board = "main") => ({ name, scryfall_id: id, quantity, board });
 const deck = (name, status, rows) => saveDeckRows(ctx.db, { name, status, rows });
 const pick = (detail, name) => detail.cards.find((c) => c.name === name);

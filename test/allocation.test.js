@@ -13,26 +13,20 @@ import { setDeckStatus } from "../lib/deckedit.js";
 import { collectionMaster, deckToBinder, defaultImportMode, listBinders, moveCopies, renameBinder, setCollectionMaster } from "../lib/binders.js";
 import { importManaBoxCsv } from "../lib/manabox.js";
 import { searchCollection } from "../lib/query.js";
-import { ID, seedCards, stubScryfall, tempDb } from "./fixtures.js";
+import { ID, seedCards, seedCollection, stubScryfall, tempDb } from "./fixtures.js";
+import { manaboxCsv as csv, manaboxLine as line } from "./helpers/csv.js";
 
 let ctx;
 beforeEach(() => { ctx = tempDb(); seedCards(ctx.db); });
 afterEach(() => ctx.cleanup());
 
-/** rows of [scryfall_id, quantity, {binder, source, finish}] */
-function seed(rows) {
-  const stmt = ctx.db.prepare(
-    "INSERT INTO collection (scryfall_id, finish, language, condition, binder, quantity, source) VALUES (?, ?, 'en', 'near_mint', ?, ?, ?)",
-  );
-  for (const [id, qty, o = {}] of rows) stmt.run(id, o.finish ?? "normal", o.binder ?? "", qty, o.source ?? "manabox");
-}
 const row = (name, id, quantity, board = "main") => ({ name, scryfall_id: id, quantity, board });
 const deck = (name, status, rows) => saveDeckRows(ctx.db, { name, status, rows });
 const pick = (detail, name, board = "main") => detail.cards.find((c) => c.name === name && c.board === board);
 
 describe("migrations v5/v6 from a v4 database", () => {
   test("snapshot backfilled from ManaBox rows, deck status added (manabox = built), idempotent", () => {
-    seed([
+    seedCollection(ctx.db, [
       [ID.sol, 2, { binder: "Box" }], [ID.sol, 1, { binder: "box" }], [ID.lightning, 1, { binder: "Mine", source: "app" }],
       [ID.serra, 3, { binder: "", source: "scan" }], [ID.forest, 4],
     ]);
@@ -73,7 +67,7 @@ describe("allocation", () => {
   // C (idea): Sol, 2 Counterspell, Bolt.
   let A, B, C;
   beforeEach(() => {
-    seed([
+    seedCollection(ctx.db, [
       [ID.sol, 1], [ID.counterspell, 1, { binder: "Trade", source: "scan" }], [ID.counterspell7ed, 1, { source: "scan" }],
       [ID.forest, 5], [ID.lightning, 1, { binder: "Deck box: B", source: "app" }], [ID.serra, 2, { binder: "Trade", source: "scan" }],
     ]);
@@ -234,7 +228,7 @@ describe("to buy vs in use (idea deck sharing cards with a built deck)", () => {
   // Idea "Odds": Atraxa cmdr (unowned), Sol, 2 Bolt, Counterspell (free), 5 Forest, Serra maybe.
   let T, O;
   beforeEach(() => {
-    seed([[ID.sol, 1], [ID.lightning, 1], [ID.forest, 2], [ID.counterspell, 1], [ID.serra, 1]]);
+    seedCollection(ctx.db, [[ID.sol, 1], [ID.lightning, 1], [ID.forest, 2], [ID.counterspell, 1], [ID.serra, 1]]);
     T = deck("Turtle", "built", [row("Sol Ring", ID.sol, 1), row("Lightning Bolt", ID.lightning, 1), row("Forest", ID.forest, 2),
       row("Serra Angel", ID.serra, 1)]);
     O = deck("Odds", "idea", [row("Atraxa, Praetors' Voice", ID.atraxa, 1, "commander"), row("Sol Ring", ID.sol, 1),
@@ -311,7 +305,7 @@ describe("to buy vs in use (idea deck sharing cards with a built deck)", () => {
 
 describe("in-use cost: one card in several boards with different printings", () => {
   test("header (value.in_use_eur) and in-use list agree, priced per row", () => {
-    seed([[ID.counterspell, 3]]);
+    seedCollection(ctx.db, [[ID.counterspell, 3]]);
     deck("Built", "built", [row("Counterspell", ID.counterspell, 3)]);
     const I = deck("Idea", "idea", [row("Counterspell", ID.counterspell, 2), row("Counterspell", ID.counterspell7ed, 1, "side")]);
     const d = deckDetail(ctx.db, I);
@@ -324,9 +318,6 @@ describe("in-use cost: one card in several boards with different printings", () 
 });
 
 describe("ManaBox delta import", () => {
-  const HEADER = "Binder Name,Binder Type,Name,Set code,Collector number,Foil,Quantity,Scryfall ID,Language,Condition";
-  const csv = (...lines) => [HEADER, ...lines].join("\n") + "\n";
-  const line = (binder, name, set, num, qty, id, type = "binder") => `${binder},${type},"${name}",${set},${num},normal,${qty},${id},en,near_mint`;
   const coll = () => ctx.db.prepare("SELECT scryfall_id, binder, source, quantity FROM collection ORDER BY binder, scryfall_id, source").all()
     .map((r) => [r.binder, r.scryfall_id, r.source, r.quantity]);
   const snap = () => ctx.db.prepare("SELECT scryfall_id, binder, quantity FROM manabox_snapshot ORDER BY binder, scryfall_id").all()
@@ -337,7 +328,7 @@ describe("ManaBox delta import", () => {
 
   test("adds only increases, reports decreases, re-import is a no-op, every mode rewrites the snapshot", async () => {
     const file1 = csv(line("Box", "Sol Ring", "c21", "263", 2, ID.sol), line("Box", "Lightning Bolt", "m10", "146", 1, ID.lightning),
-      line("DeckX", "Counterspell", "mh2", "267", 1, ID.counterspell, "deck"));
+      line("DeckX", "Counterspell", "mh2", "267", 1, ID.counterspell, { type: "deck" }));
     await importManaBoxCsv(ctx.db, file1, { mode: "replace" });
     assert.deepEqual(snap(), [["Box", ID.sol, 2], ["Box", ID.lightning, 1], ["DeckX", ID.counterspell, 1]]);
     assert.equal(ctx.db.prepare("SELECT status FROM decks WHERE name = 'DeckX'").get().status, "built", "binder decks are built");
@@ -354,7 +345,7 @@ describe("ManaBox delta import", () => {
 
     // ManaBox gained a Sol Ring and two Serra Angels in a new binder, and lost the Bolt.
     const file2 = csv(line("Box", "Sol Ring", "c21", "263", 3, ID.sol), line("new", "Serra Angel", "dmu", "33", 1, ID.serra),
-      line("New", "Serra Angel", "dmu", "33", 1, ID.serra), line("DeckX", "Counterspell", "mh2", "267", 1, ID.counterspell, "deck"));
+      line("New", "Serra Angel", "dmu", "33", 1, ID.serra), line("DeckX", "Counterspell", "mh2", "267", 1, ID.counterspell, { type: "deck" }));
     const d = await importManaBoxCsv(ctx.db, file2);
     assert.deepEqual(d.added.map((a) => [a.name, a.binder, a.quantity]), [["Sol Ring", "Box", 1], ["Serra Angel", "new", 2]]);
     assert.equal(d.added_copies, 3);
@@ -384,9 +375,6 @@ describe("ManaBox delta import", () => {
 });
 
 describe("review fixes: renames, deck boxes, replace netting, basics", () => {
-  const HEADER = "Binder Name,Binder Type,Name,Set code,Collector number,Foil,Quantity,Scryfall ID,Language,Condition";
-  const csv = (...lines) => [HEADER, ...lines].join("\n") + "\n";
-  const line = (binder, name, set, num, qty, id, type = "binder") => `${binder},${type},"${name}",${set},${num},normal,${qty},${id},en,near_mint`;
   const solTotal = () => ctx.db.prepare("SELECT SUM(quantity) AS n FROM collection WHERE scryfall_id = ?").get(ID.sol).n;
   const where = (id) => ctx.db.prepare("SELECT binder, SUM(quantity) AS q FROM collection WHERE scryfall_id = ? GROUP BY binder ORDER BY binder").all(id)
     .map((r) => [r.binder, r.q]);
@@ -395,14 +383,14 @@ describe("review fixes: renames, deck boxes, replace netting, basics", () => {
   afterEach(() => stub.restore());
 
   test("case-only rename of a binder with rows under two spellings keeps every copy", () => {
-    seed([[ID.sol, 3, { binder: "Trade", source: "scan" }], [ID.sol, 2, { binder: "trade", source: "scan" }]]);
+    seedCollection(ctx.db, [[ID.sol, 3, { binder: "Trade", source: "scan" }], [ID.sol, 2, { binder: "trade", source: "scan" }]]);
     ctx.db.prepare("INSERT INTO binders (name, origin) VALUES ('Trade', 'app')").run();
     renameBinder(ctx.db, "Trade", "trade");
     assert.deepEqual(where(ID.sol), [["trade", 5]]);
   });
 
   test("migration v7 merges binder case variants onto one spelling", () => {
-    seed([[ID.sol, 3, { binder: "Trade", source: "scan" }], [ID.sol, 2, { binder: "trade", source: "scan" }]]);
+    seedCollection(ctx.db, [[ID.sol, 3, { binder: "Trade", source: "scan" }], [ID.sol, 2, { binder: "trade", source: "scan" }]]);
     ctx.db.exec("PRAGMA user_version = 6");
     ctx.db.close();
     ctx.db = openDb(ctx.file);
@@ -426,7 +414,7 @@ describe("review fixes: renames, deck boxes, replace netting, basics", () => {
   });
 
   test("a ManaBox deck renamed in the app is matched by its binder on the next sync", async () => {
-    const file = csv(line("Elves", "Sol Ring", "c21", "263", 1, ID.sol, "deck"));
+    const file = csv(line("Elves", "Sol Ring", "c21", "263", 1, ID.sol, { type: "deck" }));
     await importManaBoxCsv(ctx.db, file, { mode: "replace" });
     const id = ctx.db.prepare("SELECT id FROM decks WHERE name = 'Elves'").get().id;
     ctx.db.prepare("UPDATE decks SET name = 'My Elves' WHERE id = ?").run(id);
@@ -438,8 +426,8 @@ describe("review fixes: renames, deck boxes, replace netting, basics", () => {
   });
 
   test("deck box: own ManaBox binder counts as boxed; custom and renamed boxes stay protected", async () => {
-    await importManaBoxCsv(ctx.db, csv(line("Gruul", "Sol Ring", "c21", "263", 1, ID.sol, "deck")), { mode: "replace" });
-    seed([[ID.sol, 1, { source: "scan" }]]);
+    await importManaBoxCsv(ctx.db, csv(line("Gruul", "Sol Ring", "c21", "263", 1, ID.sol, { type: "deck" })), { mode: "replace" });
+    seedCollection(ctx.db, [[ID.sol, 1, { source: "scan" }]]);
     const g = ctx.db.prepare("SELECT id FROM decks WHERE name = 'Gruul'").get().id;
     const r = deckToBinder(ctx.db, g);
     assert.deepEqual([r.moved_copies, r.missing_count], [0, 0], "already in its ManaBox binder: nothing moves, no master flip");
@@ -461,7 +449,7 @@ describe("review fixes: renames, deck boxes, replace netting, basics", () => {
   });
 
   test("basic lands: avail counts every owned copy, cardUsage is never short", () => {
-    seed([[ID.forest, 5]]);
+    seedCollection(ctx.db, [[ID.forest, 5]]);
     deck("F", "built", [row("Forest", ID.forest, 10)]);
     assert.deepEqual(searchCollection(ctx.db, { q: "avail>=1" }).rows.map((r) => r.name), ["Forest"]);
     const u = cardUsage(ctx.db, { oracle_id: ctx.db.prepare("SELECT oracle_id FROM cards WHERE scryfall_id = ?").get(ID.forest).oracle_id, name: "Forest" });

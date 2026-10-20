@@ -12,7 +12,8 @@ import {
   setBinderProps, setCollectionMaster,
 } from "../lib/binders.js";
 import { autoBinderType } from "../lib/deckboxes.js";
-import { ID, seedCards, stubScryfall, tempDb } from "./fixtures.js";
+import { ID, seedCards, seedCollection, stubScryfall, tempDb } from "./fixtures.js";
+import { manaboxCsv as csv, manaboxLine as line } from "./helpers/csv.js";
 
 let ctx, stub;
 beforeEach(() => {
@@ -25,13 +26,6 @@ afterEach(() => {
   ctx.cleanup();
 });
 
-/** Insert collection rows: [scryfall_id, qty, {binder, source, finish, condition}]. */
-function seed(rows) {
-  const stmt = ctx.db.prepare(
-    "INSERT INTO collection (scryfall_id, finish, language, condition, binder, quantity, purchase_price, source) VALUES (?, ?, 'en', ?, ?, ?, ?, ?)",
-  );
-  for (const [id, qty, o = {}] of rows) stmt.run(id, o.finish ?? "normal", o.condition ?? "near_mint", o.binder ?? "", qty, o.price ?? null, o.source ?? "manabox");
-}
 const rows = () => ctx.db.prepare("SELECT scryfall_id, binder, source, quantity, finish FROM collection ORDER BY binder, scryfall_id, source, finish").all().map((r) => ({ ...r }));
 const summary = () => {
   const l = listBinders(ctx.db);
@@ -42,7 +36,7 @@ describe("migration v4", () => {
   test("backfills binders from collection names (case-insensitive) and is idempotent", () => {
     // Simulate a v3 database: no binders table yet, binder names already in use.
     ctx.db.exec("DROP TABLE binders; PRAGMA user_version = 3");
-    seed([[ID.sol, 1, { binder: "Trade" }], [ID.lightning, 1, { binder: "trade", source: "scan" }], [ID.serra, 1, { binder: "Box", source: "scan" }], [ID.forest, 2]]);
+    seedCollection(ctx.db, [[ID.sol, 1, { binder: "Trade" }], [ID.lightning, 1, { binder: "trade", source: "scan" }], [ID.serra, 1, { binder: "Box", source: "scan" }], [ID.forest, 2]]);
     migrate(ctx.db);
     const b = () => ctx.db.prepare("SELECT name, origin FROM binders ORDER BY name").all().map((r) => ({ ...r }));
     assert.deepEqual(b(), [{ name: "Box", origin: "app" }, { name: "Trade", origin: "manabox" }]);
@@ -58,7 +52,7 @@ describe("migration v4", () => {
 
 describe("create / list", () => {
   test("empty binders are listed; validation; unsorted bucket separate", () => {
-    seed([[ID.sol, 2]]);
+    seedCollection(ctx.db, [[ID.sol, 2]]);
     const created = createBinder(ctx.db, "  Trade binder ");
     assert.equal(created.name, "Trade binder");
     assert.ok(created.created_at);
@@ -72,14 +66,14 @@ describe("create / list", () => {
     assert.throws(() => createBinder(ctx.db, 42), (e) => e.status === 400);
     assert.throws(() => createBinder(ctx.db, "x".repeat(101)), (e) => e.status === 400);
     // A name only used in the collection also exists.
-    seed([[ID.serra, 1, { binder: "Box" }]]);
+    seedCollection(ctx.db, [[ID.serra, 1, { binder: "Box" }]]);
     assert.throws(() => createBinder(ctx.db, "box"), (e) => e.status === 409);
   });
 });
 
 describe("move", () => {
   test("partial move splits a row, merges into the target, keeps scan rows as scan", () => {
-    seed([[ID.lightning, 4, { binder: "A", source: "scan", price: 1.5 }], [ID.lightning, 1, { binder: "B", source: "scan" }]]);
+    seedCollection(ctx.db, [[ID.lightning, 4, { binder: "A", source: "scan", price: 1.5 }], [ID.lightning, 1, { binder: "B", source: "scan" }]]);
     const r = moveCopies(ctx.db, { items: [{ scryfall_id: ID.lightning, binder: "A", quantity: 3 }], to_binder: "b" });
     assert.equal(r.moved_copies, 3);
     assert.equal(r.converted_copies, 0);
@@ -94,7 +88,7 @@ describe("move", () => {
   });
 
   test("validation: quantity, availability, unknown target, missing rows", () => {
-    seed([[ID.sol, 2, { binder: "A", source: "scan" }]]);
+    seedCollection(ctx.db, [[ID.sol, 2, { binder: "A", source: "scan" }]]);
     const mv = (body) => () => moveCopies(ctx.db, body);
     assert.throws(mv({ items: [], to_binder: "A" }), (e) => e.status === 400);
     assert.throws(mv({ items: [{ scryfall_id: ID.sol, binder: "A", quantity: 0 }], to_binder: "" }), (e) => e.status === 400);
@@ -111,7 +105,7 @@ describe("move", () => {
   });
 
   test("bulk: whole oracle cards (all printings), optionally only from one binder", () => {
-    seed([
+    seedCollection(ctx.db, [
       [ID.counterspell, 1, { binder: "A", source: "scan" }], [ID.counterspell7ed, 2, { binder: "B", source: "scan" }],
       [ID.sol, 1, { binder: "A", source: "scan" }], [ID.sol, 1, { source: "scan", finish: "foil" }],
     ]);
@@ -135,7 +129,7 @@ describe("move", () => {
   });
 
   test("ManaBox rows: confirmation once, then moved copies become 'app' and the master flips", () => {
-    seed([[ID.sol, 3, { binder: "Box", price: 2 }], [ID.sol, 1, { binder: "Trade", source: "app" }]]);
+    seedCollection(ctx.db, [[ID.sol, 3, { binder: "Box", price: 2 }], [ID.sol, 1, { binder: "Trade", source: "app" }]]);
     const body = { items: [{ scryfall_id: ID.sol, binder: "Box", quantity: 2 }], to_binder: "Trade" };
     assert.throws(() => moveCopies(ctx.db, body), (e) => e.status === 409 && e.extra.code === "confirm_master" && e.extra.manabox_copies === 2);
     assert.equal(collectionMaster(ctx.db), "manabox");
@@ -158,7 +152,7 @@ describe("move", () => {
 
 describe("rename / delete", () => {
   test("rename moves every source, merges into an existing binder, renames a scan deck", () => {
-    seed([
+    seedCollection(ctx.db, [
       [ID.sol, 2, { binder: "Old", source: "scan" }], [ID.lightning, 1, { binder: "Old", source: "manabox" }],
       [ID.sol, 1, { binder: "Main", source: "scan" }],
     ]);
@@ -181,7 +175,7 @@ describe("rename / delete", () => {
   });
 
   test("delete: unsort (default) vs delete; ManaBox rows never silently deleted", () => {
-    seed([[ID.sol, 2, { binder: "A", source: "scan" }], [ID.lightning, 1, { binder: "A" }], [ID.serra, 1, { binder: "S", source: "scan" }]]);
+    seedCollection(ctx.db, [[ID.sol, 2, { binder: "A", source: "scan" }], [ID.lightning, 1, { binder: "A" }], [ID.serra, 1, { binder: "S", source: "scan" }]]);
     assert.throws(() => deleteBinder(ctx.db, "A", { cards: "delete" }), (e) => e.status === 409 && e.extra.code === "manabox_rows");
     assert.throws(() => deleteBinder(ctx.db, "A"), (e) => e.status === 409 && e.extra.code === "confirm_master", "unsort moves ManaBox rows too");
     assert.throws(() => deleteBinder(ctx.db, "A", { cards: "burn" }), (e) => e.status === 400);
@@ -192,15 +186,15 @@ describe("rename / delete", () => {
     assert.deepEqual([u.unsorted_copies, u.converted_copies, u.collection_master], [3, 1, "app"]);
     assert.deepEqual(summary(), { named: [], unsorted: 3 });
     // With the app as master, ManaBox rows may be deleted with their binder.
-    seed([[ID.atraxa, 1, { binder: "M" }]]);
+    seedCollection(ctx.db, [[ID.atraxa, 1, { binder: "M" }]]);
     assert.equal(deleteBinder(ctx.db, "M", { cards: "delete" }).deleted_copies, 1);
     // The legacy delete by source is gone: the option is ignored (default unsort, nothing deleted).
-    seed([[ID.forest, 1, { binder: "L", source: "scan" }], [ID.forest, 1, { binder: "L" }]]);
+    seedCollection(ctx.db, [[ID.forest, 1, { binder: "L", source: "scan" }], [ID.forest, 1, { binder: "L" }]]);
     assert.equal(deleteBinder(ctx.db, "L", { source: "scan" }).unsorted_copies, 2);
   });
 
   test("delete cards with confirm_master flips the master to the app (like POST /api/collection/delete)", () => {
-    seed([[ID.sol, 2, { binder: "A" }]]);
+    seedCollection(ctx.db, [[ID.sol, 2, { binder: "A" }]]);
     const r = deleteBinder(ctx.db, "A", { cards: "delete", confirm_master: true });
     assert.deepEqual([r.deleted_copies, r.collection_master], [2, "app"]);
     assert.deepEqual(summary(), { named: [], unsorted: 0 });
@@ -208,9 +202,6 @@ describe("rename / delete", () => {
 });
 
 describe("ManaBox import and the master setting", () => {
-  const HEADER = "Binder Name,Binder Type,Name,Set code,Collector number,Foil,Quantity,Scryfall ID,Language,Condition";
-  const csv = (...lines) => [HEADER, ...lines].join("\n") + "\n";
-  const line = (binder, name, set, num, qty, id) => `${binder},binder,"${name}",${set},${num},normal,${qty},${id},en,near_mint`;
 
   test("binders seen in an import are registered; replace prunes emptied ManaBox binders but keeps app binders", async () => {
     await importManaBoxCsv(ctx.db, csv(line("Box", "Sol Ring", "c21", "263", 2, ID.sol), line("Old", "Serra Angel", "dmu", "33", 1, ID.serra)));
@@ -244,7 +235,7 @@ describe("types and covers (migration v14)", () => {
   const entry = (name) => listBinders(ctx.db).binders.find((b) => b.name === name);
 
   test("v13 -> v14 adds binders.type / cover_scryfall_id (NULL = auto), keeps rows, idempotent", () => {
-    seed([[ID.sol, 2, { binder: "Trade" }]]);
+    seedCollection(ctx.db, [[ID.sol, 2, { binder: "Trade" }]]);
     createBinder(ctx.db, "Empty");
     ctx.db.exec("ALTER TABLE binders DROP COLUMN type; ALTER TABLE binders DROP COLUMN cover_scryfall_id; PRAGMA user_version = 13");
     migrate(ctx.db);
@@ -265,7 +256,7 @@ describe("types and covers (migration v14)", () => {
     assert.equal(autoBinderType("Pauper: Mono White"), "binder");
     assert.equal(autoBinderType("Trade"), "binder");
     assert.equal(autoBinderType("Elves", true), "deck_box");
-    seed([[ID.sol, 1, { binder: "Shelf" }], [ID.serra, BULK_SUGGEST_COPIES + 1, { binder: "Pile" }], [ID.forest, 1, { binder: "Deck box: Elves" }]]);
+    seedCollection(ctx.db, [[ID.sol, 1, { binder: "Shelf" }], [ID.serra, BULK_SUGGEST_COPIES + 1, { binder: "Pile" }], [ID.forest, 1, { binder: "Deck box: Elves" }]]);
     ctx.db.prepare("INSERT INTO decks (name, source, status, box_binder) VALUES ('Elves', 'manual', 'built', 'shelf')").run();
     const shelf = entry("Shelf");
     assert.deepEqual([shelf.type, shelf.type_auto, shelf.type_set], ["deck_box", "deck_box", false]);
@@ -283,7 +274,7 @@ describe("types and covers (migration v14)", () => {
   });
 
   test("value and cover: most valuable card unless chosen; a chosen cover that left the binder falls back", () => {
-    seed([[ID.sol, 2, { binder: "A", source: "scan" }], [ID.atraxa, 1, { binder: "A", source: "scan" }], [ID.lightning, 1, { binder: "A", source: "scan", finish: "foil" }]]);
+    seedCollection(ctx.db, [[ID.sol, 2, { binder: "A", source: "scan" }], [ID.atraxa, 1, { binder: "A", source: "scan" }], [ID.lightning, 1, { binder: "A", source: "scan", finish: "foil" }]]);
     let a = entry("A");
     assert.equal(a.value_eur, 2 * 1.5 + 20 + 5);
     assert.deepEqual([a.top.name, a.top.price_eur, a.cover.scryfall_id, a.cover.chosen], ["Atraxa, Praetors' Voice", 20, ID.atraxa, false]);
@@ -298,7 +289,7 @@ describe("types and covers (migration v14)", () => {
   });
 
   test("rename carries type and cover; a merge keeps the target's", () => {
-    seed([[ID.sol, 1, { binder: "A", source: "scan" }], [ID.serra, 1, { binder: "B", source: "scan" }]]);
+    seedCollection(ctx.db, [[ID.sol, 1, { binder: "A", source: "scan" }], [ID.serra, 1, { binder: "B", source: "scan" }]]);
     setBinderProps(ctx.db, "A", { type: "trade", cover_scryfall_id: ID.sol });
     renameBinder(ctx.db, "A", "Trades");
     assert.deepEqual([entry("Trades").type, entry("Trades").cover.chosen], ["trade", true]);

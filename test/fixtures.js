@@ -103,12 +103,19 @@ export function seedCards(db) {
   upsertCards(db, SCRYFALL_CARDS.map(normalizeCard));
 }
 
-/** Insert owned copies: rows of [scryfall_id, quantity, {finish, language, binder}?]. */
+/**
+ * Insert owned copies: rows of [scryfall_id, quantity, {finish, language, condition, binder, source
+ * (default manabox), price (purchase price), currency}?].
+ */
 export function seedCollection(db, rows) {
   const stmt = db.prepare(
-    "INSERT INTO collection (scryfall_id, finish, language, condition, binder, quantity) VALUES (?, ?, ?, 'near_mint', ?, ?)",
+    `INSERT INTO collection (scryfall_id, finish, language, condition, binder, quantity, source, purchase_price, purchase_currency)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  for (const [id, qty, opts = {}] of rows) stmt.run(id, opts.finish ?? "normal", opts.language ?? "en", opts.binder ?? "", qty);
+  for (const [id, qty, opts = {}] of rows) {
+    stmt.run(id, opts.finish ?? "normal", opts.language ?? "en", opts.condition ?? "near_mint", opts.binder ?? "", qty,
+      opts.source ?? "manabox", opts.price ?? null, opts.currency ?? null);
+  }
 }
 
 /**

@@ -7,6 +7,7 @@ import { LIMITED_INTERVAL_MS, fetchCollection } from "../lib/scryfall.js";
 import { deckDetail, listDecks } from "../lib/decks.js";
 import { setCommander, updateDeckCard } from "../lib/deckedit.js";
 import { ID, stubScryfall, tempDb } from "./fixtures.js";
+import { manaboxCsv as csv, manaboxLine } from "./helpers/csv.js";
 
 describe("parseCsv", () => {
   test("header keys are lower-cased and trimmed, values trimmed", () => {
@@ -45,11 +46,8 @@ describe("parseCsv", () => {
   });
 });
 
-// A ManaBox collection export (binder export columns included).
-const HEADER = "Binder Name,Binder Type,Name,Set code,Set name,Collector number,Foil,Rarity,Quantity,ManaBox ID,Scryfall ID,Purchase price,Misprint,Altered,Condition,Language,Purchase price currency";
-const row = (binder, type, name, set, num, foil, qty, scryfallId, { price = "", condition = "near_mint", lang = "en" } = {}) =>
-  [binder, type, `"${name}"`, set, "", num, foil, "", qty, "", scryfallId, price, "false", "false", condition, lang, price ? "EUR" : ""].join(",");
-const csv = (...rows) => [HEADER, ...rows].join("\n") + "\n";
+// A ManaBox collection export line (test/helpers/csv.js) in this file's argument order.
+const row = (binder, type, name, set, num, foil, qty, scryfallId, opts = {}) => manaboxLine(binder, name, set, num, qty, scryfallId, { type, foil, ...opts });
 
 describe("importManaBoxCsv", () => {
   let ctx;
