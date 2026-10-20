@@ -22,6 +22,8 @@ over and over, and confident wrong guesses. The camera needs HTTPS (see
 
 ## Scanning
 
+<img src="img/scan-clip.webp" width="200" alt="Laying cards in front of the camera, one after another">
+
 - Tap **Start camera** and put a card in view: on the table, in a scan box or in your
   hand. There is no guide frame to fill. A detector in the browser finds the
   card's outline and only supplies the crop; recognising the card is the

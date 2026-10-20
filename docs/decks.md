@@ -21,6 +21,8 @@ score) work.
 
 ## Adding decks
 
+<img src="img/decks.webp" width="260" alt="The deck list with filters">
+
 - Paste a list in MTGA, Moxfield or ManaBox format.
 - Let Claude build one in the [planner](claude.md); it is saved as an *idea*.
 - ManaBox **deck binders** become decks automatically on import (see
@@ -50,6 +52,8 @@ Decks can be exported as a text list you can import elsewhere.
 - The filters are remembered on the device. **Clear filters** resets them.
 
 ## What a deck shows
+
+<img src="img/desktop-deck.webp" width="640" alt="A deck page on a computer">
 
 - Each card shows how many copies you own (counted across all printings) and
   how many are **missing**.
@@ -260,6 +264,8 @@ It never links on its own. The deck page shows its box under the value.
 
 ## To buy
 
+<img src="img/to-buy.webp" width="260" alt="Market → To buy">
+
 Each deck shows its own **To buy** list. **Export list** below it downloads
 the cards as a text file (`3 Counterspell`, one per line). **Market → To buy** shows what each
 deck still needs and, across all built decks, what to buy with a € total (see
@@ -298,6 +304,8 @@ an idea deck you are about to build.
 - Ticking never moves cards. A card that leaves the deck loses its tick.
 
 ## Deck guide
+
+<img src="img/guide.webp" width="260" alt="A deck guide">
 
 **Guide** on a deck writes a short guide for learning to play it, in plain
 English for beginners:

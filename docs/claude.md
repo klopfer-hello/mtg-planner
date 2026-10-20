@@ -9,6 +9,8 @@ can and cannot do with your data.
 
 ## What the planner does
 
+<img src="img/planner.webp" width="260" alt="A chat in the Planner tab">
+
 The **Planner** tab is a chat that runs the
 [Claude Code CLI](https://claude.com/claude-code) headless
 with exactly two MCP servers:

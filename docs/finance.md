@@ -13,6 +13,8 @@ with only a USD price counts as "without € price", never as dollars.
 
 ## Collection value
 
+<img src="img/market.webp" width="260" alt="Market tab: collection value over time">
+
 - **Collection value** at the top: every owned copy at its finish's price.
 - **Today / 7 days / 30 days:** how much the value changed. Tap one to see why:
   - **Added cards:** new copies, at today's price.

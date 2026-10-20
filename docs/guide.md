@@ -35,6 +35,8 @@ Not set up yet? Start with the [Installation guide](install.md).
 
 ## 1. First steps
 
+<img src="img/settings.webp" width="260" alt="Settings tab with the ManaBox import">
+
 Already use the ManaBox app? Import your collection first.
 No ManaBox? Go straight to [Scanning](#2-scanning).
 
@@ -78,6 +80,8 @@ are in the **Binders** tab, with prices.
 ---
 
 ## 2. Scanning
+
+<img src="img/scan-clip.webp" width="200" alt="Laying cards in front of the camera, one after another">
 
 ### Start the camera
 
@@ -187,6 +191,8 @@ and value, grouped by type. **All cards** and **Unsorted** sit there too.
 
 ### Binders
 
+<img src="img/binders.webp" width="260" alt="Binders overview">
+
 - **Open a binder:** tap it. Its page has its own search and sections (by set,
   colour, rarity or type). Cards without a binder are **Unsorted**.
 - **New binder:** tap **New binder**.
@@ -220,6 +226,8 @@ The first time you move ManaBox cards, the app asks **"Organise ManaBox cards
 here?"** Say yes to sort in mtg-planner from now on.
 
 ### Sets
+
+<img src="img/sets.webp" width="260" alt="Sets with how complete each one is">
 
 Tap **Sets** at the top of the Binders tab. Each set shows how many of its
 cards you own and what the rest would cost. Tap a set, then **Missing**, to
@@ -256,6 +264,8 @@ All codes: [collection.md](collection.md#search-syntax).
 
 ## 4. Decks
 
+<img src="img/deck.webp" width="260" alt="A deck page">
+
 Open the **Decks** tab.
 
 ### Add a deck
@@ -291,6 +301,8 @@ To switch:
 
 ### Learn to play a deck
 
+<img src="img/guide.webp" width="260" alt="A deck guide">
+
 1. Open the deck.
 2. Tap **Guide**, then **Write the guide**.
 3. Wait about half a minute (you can close the sheet meanwhile).
@@ -301,6 +313,8 @@ mulligan, its key cards, the techniques it uses, and the words to know.
 deck page: **Open** or **PDF**.
 
 ### Change a deck's cards
+
+<img src="img/deck-menu.webp" width="260" alt="The menu next to a card in a deck">
 
 - **Add a card:** open the deck, tap **Add card** above the card list, search the name, pick the
   printing. Choose the board and the copies, then tap **Add to deck**.
@@ -349,6 +363,8 @@ binder `Deck box: <deck name>`.
 ---
 
 ## 5. Ask Claude
+
+<img src="img/planner.webp" width="260" alt="A chat in the Planner tab">
 
 The **Planner** tab is a chat with Claude. Claude sees your cards and decks.
 It needs the Claude token:

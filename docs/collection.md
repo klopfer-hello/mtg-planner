@@ -74,6 +74,8 @@ English printing's EUR price, so values never fall back to USD.
 
 ## Binders
 
+<img src="img/binder.webp" width="260" alt="A binder, cards grouped by set">
+
 A binder is a named group of owned copies; copies without one are *Unsorted*.
 
 **Overview.** The **Binders** tab starts with one entry per binder: a cover
@@ -163,6 +165,8 @@ back.
 
 ## Editing owned copies
 
+<img src="img/card.webp" width="260" alt="A card's details">
+
 A card's details list every owned copy with **Move… / Edit… / Delete…**:
 
 - **Edit…** changes the language (to the same set and number in that
@@ -185,6 +189,8 @@ A card's details list every owned copy with **Move… / Edit… / Delete…**:
   author, undoable the same way); it cannot delete.
 
 ## Sets
+
+<img src="img/set.webp" width="260" alt="One set: owned and missing cards">
 
 **Binders → Sets** shows every set you own cards of and how complete it is.
 

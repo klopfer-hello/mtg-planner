@@ -23,6 +23,8 @@ find out which cards a deck still needs.
 
 Card data and prices come from [Scryfall](https://scryfall.com/).
 
+<img src="docs/img/binders.webp" width="200" alt="Binders"> <img src="docs/img/deck.webp" width="200" alt="A deck"> <img src="docs/img/guide.webp" width="200" alt="Deck guide">
+
 ## Quick start
 
 New to Docker? Follow the step-by-step [Installation guide](docs/install.md).
@@ -82,6 +84,8 @@ hours (until then you may pick them by hand).
 
 ## Scan cards
 
+<img src="docs/img/scan-clip.webp" width="180" align="right" alt="Laying cards in front of the camera">
+
 Open the **Scan** tab and tap **Start camera**.
 
 - Put a card in view: on the table, in a box or in your hand.
@@ -99,18 +103,14 @@ More: [how to scan](docs/guide.md#2-scanning) · [docs/scanner.md](docs/scanner.
 ## Your collection
 
 - **Import:** export a CSV in ManaBox, then upload it in **Settings**.
-- **Sets:** Binders → **Sets** shows how complete each set is and what the
-  missing cards cost.
-- **Export:** Settings → Collection → **Export collection** gives you a CSV
-  in ManaBox's layout, or one for spreadsheets.
+- **Sets** (Binders tab): how complete each set is. **Export** (Settings): a CSV for ManaBox or spreadsheets.
 - **Search:** find cards with short codes. Example: `t:creature eur>2` =
   creatures worth more than €2. [All codes](docs/collection.md#search-syntax)
 - **Binders:** the Binders tab starts with your binders (cover, copies,
   value), grouped by type. Tap one to open it. Move cards between them.
 - **Edit or delete** copies from a card's details. Every change can be
   **undone** in Settings → Recent changes.
-- **ManaBox or the app in charge?** ManaBox at first. The app asks once
-  before it takes over. [Details](docs/collection.md#the-collection-master)
+- **ManaBox or the app in charge?** ManaBox at first; the app asks once before it takes over. [Details](docs/collection.md#the-collection-master)
 
 More: [docs/collection.md](docs/collection.md)
 
@@ -131,12 +131,10 @@ More: [docs/decks.md](docs/decks.md)
 
 The **Planner** tab is a chat with Claude, using your own Claude plan.
 
-- Ask things like *"Build me a budget Atraxa deck from cards I own, max €40
-  to buy."*
+- Ask things like *"Build me a budget Atraxa deck from cards I own, max €40 to buy."*
 - Claude checks your collection first and saves new decks as ideas.
 - Claude can write a deck's **notes** (game plan, reminders) when you ask.
-- Claude can fix a card's language, printing, foil or condition. It tells you
-  the change first. It can **never delete** anything.
+- Claude can fix a card's language, printing, foil or condition. It tells you the change first. It can **never delete** anything.
 
 More: [docs/claude.md](docs/claude.md)
 
@@ -145,18 +143,15 @@ More: [docs/claude.md](docs/claude.md)
 Open **Settings → Backups**.
 
 - **Create backup**, then **Download** it and keep it somewhere safe.
-- **Restore** brings an older state back. The app saves your current data
-  first, just in case.
+- **Restore** brings an older state back (your current data is saved first).
 - Backups only happen when you tap. Nothing runs automatically.
 
 More: [docs/backups-and-security.md](docs/backups-and-security.md)
 
 ## Good to know
 
-- **There is no login.** Anyone who can open it can change your data and use
-  your Claude plan. Keep it on your home network, never on the internet.
-- Everything except the chat and the Claude help for hard-to-scan cards
-  works without Claude.
+- **There is no login.** Anyone who can open it can change your data and use your Claude plan. Keep it on your home network, never on the internet.
+- Everything except the chat, deck guides and the Claude help for hard-to-scan cards works without Claude.
 - **Share** a deck or binder: the arrow button sends a link to it.
 
 ## More details
@@ -176,8 +171,7 @@ More: [docs/backups-and-security.md](docs/backups-and-security.md)
 
 ## Credits
 
-- Card data, images and prices: [Scryfall](https://scryfall.com/). Not made
-  or endorsed by Scryfall.
+- Card data, images and prices: [Scryfall](https://scryfall.com/). Not made or endorsed by Scryfall.
 - Magic: The Gathering, card names, card text and card images are © Wizards
   of the Coast LLC. mtg-planner is unofficial Fan Content and is **not
   affiliated with, endorsed, sponsored or approved by Wizards of the Coast**.
@@ -185,8 +179,7 @@ More: [docs/backups-and-security.md](docs/backups-and-security.md)
   The chat uses the [Claude Code](https://claude.com/claude-code)
   program (downloaded on start, not included) and
   [scryfall-mcp](https://github.com/bmurdock/scryfall-mcp) for card lookups.
-- [ManaBox](https://manabox.app/) is a separate app. This app only reads its
-  exports.
+- [ManaBox](https://manabox.app/) is a separate app. This app only reads and writes its CSV files.
 
 Full details: [docs/development.md](docs/development.md#third-party-data-and-software)
 and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
