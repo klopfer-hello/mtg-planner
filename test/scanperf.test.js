@@ -5,6 +5,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { FramePacer, PACER_DEFAULTS, PerfMonitor, percentile, summarize } from "../public/scanperf.js";
+import { indexHtml, uiCode } from "./helpers/ui.js";
 
 describe("percentile / summarize", () => {
   test("nearest rank; non-finite values ignored; empty → null", () => {
@@ -105,8 +106,8 @@ describe("no camera constraint changes mid-session", () => {
   });
 
   test("the page never calls applyConstraints; scanlib only for torch, focus, the clone and the clone's undo", () => {
-    const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
-    assert.equal(/applyConstraints/.test(html), false, "index.html calls no applyConstraints");
+    const html = indexHtml() + uiCode();
+    assert.equal(/applyConstraints/.test(html), false, "the app (index.html + its scripts) calls no applyConstraints");
     const lib = readFileSync(new URL("../public/scanlib.js", import.meta.url), "utf8");
     const calls = lib.split("\n").filter((l) => /\.applyConstraints\(/.test(l) && !/^\s*(\/\/|\*)/.test(l)).map((l) => l.trim());
     assert.equal(calls.length, 4, calls.join("\n"));
