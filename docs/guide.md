@@ -297,6 +297,7 @@ To switch:
 
 **You should now see:** how the deck wins, what to do each turn, when to
 mulligan, its key cards, the techniques it uses, and the words to know.
+**Download PDF** saves it as a file to print.
 
 ### Change a deck's cards
 

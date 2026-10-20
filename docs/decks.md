@@ -320,6 +320,12 @@ anywhere). Without Claude the guide has the facts and techniques only. The
 newest five guides per deck are kept; after you change the deck, the guide
 says so and **Write it again** makes a new one.
 
+**Download PDF** gives the same guide as an A4 file to print or keep: the deck at
+a glance with the commander's picture and a mana-curve chart, then the plan,
+key cards with pictures, one box per technique and the glossary. Card pictures
+come from Scryfall's image server when the PDF is made (without internet the
+PDF has text only).
+
 ## Deck history
 
 Every change to a deck is saved as a **version**: edits in the app, decks
@@ -345,6 +351,7 @@ same-origin request.
 | `GET /api/decks/:id` | the deck; adds `cover: {scryfall_id, name, image_small, image_normal, image_art, source}` (`source` is `commander` or `top`; null without a card image; the rows of `GET /api/decks` carry it too) and `accessories: {status, tokens: [{key, name, type_line, pt, colors, oracle_text, image_small, scryfall_ids, source, from: [{name, quantity, side?}], estimate, estimate_note, side_only?, owned: {quantity, binders: [{binder, quantity}]}}], markers: [{key, label, kind, note?, sizes?, from, side_only?}], maybe_skipped, unknown}`; `status` is `ok`, `pending` (token data is being fetched: read again after a few seconds) or `unavailable` (card text only); locked binders: `box {binder, via}` (the box this deck owns), per card `in_locked` (= `in_boxes`) `[{binder, deck_id, deck_name, quantity}]` (locked binders of other decks or nobody holding it) and `in_use_locked` (= `in_use_box`, the part of `in_use` lying there), `in_use_locked_count` (= `in_use_box_count`; the list rows carry it too), and `shopping.in_use[]` items add `boxes` and `in_box` |
 | `POST /api/decks/evaluate` | also returns `accessories` for the draft |
 | `GET /api/decks/:id/guide` | `{status: none\|pending\|ready, started_at, error, claude, guide}`; `guide` = the newest `{id, created_at, kind: full\|facts, model, cost_usd, stale, guide: {deck, commander, colours, counts, curve, types, value_eur, power, techniques: [{key, name, what, tip, cards, count}], glossary, tokens, combos, key_cards: [{name, why, image}], strategy: {summary, how_it_wins, game_plan: {early, mid, late}, mulligan: {keep, ship}, pitfalls, practice} \| null}}`; `stale` = the deck has a newer history version; `error` = the last failed Claude part |
+| `GET /api/decks/:id/guide.pdf` | the newest guide as an A4 PDF download (`<deck> - guide.pdf`; lib/guidepdf.js, card pictures from cards.scryfall.io, skipped offline); 404 without a guide |
 | `POST /api/decks/:id/guide {facts_only?}` | write a guide: with Claude in the background (202, poll GET; 409 while one runs, 429 Claude busy), or facts only at once (201; also without a Claude token) |
 | `POST /api/decks/:id/cards {scryfall_id \| name, board?, quantity?}` | add copies of a card (board `main` by default, 1-999 copies) to a board, merged into a row of the same name; by `scryfall_id` that printing, by `name` an owned printing first, else Scryfall's; returns the deck plus `change: {name, board, scryfall_id, added}`; 404 deck or card not found, 400 bad board/quantity/id |
 | `POST /api/decks/:id/cards/bulk {items: [{name, board}], action, to_board?}` | `action` `remove` or `move` (with `to_board`) for 1-500 rows in one step and one history version; returns the deck plus `change: {action, rows, copies, to_board}`; a row that isn't there → 404 and nothing changes |

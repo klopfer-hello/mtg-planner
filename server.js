@@ -19,6 +19,7 @@ import { syncEnglishPrices } from "./lib/prices.js";
 import { EXPORT_FORMATS, exportCollection } from "./lib/collectionexport.js";
 import { listSets, setDetail } from "./lib/sets.js";
 import { generateGuide, latestGuide } from "./lib/deckguide.js";
+import { fetchGuideImages, renderGuidePdf } from "./lib/guidepdf.js";
 import {
   DECK_STATUSES, DeckError, bracketVerdict, buyListText, cardUsage, deckComboRequest, deckDetail, deckPower, draftDeck, eurForFinish, exportDeck, listDecks,
   addDeckCard, bulkDeckCards, normalizeFormat, parseDecklist, saveDeck, setCommander, shoppingList, updateDeckCard,
@@ -1887,6 +1888,21 @@ async function handleApi(req, res, url) {
   if (pathname.startsWith("/api/finance/")) return handleFinanceApi(req, res, url);
   if ((m = /^\/api\/decks\/(\d+)\/(build(?:\/picks)?|history(?:\/\d+(?:\/restore)?)?)$/.exec(pathname))) {
     return sendJson(res, 200, await deckBuildHistoryApi(req, method, Number(m[1]), m[2]));
+  }
+  // The newest guide as a PDF (lib/guidepdf.js; card pictures fetched from Scryfall's image CDN, skipped offline).
+  if ((m = /^\/api\/decks\/(\d+)\/guide\.pdf$/.exec(pathname))) {
+    if (method !== "GET") throw new HttpError(405, "Method not allowed");
+    const latest = latestGuide(db, Number(m[1]));
+    if (!latest?.guide) throw new HttpError(404, "This deck has no guide yet");
+    const images = await fetchGuideImages(latest.guide);
+    const pdf = renderGuidePdf(latest.guide, { images, date: new Date(latest.created_at) });
+    const name = `${latest.guide.deck.name} - guide`;
+    const ascii = name.replace(/[^\w .()-]+/g, "_").trim() || "guide";
+    res.writeHead(200, {
+      "Content-Type": "application/pdf", "Content-Length": pdf.length, "Cache-Control": "no-store",
+      "Content-Disposition": `attachment; filename="${ascii}.pdf"; filename*=UTF-8''${encodeURIComponent(name)}.pdf`,
+    });
+    return res.end(pdf);
   }
   if ((m = /^\/api\/decks\/(\d+)\/(cards|cards\/bulk|commander|to-binder|status-preview|combos|guide)$/.exec(pathname))) {
     const id = Number(m[1]);

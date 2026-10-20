@@ -4474,6 +4474,7 @@ function GuideSheet({ deck, onClose }) {
             )}
             <p className="small muted" style={{ margin: 0 }}>Written {fmtAgo(row.created_at)}{row.kind === "facts" ? " · facts only (no Claude)" : ""}.</p>
             <div className="row">
+              <a className="btn primary" href={`/api/decks/${deck.id}/guide.pdf`} download><Icon.download /> Download PDF</a>
               <button type="button" className="btn" disabled={busy || pending} onClick={() => write(false)}><Icon.refresh /> {busy ? "Starting…" : "Write it again"}</button>
             </div>
           </>
