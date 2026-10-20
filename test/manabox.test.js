@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { fetchCollectionPolitely, importManaBoxCsv, parseCsv, refreshOwnedCards } from "../lib/manabox.js";
 import { LIMITED_INTERVAL_MS, fetchCollection } from "../lib/scryfall.js";
-import { deckDetail, listDecks, setCommander, updateDeckCard } from "../lib/decks.js";
+import { deckDetail, listDecks } from "../lib/decks.js";
+import { setCommander, updateDeckCard } from "../lib/deckedit.js";
 import { ID, stubScryfall, tempDb } from "./fixtures.js";
 
 describe("parseCsv", () => {

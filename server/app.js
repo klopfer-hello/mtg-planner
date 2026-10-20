@@ -9,7 +9,7 @@ import path from "node:path";
 import { createAccessoryFetcher } from "../lib/accessories.js";
 import { MAX_CONCURRENT, activeClaudeRuns } from "../lib/claude.js";
 import { openDb } from "../lib/db.js";
-import { deckComboRequest } from "../lib/decks.js";
+import { deckComboRequest } from "../lib/deckpower.js";
 import { schedulerConfig } from "../lib/scheduler.js";
 import { createSpellbookScheduler } from "../lib/spellbook.js";
 import { createBackground } from "./background.js";

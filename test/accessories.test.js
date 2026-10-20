@@ -8,7 +8,8 @@ import {
   ESTIMATE_CAP, accessoriesText, createAccessoryFetcher, deckAccessories, diceSizes, ensureAccessoryData, markersOf, namedCounters, tokenPhrases,
 } from "../lib/accessories.js";
 import { SCHEMA_VERSION, getAppMeta, migrate, setAppMeta, upsertCards } from "../lib/db.js";
-import { artCropUrl, deckCover, deckDetail, deckToText, listDecks } from "../lib/decks.js";
+import { artCropUrl, deckCover, deckDetail, listDecks } from "../lib/decks.js";
+import { deckToText } from "../lib/decktext.js";
 import { buildChecklist, setBuildPick } from "../lib/deckbuild.js";
 import { CARD_FACTS_META, backfillCardFacts, cardFactsPending, tokenFactsPending } from "../lib/manabox.js";
 import { normalizeCard, trimParts } from "../lib/scryfall.js";

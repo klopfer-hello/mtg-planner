@@ -11,7 +11,7 @@ import { PerfError } from "../lib/debugperf.js";
 import { DebugError } from "../lib/debugsessions.js";
 import { BuildError } from "../lib/deckbuild.js";
 import { DeckHistoryError } from "../lib/deckhistory.js";
-import { DeckError } from "../lib/decks.js";
+import { DeckError } from "../lib/deckrules.js";
 import { DownloadError } from "../lib/downloads.js";
 import { ScanError } from "../lib/scans.js";
 import { SpellbookError } from "../lib/spellbook.js";

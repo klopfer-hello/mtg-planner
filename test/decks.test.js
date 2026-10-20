@@ -2,10 +2,12 @@
 
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  DeckError, bracketVerdict, canPair, deckComboRequest, deckDetail, deckPower, deckToText, draftDeck, eurForFinish, eurOfPrinting, exportDeck, findDeck,
-  DECK_NOTES_MAX, addDeckCard, bulkDeckCards, listDecks, normalizeFormat, parseDecklist, powerLines, saveDeck, saveDeckRows, scoreText, setCommander, setDeckNotes, updateDeckCard,
-} from "../lib/decks.js";
+import { DeckError, canPair, normalizeFormat, parseDecklist } from "../lib/deckrules.js";
+import { bracketVerdict, deckComboRequest, deckPower, draftDeck, powerLines, scoreText } from "../lib/deckpower.js";
+import { deckDetail, findDeck, listDecks, saveDeck, saveDeckRows } from "../lib/decks.js";
+import { deckToText, exportDeck } from "../lib/decktext.js";
+import { eurForFinish, eurOfPrinting } from "../lib/prices.js";
+import { DECK_NOTES_MAX, addDeckCard, bulkDeckCards, setCommander, setDeckNotes, updateDeckCard } from "../lib/deckedit.js";
 import { listDeckVersions } from "../lib/deckhistory.js";
 import { CEDH_HINT } from "../lib/power.js";
 import { SPELLBOOK_PARSER, deckPayloadRows, spellbookRequest } from "../lib/spellbook.js";

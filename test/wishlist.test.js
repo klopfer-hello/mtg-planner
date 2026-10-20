@@ -10,7 +10,7 @@ import { normalizeCard } from "../lib/scryfall.js";
 import {
   WishlistError, addWishlistItem, deleteWishlistItem, deleteWishlistItems, listWishlist, updateWishlistItem, wishlistShopping, wishlistText,
 } from "../lib/wishlist.js";
-import { buyListText } from "../lib/decks.js";
+import { buyListText } from "../lib/decktext.js";
 import { refreshOwnedCards } from "../lib/manabox.js";
 import { ID, SCRYFALL_CARDS, seedCards, seedCollection, stubScryfall, tempDb } from "./fixtures.js";
 

@@ -3,7 +3,9 @@
 
 import { cardPrice, formatPrice, stats } from "../../lib/db.js";
 import { QUERY_HELP, searchCollection } from "../../lib/query.js";
-import { allocation, cardKey, cardUsage, isBasicLand, listDecks } from "../../lib/decks.js";
+import { allocation, cardUsage } from "../../lib/allocation.js";
+import { cardKey, isBasicLand } from "../../lib/deckrules.js";
+import { listDecks } from "../../lib/decks.js";
 import { listBinders } from "../../lib/binders.js";
 import { getDb } from "../context.js";
 import { boxText, colorLabel, deckLine, int, likeEsc, mainType, oneLine, OWNED_BY_NAME, parseJson, setNum, ToolError } from "../format.js";

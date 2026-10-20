@@ -5,7 +5,7 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { deckToBinder } from "../lib/binders.js";
-import { updateDeckCard } from "../lib/decks.js";
+import { updateDeckCard } from "../lib/deckedit.js";
 import { buildChecklist, clearBuildPicks, pickedKeys, setBuildPick } from "../lib/deckbuild.js";
 import { ID, seedCards, tempDb } from "./fixtures.js";
 

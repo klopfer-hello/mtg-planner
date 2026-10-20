@@ -5,7 +5,8 @@ import assert from "node:assert/strict";
 import {
   GUIDES_KEEP, GUIDE_SYSTEM, TECHNIQUES, cleanStrategy, composeGuide, generateGuide, guideFacts, guidePrompt, latestGuide, saveGuide,
 } from "../lib/deckguide.js";
-import { saveDeckRows, setDeckNotes } from "../lib/decks.js";
+import { saveDeckRows } from "../lib/decks.js";
+import { setDeckNotes } from "../lib/deckedit.js";
 import { recordDeckVersion } from "../lib/deckhistory.js";
 import { ID, seedCards, tempDb } from "./fixtures.js";
 

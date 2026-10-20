@@ -6,7 +6,8 @@
 import { collectionMaster, defaultImportMode, findBinder, MAX_BINDER_NAME, moveCopies } from "../../lib/binders.js";
 import { EXPORT_FORMATS, exportCollection } from "../../lib/collectionexport.js";
 import { cardPrice, setAppMeta, stats } from "../../lib/db.js";
-import { cardUsage, eurForFinish } from "../../lib/decks.js";
+import { cardUsage } from "../../lib/allocation.js";
+import { eurForFinish } from "../../lib/prices.js";
 import { deleteCopies, editCopies, listEdits, relanguageScans, undoEdit } from "../../lib/edits.js";
 import { addCardList, resolveCardList } from "../../lib/listimport.js";
 import { IMPORT_MODES, importManaBoxCsv, refreshOwnedCards } from "../../lib/manabox.js";

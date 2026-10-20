@@ -13,7 +13,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { parseDecklist } from "../lib/decks.js";
+import { parseDecklist } from "../lib/deckrules.js";
 import { normalizeCard } from "../lib/scryfall.js";
 import { spellbookRequest, trimResult } from "../lib/spellbook.js";
 import { powerOf } from "../lib/power.js";

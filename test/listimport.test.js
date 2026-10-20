@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { addCardList, resolveCardList } from "../lib/listimport.js";
 import { listEdits, undoEdit } from "../lib/edits.js";
-import { parseDecklist } from "../lib/decks.js";
+import { parseDecklist } from "../lib/deckrules.js";
 import { ID, seedCards, stubScryfall, tempDb } from "./fixtures.js";
 
 const PRECON = [

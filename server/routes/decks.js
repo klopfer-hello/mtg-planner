@@ -5,10 +5,11 @@
 
 import { generateGuide, guideMeta, latestGuide } from "../../lib/deckguide.js";
 import { fetchGuideImages, renderGuidePdf } from "../../lib/guidepdf.js";
-import {
-  DECK_STATUSES, addDeckCard, bracketVerdict, bulkDeckCards, buyListText, deckComboRequest, deckDetail, deckPower, draftDeck, exportDeck,
-  listDecks, normalizeFormat, parseDecklist, saveDeck, setCommander, shoppingList, updateDeckCard,
-} from "../../lib/decks.js";
+import { DECK_STATUSES, normalizeFormat, parseDecklist } from "../../lib/deckrules.js";
+import { addDeckCard, bulkDeckCards, setCommander, updateDeckCard } from "../../lib/deckedit.js";
+import { bracketVerdict, deckComboRequest, deckPower, draftDeck } from "../../lib/deckpower.js";
+import { buyListText, exportDeck } from "../../lib/decktext.js";
+import { deckDetail, listDecks, saveDeck, shoppingList } from "../../lib/decks.js";
 import { accessoriesForRows, ensureAccessoryData } from "../../lib/accessories.js";
 import { deckToBinder } from "../../lib/binders.js";
 import { buildChecklist, clearBuildPicks, pickedKeys, setBuildPick } from "../../lib/deckbuild.js";

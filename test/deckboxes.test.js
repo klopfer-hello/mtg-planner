@@ -7,7 +7,9 @@
 
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { cardUsage, deckDetail, deckToText, listDecks, saveDeckRows } from "../lib/decks.js";
+import { cardUsage } from "../lib/allocation.js";
+import { deckDetail, listDecks, saveDeckRows } from "../lib/decks.js";
+import { deckToText } from "../lib/decktext.js";
 import { createBinder, deckToBinder, listBinders, renameBinder, setBinderProps } from "../lib/binders.js";
 import { SCHEMA_VERSION, migrate, openDb } from "../lib/db.js";
 import { buildChecklist } from "../lib/deckbuild.js";

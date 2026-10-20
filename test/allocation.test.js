@@ -6,9 +6,10 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_VERSION, openDb } from "../lib/db.js";
-import {
-  allocation, cardUsage, deckDetail, deckToText, listDecks, saveDeck, saveDeckRows, setDeckStatus, shoppingList,
-} from "../lib/decks.js";
+import { allocation, cardUsage } from "../lib/allocation.js";
+import { deckDetail, listDecks, saveDeck, saveDeckRows, shoppingList } from "../lib/decks.js";
+import { deckToText } from "../lib/decktext.js";
+import { setDeckStatus } from "../lib/deckedit.js";
 import { collectionMaster, deckToBinder, defaultImportMode, listBinders, moveCopies, renameBinder, setCollectionMaster } from "../lib/binders.js";
 import { importManaBoxCsv } from "../lib/manabox.js";
 import { searchCollection } from "../lib/query.js";

@@ -2,7 +2,11 @@
 // combos), shopping_list, and the two deck writes save_deck and
 // update_deck_notes (actor claude, kept in the deck history).
 
-import { BOARDS, bracketVerdict, DECK_NOTES_MAX, DECK_STATUSES, deckDetail, DeckError, deckPower, deckToText, draftDeck, findDeck, listDecks, powerLines, saveDeck, setDeckNotes, shoppingList } from "../../lib/decks.js";
+import { BOARDS, DECK_STATUSES, DeckError } from "../../lib/deckrules.js";
+import { bracketVerdict, deckPower, draftDeck, powerLines } from "../../lib/deckpower.js";
+import { DECK_NOTES_MAX, setDeckNotes } from "../../lib/deckedit.js";
+import { deckDetail, findDeck, listDecks, saveDeck, shoppingList } from "../../lib/decks.js";
+import { deckToText } from "../../lib/decktext.js";
 import { wishlistShopping } from "../../lib/wishlist.js";
 import { deckVersion, listDeckVersions } from "../../lib/deckhistory.js";
 import { guideMeta } from "../../lib/deckguide.js";

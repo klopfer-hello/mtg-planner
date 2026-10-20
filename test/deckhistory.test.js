@@ -6,7 +6,9 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_VERSION, openDb } from "../lib/db.js";
-import { parseDecklist, saveDeck, setCommander, setDeckStatus, updateDeckCard } from "../lib/decks.js";
+import { parseDecklist } from "../lib/deckrules.js";
+import { saveDeck } from "../lib/decks.js";
+import { setCommander, setDeckStatus, updateDeckCard } from "../lib/deckedit.js";
 import {
   DECK_VERSIONS_KEEP, deckVersion, diffSnapshots, diffSummary, listDeckVersions, recordDeckVersion, restoreDeckVersion, snapshotDeck,
 } from "../lib/deckhistory.js";
