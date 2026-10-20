@@ -5782,6 +5782,7 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
 
       <h2 className="settings-h" id="settings-collection">Collection</h2>
       <MasterPanel master={master} busy={masterState.busy} error={masterState.error} onSwitch={switchMaster} />
+      <ExportPanel />
       <RecentChanges dataVersion={dataVersion} onChanged={onImported} />
 
       <h2 className="settings-h" id="settings-backups">Backups</h2>
@@ -8469,6 +8470,14 @@ function BinderMenuSheet({ entry, list, onClose, onChanged, onRenamed, onDeleted
         </form>
 
         <div className="stack" style={{ gap: 8 }}>
+          <span className="label">Export</span>
+          <div className="row">
+            <a className="btn" href={`/api/collection/export?format=manabox&binder=${encodeURIComponent(entry.name)}`} download><Icon.download /> ManaBox CSV</a>
+            <a className="btn" href={`/api/collection/export?format=csv&binder=${encodeURIComponent(entry.name)}`} download><Icon.download /> Spreadsheet CSV</a>
+          </div>
+        </div>
+
+        <div className="stack" style={{ gap: 8 }}>
           <span className="label">Delete</span>
           {deleting
             ? <BinderDeleteChoice binder={entry} master={list?.master} cards={deleting} busy={busy} onCards={setDeleting}
@@ -9100,6 +9109,22 @@ const EDIT_KIND_BADGE = { edit: "accent", delete: "bad", relanguage: "warn" };
 const EDIT_ACTOR_LABEL = { app: "you", claude: "✦ Claude", maintenance: "maintenance" };
 
 /** Settings → Collection: the edit log (GET /api/collection/edits) with Undo per entry. */
+/** Settings → Collection: download every owned copy as a ManaBox CSV or a plain spreadsheet CSV. */
+function ExportPanel() {
+  return (
+    <section className="card stack" aria-labelledby="export-h">
+      <h3 id="export-h">Export collection</h3>
+      <p className="small muted" style={{ margin: 0 }}>Every copy, one line per binder, printing, finish, language and condition.
+        <b> ManaBox CSV</b> uses ManaBox's own layout (import it there, or into another mtg-planner). <b>Spreadsheet CSV</b> adds € prices.
+        One binder only: its <b>⋯</b> menu.</p>
+      <div className="row">
+        <a className="btn" href="/api/collection/export?format=manabox" download><Icon.download /> ManaBox CSV</a>
+        <a className="btn" href="/api/collection/export?format=csv" download><Icon.download /> Spreadsheet CSV</a>
+      </div>
+    </section>
+  );
+}
+
 function RecentChanges({ dataVersion, onChanged }) {
   const [edits, setEdits] = useState(null);
   const [error, setError] = useState(null);

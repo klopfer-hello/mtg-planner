@@ -98,6 +98,8 @@ More: [how to scan](docs/guide.md#2-scanning) · [docs/scanner.md](docs/scanner.
 ## Your collection
 
 - **Import:** export a CSV in ManaBox, then upload it in **Settings**.
+- **Export:** Settings → Collection → **Export collection** gives you a CSV
+  in ManaBox's layout, or one for spreadsheets.
 - **Search:** find cards with short codes. Example: `t:creature eur>2` =
   creatures worth more than €2. [All codes](docs/collection.md#search-syntax)
 - **Binders:** the Binders tab starts with your binders (cover, copies,

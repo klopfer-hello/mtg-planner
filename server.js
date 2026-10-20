@@ -16,6 +16,7 @@ import { QUERY_HELP, SECTION_BYS, binderMatches, collectionSections, searchColle
 import { CARD_FACTS_META, IMPORT_MODES, backfillCardFacts, cardFactsPending, importManaBoxCsv, refreshOwnedCards, tokenFactsPending } from "./lib/manabox.js";
 import { accessoriesForRows, createAccessoryFetcher, ensureAccessoryData } from "./lib/accessories.js";
 import { syncEnglishPrices } from "./lib/prices.js";
+import { EXPORT_FORMATS, exportCollection } from "./lib/collectionexport.js";
 import {
   DECK_STATUSES, DeckError, bracketVerdict, buyListText, cardUsage, deckComboRequest, deckDetail, deckPower, draftDeck, eurForFinish, exportDeck, listDecks,
   addDeckCard, bulkDeckCards, normalizeFormat, parseDecklist, saveDeck, setCommander, shoppingList, updateDeckCard,
@@ -1668,6 +1669,20 @@ async function handleApi(req, res, url) {
   }
   if (pathname === "/api/query-help" && method === "GET") return sendJson(res, 200, { help: QUERY_HELP });
   if (pathname === "/api/collection" && method === "GET") return sendJson(res, 200, collectionRows(query));
+  // The owned copies as CSV: ?format=manabox (ManaBox's export layout, default) | csv (plain sheet), ?binder= ('' = Unsorted).
+  if (pathname === "/api/collection/export" && method === "GET") {
+    const format = query.get("format") || "manabox";
+    if (!EXPORT_FORMATS.includes(format)) throw new HttpError(400, `format must be ${EXPORT_FORMATS.join(" or ")}`);
+    const binder = query.has("binder") ? query.get("binder") : null;
+    const { text } = exportCollection(db, { format, binder });
+    const base = binder == null ? "mtg-planner collection" : `mtg-planner ${binder || "Unsorted"}`;
+    const ascii = base.replace(/[^\w .()-]+/g, "_").trim() || "collection";
+    res.writeHead(200, {
+      "Content-Type": "text/csv; charset=utf-8", "Cache-Control": "no-store",
+      "Content-Disposition": `attachment; filename="${ascii}.csv"; filename*=UTF-8''${encodeURIComponent(base)}.csv`,
+    });
+    return res.end(text);
+  }
   if (pathname === "/api/collection/sections" && method === "GET") {
     // Section headers (binder detail page): ?by=set|color|rarity|type plus the q/group/binder of /api/collection.
     const by = query.get("by") || "set";

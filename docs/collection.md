@@ -8,6 +8,7 @@ of your collection, how to edit copies, and the search syntax.
 - [Binders](#binders)
 - [The collection master](#the-collection-master)
 - [Editing owned copies](#editing-owned-copies)
+- [Exporting](#exporting)
 - [Search syntax](#search-syntax)
 - [API](#api)
 
@@ -182,6 +183,20 @@ A card's details list every owned copy with **Move… / Edit… / Delete…**:
 - Claude's `edit_copies` tool uses the same edits (logged with Claude as the
   author, undoable the same way); it cannot delete.
 
+## Exporting
+
+**Settings → Collection → Export collection** downloads every copy you own as
+a CSV file. One binder only: open it, tap **⋯**, then **Export**.
+
+- **ManaBox CSV** uses ManaBox's own export layout: binder, set, number,
+  finish, condition, language, quantity, purchase price. Import it in ManaBox
+  as a CSV, or into another mtg-planner (Settings → Import). Copies from the
+  scanner and copies changed in the app are included.
+- **Spreadsheet CSV** has simpler columns plus the € price per copy and per
+  line, and where each copy came from (ManaBox, scanner, app).
+
+What ManaBox keeps from the file (binders, for example) is up to ManaBox.
+
 ## Search syntax
 
 The collection browser and Claude's `search_collection` tool use the same
@@ -243,6 +258,7 @@ same-origin request.
 | `PATCH /api/binders/:name {name?, type?, cover_scryfall_id?, deck_id?, locked?, favorite?, confirm_master?}` | rename (merging into an existing binder; type, cover, lock and favourite come along); `favorite` true / false (400 for Unsorted); `locked` true / false, null = automatic (400 otherwise, also for Unsorted); `type` null = automatic; `cover_scryfall_id` must be a printing in the binder, null = most valuable card; `deck_id` links the deck that owns this box (sets that deck's `box_binder`, clears any other deck's link to this binder and the deck's previous box; null unlinks; 400 not an id, 404 no such deck) |
 | `DELETE /api/binders/:name?cards=unsort\|delete&confirm_master=1` | delete; `unsort` (default) moves the cards to Unsorted, `delete` deletes them (logged in the edit log, undoable) |
 | `POST /api/collection/move` | `{items, to_binder, create?, confirm_master?}`; an item is `{scryfall_id, finish, language, condition, binder, source?, quantity}` (copies of one row key), `{oracle_id, from_binder?}` (every copy of a card) or `{printing_id, from_binder?}` (every copy of a printing); `to_binder: ""` is Unsorted |
+| `GET /api/collection/export?format=manabox\|csv&binder=` | CSV download of the owned copies (all sources; `binder` as below, omitted = all); `manabox` (default) = ManaBox's export columns, read back by the importer; `csv` = name, set, set_name, collector_number, finish, language, condition, binder, quantity, price_eur, value_eur, source, scryfall_id; 400 for another format |
 | `GET /api/collection?binder=` | the collection list filtered by exact binder (`binder=` = Unsorted); `section_by=set\|color\|rarity\|type&section=<key>` = one section |
 | `GET /api/collection/sections?by=set\|color\|rarity\|type&q&group&binder` | `{by, sections: [{key, label, cards, copies, value_eur}]}` for the same view as `/api/collection` |
 | `GET\|PATCH /api/settings` | `{collection_master: "manabox" \| "app"}` (also in `GET /api/stats`) |
