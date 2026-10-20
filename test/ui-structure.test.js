@@ -44,6 +44,17 @@ describe("public/index.html", () => {
     for (const ref of refs) assert.ok(existsSync(path.join(PUBLIC, ref.replace(/[?#].*$/, ""))), `missing ${ref}`);
   });
 
+  test("every Babel script compiles with the react preset and no default plugins", () => {
+    // Babel standalone's default plugins hoist helper constants (const _excluded = ...) into each
+    // file; in one shared global scope the second file then fails with "already been declared".
+    const tags = [...html.matchAll(/<script\b[^>]*type="text\/babel"[^>]*>/g)].map((m) => m[0]);
+    assert.equal(tags.length, scripts.length);
+    for (const t of tags) {
+      assert.match(t, /data-presets="react"/, t);
+      assert.match(t, /data-plugins=""/, t);
+    }
+  });
+
   test("React is set up before any app script and the app mounts once", () => {
     const first = scripts[0].code;
     assert.match(first, /^\s*"use strict";\s*\nconst \{ useState,[^}]*\} = React;/, "hooks come first");
