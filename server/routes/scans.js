@@ -20,7 +20,7 @@ import { HttpError, optString, readJson, sendEmpty, sendFile, sendJson } from ".
 
 const SCAN_LIMIT = 12 * 1024 * 1024;
 // /increment body ({capture}): the record is cut to 4 KB by sanitizeCapture;
-// the raw body may be a bit larger (a chip record with its evidence).
+// the raw body may be a bit larger.
 const INCREMENT_LIMIT = 16 * 1024;
 // Declared JPEG size caps for uploads (djpeg writes the full declared raster).
 const MAX_CARD_PIXELS = 6_000_000; // the browser sends 1000x1400
@@ -69,13 +69,11 @@ function calibrationSources(query) {
   return list;
 }
 
-/** Optional capture-controller fields of a scan request: {capture, dupOf}. */
-function captureFields(body) {
+/** Optional capture record of a scan / +1 request (whitelisted later by sanitizeCapture). */
+function captureOf(body) {
   const capture = body.capture ?? null;
   if (capture !== null && (typeof capture !== "object" || Array.isArray(capture))) throw new HttpError(400, "capture must be an object");
-  const dupOf = body.dup_of == null ? null : Number(body.dup_of);
-  if (dupOf != null && !(Number.isInteger(dupOf) && dupOf > 0)) throw new HttpError(400, "dup_of must be a scan id");
-  return { capture, dupOf };
+  return capture;
 }
 
 /** body.probe_session: optional client-generated id ([A-Za-z0-9-]{1,40}). */
@@ -141,7 +139,7 @@ export function scanRoutes(router, app) {
     const body = await readJson(req, SCAN_LIMIT);
     if (body.mode != null && !["scan", "probe"].includes(body.mode)) throw new HttpError(400, "mode must be scan or probe");
     const session = probeSession(body);
-    const { capture, dupOf } = captureFields(body);
+    const capture = captureOf(body);
     if (body.mode === "probe") return postProbe(body, { gone, session, capture });
     const { card, strip } = scanInput(body);
     const replaceId = body.replace_id == null ? null : Number(body.replace_id);
@@ -158,7 +156,7 @@ export function scanRoutes(router, app) {
     if (gone.signal.aborted) throw new HttpError(499, "Scan cancelled: the client closed the request");
     const staged = stageScan(app.db, result, {
       image: result.upright?.card ?? card, strip: result.upright?.strip ?? strip, force: body.force === true, condition: settings.condition,
-      calibration: body.calibration === true, replaceId, dupOf, capture, session,
+      calibration: body.calibration === true, replaceId, capture, session,
     });
     // A shutter scan inside a probe session: the next probe compares against it.
     prober.noteScan(session, result, staged.scan);
@@ -269,8 +267,7 @@ export function scanRoutes(router, app) {
   router.get(`${SCAN}/strip`, ({ req, res, params }) => sendScanImage(req, res, Number(params.id), "strip"));
   router.post(`${SCAN}/increment`, async ({ req, params }) => {
     const body = await readJson(req, INCREMENT_LIMIT);
-    const { capture } = captureFields({ capture: body.capture });
-    return incrementScan(app.db, Number(params.id), { capture });
+    return incrementScan(app.db, Number(params.id), { capture: captureOf(body) });
   });
   router.post(`${SCAN}/truth`, async ({ req, params }) => {
     const body = await readJson(req);
