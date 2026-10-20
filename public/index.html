@@ -2715,6 +2715,12 @@ function DeckImportForm({ onCreated, onCancel }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // "I own these cards" (a deck you bought): the cards also go into the collection, in one binder.
+  const [owned, setOwned] = useState(false);
+  const [binder, setBinder] = useState(null); // null = follows the name ("Deck box: <name>")
+  const [language, setLanguage] = useState("en");
+  const [condition, setCondition] = useState("near_mint");
+  const boxName = binder ?? (name.trim() ? `Deck box: ${name.trim()}`.slice(0, 100) : "");
 
   const pickFile = async (e) => {
     const file = e.target.files?.[0];
@@ -2734,7 +2740,11 @@ function DeckImportForm({ onCreated, onCancel }) {
     setBusy(true);
     setError(null);
     try {
-      const res = await api("/api/decks", { method: "POST", json: { name: name.trim(), format, text } });
+      const res = owned
+        ? await api("/api/collection/import-list", { method: "POST", json: {
+          text, binder: boxName.trim(), language, condition, deck: { name: name.trim(), format } } })
+          .then((r) => ({ ...r, id: r.deck_id }))
+        : await api("/api/decks", { method: "POST", json: { name: name.trim(), format, text } });
       onCreated(res);
     } catch (err) {
       setError(err.message);
@@ -2771,12 +2781,37 @@ function DeckImportForm({ onCreated, onCancel }) {
         </div>
         <textarea id="deck-text" className="textarea" required value={text} onChange={(e) => setText(e.target.value)}
           placeholder={"Commander\n1 Lathril, Blade of the Elves\n\nDeck\n1 Sol Ring\n1x Llanowar Elves (M19) 314\n36 Forest"} />
-        <span className="muted small">One card per line: <code>1 Sol Ring</code>, <code>1x Name (SET) 123</code>. Section headers like Commander / Deck / Sideboard / Maybeboard are recognised. Cards you own are matched to your printings.</span>
+        <span className="muted small">One card per line: <code>1 Sol Ring</code>, <code>1x Name (SET) 123</code>, <code>*F*</code> for foil. Section headers like Commander / Deck / Sideboard / Maybeboard are recognised. {owned ? "Lines without a set get a current printing." : "Cards you own are matched to your printings."}</span>
       </div>
+      <label className="radio-card">
+        <input type="checkbox" checked={owned} onChange={(e) => setOwned(e.target.checked)} />
+        <span><b>I own these cards</b> (a deck I bought)<br />
+          <span className="small muted">The cards are also added to your collection, the deck is marked as built and the binder becomes its deck box. The maybeboard isn't added.</span></span>
+      </label>
+      {owned && (
+        <div className="settings-grid">
+          <div className="field" style={{ gridColumn: "1 / -1" }}>
+            <label htmlFor="deck-own-binder">Binder (deck box)</label>
+            <input id="deck-own-binder" className="input" maxLength={100} value={boxName} onChange={(e) => setBinder(e.target.value)} placeholder="Deck box: …" />
+          </div>
+          <div className="field">
+            <label htmlFor="deck-own-lang">Language</label>
+            <select id="deck-own-lang" className="select" value={language} onChange={(e) => setLanguage(e.target.value)}>
+              {SCAN_LANGS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="deck-own-cond">Condition</label>
+            <select id="deck-own-cond" className="select" value={condition} onChange={(e) => setCondition(e.target.value)}>
+              {CONDITIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </div>
+        </div>
+      )}
       <ErrorNotice error={error} />
       <div className="row">
-        <button type="submit" className="btn primary" disabled={busy || !name.trim() || !text.trim()}>
-          {busy ? <><span className="spinner" aria-hidden="true" /> Importing…</> : "Import deck"}
+        <button type="submit" className="btn primary" disabled={busy || !name.trim() || !text.trim() || (owned && !boxName.trim())}>
+          {busy ? <><span className="spinner" aria-hidden="true" /> Importing…</> : owned ? "Import deck and add the cards" : "Import deck"}
         </button>
         <button type="button" className="btn ghost" onClick={onCancel}>Cancel</button>
       </div>
@@ -2861,7 +2896,7 @@ function deckMatches(d, f) {
   return true;
 }
 
-function DeckList({ dataVersion, onOpen, refreshKey, notice = null }) {
+function DeckList({ dataVersion, onOpen, refreshKey, notice = null, onCollectionChanged = null }) {
   const [hideNotice, setHideNotice] = useState(false);
   const [filter, setFilter] = useState(loadDeckFilter);
   useEffect(() => { store.set(DECK_FILTER_KEY, filter); }, [filter]);
@@ -2903,6 +2938,10 @@ function DeckList({ dataVersion, onOpen, refreshKey, notice = null }) {
             const issues = [];
             if (res.unresolved?.length) issues.push(`Not found on Scryfall: ${res.unresolved.join(", ")}`);
             if (res.parse_errors?.length) issues.push(`Skipped lines: ${res.parse_errors.join(" | ")}`);
+            if (res.added_copies) {
+              issues.unshift(`Added ${res.added_copies} cards to ${res.binder || UNSORTED} (undo: Settings → Collection → Recent changes)`);
+              onCollectionChanged?.();
+            }
             onOpen(res.id, issues.length ? issues.join(" — ") : null);
           }} />
       )}
@@ -4608,6 +4647,8 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
   const [notice, setNotice] = useState(initialNotice);
+  // The hash router may mount the page a render before openDeck's notice arrives.
+  useEffect(() => { if (initialNotice) setNotice(initialNotice); }, [initialNotice]);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: "", format: "", description: "" });
   const [saving, setSaving] = useState(false);
@@ -5020,7 +5061,7 @@ function DecksTab({ dataVersion, deckId, deckNotice, onOpenDeck, onOpenCard, onA
         onOpenCard={onOpenCard} onOpenDeck={onOpenDeck} onAsk={onAsk} onChanged={onChanged} onCollectionChanged={onCollectionChanged} onWishChanged={onWishChanged} />
     );
   }
-  return <DeckList dataVersion={dataVersion} refreshKey={listKey} onOpen={onOpenDeck} notice={deckNotice} />;
+  return <DeckList dataVersion={dataVersion} refreshKey={listKey} onOpen={onOpenDeck} notice={deckNotice} onCollectionChanged={onCollectionChanged} />;
 }
 
 // ===========================================================================
@@ -5866,6 +5907,74 @@ const IMPORT_MODE_HELP = {
   replace: "Cards imported from ManaBox become exactly what's in the file. Scanned cards and cards organised here are kept.",
 };
 
+/** Settings → Import → Card list: a text list (e.g. a bought deck or booster pulls) into one binder of the collection. */
+function CardListImport({ onDone }) {
+  const [text, setText] = useState("");
+  const [binder, setBinder] = useState("");
+  const [language, setLanguage] = useState("en");
+  const [condition, setCondition] = useState("near_mint");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null);
+  const pickFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try { setText(await file.text()); } catch (err) { setError(`Could not read the file: ${err.message}`); }
+    e.target.value = "";
+  };
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!text.trim() || busy) return;
+    setBusy(true); setError(null); setResult(null);
+    try {
+      const res = await api("/api/collection/import-list", { method: "POST", json: { text, binder: binder.trim(), language, condition } });
+      setResult(res);
+      setText("");
+      onDone?.();
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+  return (
+    <form className="card stack" onSubmit={submit} aria-labelledby="list-import-title">
+      <div className="row between">
+        <h2 id="list-import-title">Card list</h2>
+        <label className="btn sm"><Icon.file /> Load .txt<input type="file" accept=".txt,.dec,.dek,text/plain" className="sr-only" onChange={pickFile} /></label>
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>Adds a list of cards you got (a deck, booster pulls) to one binder. Same format as decklists:
+        <code> 1 Sol Ring</code>, <code>1 Name (SET) 123</code>, <code>*F*</code> for foil. A deck you bought? Use <b>Decks → Import decklist → I own these cards</b>: it also creates the deck.</p>
+      <textarea className="textarea" aria-label="Card list" value={text} onChange={(e) => setText(e.target.value)} placeholder={"4 Lightning Bolt\n1 Sol Ring (CMM) 1015 *F*"} />
+      <div className="settings-grid">
+        <div className="field" style={{ gridColumn: "1 / -1" }}>
+          <label htmlFor="list-binder">Binder</label>
+          <input id="list-binder" className="input" maxLength={100} value={binder} onChange={(e) => setBinder(e.target.value)} placeholder={`${UNSORTED} (leave empty) or a binder name`} />
+        </div>
+        <div className="field">
+          <label htmlFor="list-lang">Language</label>
+          <select id="list-lang" className="select" value={language} onChange={(e) => setLanguage(e.target.value)}>
+            {SCAN_LANGS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="list-cond">Condition</label>
+          <select id="list-cond" className="select" value={condition} onChange={(e) => setCondition(e.target.value)}>
+            {CONDITIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </div>
+      </div>
+      <ErrorNotice error={error} onDismiss={() => setError(null)} />
+      {result && (
+        <div className="notice ok" role="status"><span aria-hidden="true">✓</span><div className="grow">
+          <b>Added {plural(result.added_copies, "copy", "copies")}</b> ({plural(result.cards, "card")}) to {result.binder || UNSORTED}. Undo in Collection → Recent changes.
+          {result.unresolved?.length > 0 && <div className="small">Not found: {result.unresolved.join(", ")}</div>}
+          {result.parse_errors?.length > 0 && <div className="small">Skipped lines: {result.parse_errors.join(" | ")}</div>}
+        </div></div>
+      )}
+      <div className="row">
+        <button type="submit" className="btn primary" disabled={busy || !text.trim()}>{busy ? <><span className="spinner" aria-hidden="true" /> Adding…</> : <><Icon.plus /> Add to collection</>}</button>
+      </div>
+    </form>
+  );
+}
+
 function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDismissRestored }) {
   const [file, setFile] = useState(null);
   const [mode, setMode] = useState("replace");
@@ -6085,6 +6194,8 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
           </div>
         )}
       </form>
+
+      <CardListImport onDone={onImported} />
 
       <section className="card stack" aria-labelledby="history-title">
         <h2 id="history-title">Import history</h2>
@@ -9667,8 +9778,8 @@ function BulkDeleteSheet({ items, group, binder, onClose, onDone }) {
   );
 }
 
-const EDIT_KIND_LABEL = { edit: "edit", delete: "delete", relanguage: "language fix" };
-const EDIT_KIND_BADGE = { edit: "accent", delete: "bad", relanguage: "warn" };
+const EDIT_KIND_LABEL = { edit: "edit", delete: "delete", relanguage: "language fix", add: "added" };
+const EDIT_KIND_BADGE = { edit: "accent", delete: "bad", relanguage: "warn", add: "ok" };
 const EDIT_ACTOR_LABEL = { app: "you", claude: "✦ Claude", maintenance: "maintenance" };
 
 /** Settings → Collection: the edit log (GET /api/collection/edits) with Undo per entry. */

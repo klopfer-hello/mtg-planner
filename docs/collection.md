@@ -4,6 +4,7 @@ How your collection gets into the app, how binders work, who is the "master"
 of your collection, how to edit copies, and the search syntax.
 
 - [Importing from ManaBox](#importing-from-manabox)
+- [Adding a card list](#adding-a-card-list)
 - [Browsing and searching](#browsing-and-searching)
 - [Binders](#binders)
 - [The collection master](#the-collection-master)
@@ -58,6 +59,25 @@ It also understands `Collector number`, `Foil`, `Quantity`, `Condition`,
 `Language`, `Purchase price`, `Purchase price currency`, `Binder Name` and
 `Binder Type`. Comma and semicolon delimiters both work, and a UTF-8 BOM is
 fine.
+
+## Adding a card list
+
+Bought a preconstructed deck or a few singles? Add them as a text list, no
+scanning needed.
+
+- **A deck you bought:** **Decks → Import decklist**, paste the list, tick
+  **I own these cards**. The app saves the deck as *built* and puts the cards
+  into its deck box (default `Deck box: <deck name>`, you can change it).
+- **Just cards:** **Settings → Import → Card list**. Paste the list and pick
+  a binder (empty = Unsorted).
+- Pick the **language** and **condition** of the copies once for the whole list.
+- The format is the usual decklist: `1 Sol Ring`, `1 Sol Ring (C21) 263` for an
+  exact printing, `*F*` for foil, `*E*` for etched. A name without a set takes
+  Scryfall's current printing. The **maybeboard** is not added (you don't own it).
+- Lines the app doesn't understand or can't find are listed, the rest is added.
+- The whole list is **one entry in Recent changes** (Settings → Collection), so
+  **Undo** takes all copies away again. The deck stays; delete it by hand.
+- The new copies belong to the app (source `app`): ManaBox imports leave them alone.
 
 ## Browsing and searching
 
@@ -291,6 +311,7 @@ same-origin request.
 | `GET /api/collection/sections?by=set\|color\|rarity\|type&q&group&binder` | `{by, sections: [{key, label, cards, copies, value_eur}]}` for the same view as `/api/collection` |
 | `GET\|PATCH /api/settings` | `{collection_master: "manabox" \| "app"}` (also in `GET /api/stats`) |
 | `POST /api/import/manabox?mode=replace\|delta\|add&binder=&create_binder=1` | raw CSV body; `binder` puts every card into that binder (empty = Unsorted, a new name needs `create_binder=1`, else 404); the summary lists `added` and `decreased` rows in delta mode |
+| `POST /api/collection/import-list {text, binder?, create?, language?, condition?, deck?: {name, format?}}` | add a decklist-format card list (≤1000 lines) as new `app` copies of one binder (`""` = Unsorted, a new name needs `create` (default true), else 404), language `en` and condition `near_mint` by default; commander/main/side lines only; with `deck` also a built deck (every board) whose deck box is that binder; 201 `{binder, created, added_copies, cards, unresolved, parse_errors, edit_id, deck_id}`; one undoable `add` entry in `/api/collection/edits`; 400 when nothing was found |
 | `POST /api/refresh-prices` | re-fetch card data and prices of everything you own or use in a deck |
 | `PATCH /api/decks/:id {status}` | `idea` or `built` |
 | `GET /api/shopping-list` | `{built: {items, total_eur}, per_deck}` |

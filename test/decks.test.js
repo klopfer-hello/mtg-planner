@@ -34,7 +34,7 @@ describe("parseDecklist", () => {
     assert.deepEqual(items, [
       { quantity: 1, name: "Atraxa, Praetors' Voice", set: undefined, collector_number: undefined, board: "commander" },
       { quantity: 1, name: "Sol Ring", set: "c21", collector_number: "263", board: "main" },
-      { quantity: 1, name: "Arcane Signet", set: "cmm", collector_number: "1015", board: "main" },
+      { quantity: 1, name: "Arcane Signet", set: "cmm", collector_number: "1015", board: "main", finish: "foil" },
       { quantity: 4, name: "Lightning Bolt", set: undefined, collector_number: undefined, board: "main" },
       { quantity: 1, name: "Delver of Secrets // Insectile Aberration", set: "isd", collector_number: "51", board: "main" },
       { quantity: 2, name: "Duress", set: undefined, collector_number: undefined, board: "side" },

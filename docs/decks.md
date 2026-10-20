@@ -23,7 +23,10 @@ score) work.
 
 <img src="img/decks.webp" width="260" alt="The deck list with filters">
 
-- Paste a list in MTGA, Moxfield or ManaBox format.
+- Paste a list in MTGA, Moxfield or ManaBox format. A deck you **bought**
+  (a precon): tick **I own these cards**, and the cards go into your
+  collection too, in the deck's box (see
+  [collection.md](collection.md#adding-a-card-list)).
 - Let Claude build one in the [planner](claude.md); it is saved as an *idea*.
 - ManaBox **deck binders** become decks automatically on import (see
   [collection.md](collection.md#importing-from-manabox)).

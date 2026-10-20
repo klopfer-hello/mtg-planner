@@ -18,6 +18,7 @@ import { accessoriesForRows, createAccessoryFetcher, ensureAccessoryData } from 
 import { syncEnglishPrices } from "./lib/prices.js";
 import { EXPORT_FORMATS, exportCollection } from "./lib/collectionexport.js";
 import { listSets, setDetail } from "./lib/sets.js";
+import { addCardList, resolveCardList } from "./lib/listimport.js";
 import { generateGuide, guideMeta, latestGuide } from "./lib/deckguide.js";
 import { fetchGuideImages, renderGuidePdf } from "./lib/guidepdf.js";
 import {
@@ -1831,6 +1832,21 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, await exclusive(() => editCopies(db, {
       items: body.items, set: body.set, confirm_master: body.confirm_master === true, actor: "app",
     }, { getPrinting: editPrintingLookup() }).catch((err) => { throw scanErr(err); })));
+  }
+  // A text card list (e.g. a bought precon) into the collection, optionally also as a built deck
+  // (lib/listimport.js). Printings are looked up first (Scryfall), then written under the lock.
+  if (pathname === "/api/collection/import-list" && method === "POST") {
+    const body = await readJson(req);
+    const text = optString(body.text, "text", 200000) || "";
+    if (!text.trim()) throw new HttpError(400, "The list is empty");
+    const deck = body.deck && typeof body.deck === "object" ? { name: optString(body.deck.name, "deck name", 200), format: optString(body.deck.format, "format", 50) } : null;
+    const resolved = await resolveCardList(db, text).catch((err) => { throw scanErr(err); });
+    const out = await exclusive(async () => scanCall(() => addCardList(db, resolved, {
+      binder: typeof body.binder === "string" ? body.binder.slice(0, 100) : "", create: body.create !== false,
+      language: body.language || "en", condition: body.condition || "near_mint", deck,
+    })));
+    if (out.deck_id) scheduleSpellbook(out.deck_id);
+    return sendJson(res, 201, out);
   }
   if (pathname === "/api/collection/delete" && method === "POST") {
     const body = await readJson(req);
