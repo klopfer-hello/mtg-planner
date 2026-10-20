@@ -50,8 +50,19 @@ open the same main database file, which runs in WAL mode with a busy timeout.
 
 ## Code map
 
-- `server.js`: HTTP API, ManaBox import, decks, scanner, and chat over
-  Server-Sent Events. It uses the Node standard library only.
+- `server.js`: starts the web server: wires the shared state, the routes,
+  static files, `/healthz`, the nightly scheduler, boot and shutdown. Node
+  standard library only.
+- `server/`: the HTTP layer. `app.js` holds the shared state (the database,
+  the write lock for imports and collection changes, busy flags, background
+  services), `router.js` a small route table (405 for a known path with
+  another method), `http.js` the request/response helpers and the cross-site
+  guard, `errors.js` maps the `lib/` error classes to HTTP statuses,
+  `static.js` serves `public/`, `scanner.js` owns the card index, matcher and
+  index jobs, `background.js` the debounced upkeep (English prices, value
+  snapshot, card facts). `server/routes/*.js` has one file per area (decks,
+  collection, binders, scans, chats, backups, market, settings, debug,
+  downloads).
 - `lib/db.js`: SQLite schema (`cards`, `collection`, `binders`, `decks`,
   `deck_cards`, `imports`, `manabox_snapshot`, `collection_edits`, `chats`,
   `messages`, `scans`, `meta`) on `node:sqlite`, with versioned migrations
@@ -67,8 +78,13 @@ open the same main database file, which runs in WAL mode with a busy timeout.
   copies between binders, and the collection master setting.
 - `lib/edits.js`, `lib/editlog.js`: editing and deleting owned copies, the
   edit log and undo.
-- `lib/decks.js`: decklist parsing, name resolution (owned printings first),
-  and ownership and missing-cost math.
+- `lib/decks.js`: saving, finding and listing decks, and the deck detail
+  (per-card ownership, value, shopping list). Around it: `lib/deckrules.js`
+  (boards, decklist parsing, commander pairing), `lib/deckresolve.js` (names →
+  printings, owned printings first), `lib/allocation.js` (owned vs. claimed
+  copies), `lib/deckpower.js` (stats, bracket, score, combos),
+  `lib/deckedit.js` (card edits, status, notes, commander) and
+  `lib/decktext.js` (exports and the text for Claude).
 - `lib/scheduler.js`: the nightly index and price refresh and the daily value
   snapshot.
 - `lib/finance.js`: value history (`value_history`, `value_history_binders`,
@@ -96,16 +112,22 @@ open the same main database file, which runs in WAL mode with a busy timeout.
   card-index lookups, so none of that blocks the HTTP server.
 - `lib/scanner.js`: the identification pipeline (with the 180° retry) and the
   decision thresholds (`SCAN_THRESHOLDS`).
-- `lib/scans.js`: the scan list (staging, duplicate rule, undo, +1), the
-  recognition probes, commits to binders and decks, and calibration records.
+- `lib/scans.js`: the scan list (staging, duplicate rule, undo, +1) and the
+  recognition probes. Around it: `lib/scanrow.js` (row view, lookups, image
+  paths), `lib/scancapture.js` (capture records), `lib/scanlabels.js`
+  (confirmations, labels, calibration export) and `lib/scancommit.js` (commits
+  to binders and decks).
 - `lib/debugsessions.js`: the store for recorded scan sessions.
-- `mcp-collection.js`: hand-rolled MCP stdio server (JSON-RPC 2.0) with the
-  tools `collection_overview`, `search_collection`, `check_owned`, `get_card`,
+- `mcp-collection.js`: hand-rolled MCP stdio server (JSON-RPC 2.0); the
+  tools live in `mcp/tools/*.js`, shared state and text helpers in `mcp/`. Tools: `collection_overview`, `search_collection`, `check_owned`, `get_card`,
   `list_decks`, `get_deck`, `shopping_list`, `list_binders`, `save_deck` and
   `edit_copies` (read-only apart from `save_deck` and `edit_copies`, no
   delete; binder names, each row's source, ManaBox, scan or app, and owned
   vs. free copies are visible to Claude).
-- `public/`: the single-page web app, with no dependencies. The scanner's
+- `public/`: the single-page web app, with no build step: `index.html` loads
+  `app.css` and the React components in `public/ui/*.jsx` (one file per area,
+  compiled in the browser by Babel standalone, run in order in one shared
+  scope; `test/ui-structure.test.js` checks names and order). The scanner's
   browser side: `public/det/` (card detector and tracker), `public/scanlib.js`
   (camera, cropping, glare and sharpness checks, sounds),
   `public/capture.js` (the probe loop and upload queue) and
@@ -134,6 +156,18 @@ docker run --rm -v "$PWD":/app -w /app node:24-slim npm test
 # ...including the OCR/djpeg tests, in the built image (it has the binaries; CI does the same)
 docker run --rm -v "$PWD":/app -w /app --entrypoint npm ghcr.io/klopfer-hello/mtg-planner:latest test
 ```
+
+HTTP tests start the real `server.js` through `test/helpers/server.js`
+(`startServer`: free port, temp data dir, optional Scryfall stub).
+
+### UI smoke test
+
+`scripts/ui-smoke.mjs` opens a running app in headless Chromium at 320, 390
+and 1280 px, visits every tab and route, opens the card sheet, the deck
+chips, the settings sections and the scan settings, and fails on page errors,
+console errors, failed API requests or horizontal scrolling. It only reads.
+Run it against test data after UI changes; the Docker command is in the
+script header (same Playwright image as the screenshots).
 
 ## Docs screenshots
 
