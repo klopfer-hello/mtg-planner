@@ -6,26 +6,16 @@
 
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import net from "node:net";
-import os from "node:os";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { openDb } from "../lib/db.js";
 import { openIndex, refreshIndex } from "../lib/cardindex.js";
 import { stageScan } from "../lib/scans.js";
 import { ID, SCRYFALL_CARDS, seedCards } from "./fixtures.js";
+import { startServer } from "./helpers/server.js";
 
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-let dir, proc, base, debugDir, staged;
-
-const freePort = () => new Promise((resolve, reject) => {
-  const srv = net.createServer();
-  srv.listen(0, "127.0.0.1", () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
-  srv.on("error", reject);
-});
+let srv, dir, base, call, debugDir, staged;
 
 // A JPEG header the size check accepts (SOF0 64x64); its data is garbage, so identify() fails cleanly.
 function fakeJpeg() {
@@ -35,70 +25,37 @@ function fakeJpeg() {
 const smallJpeg = (n = 2000) => { const b = Buffer.alloc(n, 3); b[0] = 0xff; b[1] = 0xd8; b[2] = 0xff; return b; };
 
 before(async () => {
-  dir = mkdtempSync(path.join(os.tmpdir(), "mtg-planner-test-capture-api-"));
-  const dbFile = path.join(dir, "app.db");
-  debugDir = path.join(dir, "debug");
-  const db = openDb(dbFile);
-  seedCards(db);
-  const bolt = SCRYFALL_CARDS.find((c) => c.id === ID.lightning);
-  const printing = { id: bolt.id, oracle_id: bolt.oracle_id, name: bolt.name, lang: "en", set_code: bolt.set, collector_number: bolt.collector_number, finishes: ["nonfoil", "foil"] };
-  staged = stageScan(db, { status: "auto", printing, store: printing, finish: "normal", features: {} }, { imageDir: path.join(dir, "scans") }).scan;
-  // A second staged card, priced only by the card index (not in the app's cards table).
-  const indexed = { id: "idx-1", oracle_id: "o-1", name: "Index Card", lang: "en", set_code: "m15", collector_number: "1", finishes: ["nonfoil"] };
-  stageScan(db, { status: "auto", printing: indexed, store: indexed, finish: "normal", features: {} }, { imageDir: path.join(dir, "scans"), force: true });
-  db.close();
+  srv = await startServer({
+    name: "capture-api",
+    env: { SCAN_MATCHER_WAIT_MS: "0", SCAN_CLAUDE_PER_HOUR: "0", APP_VERSION: "9.9.9-test" },
+    seed: async (dbFile, dir) => {
+      const db = openDb(dbFile);
+      seedCards(db);
+      const bolt = SCRYFALL_CARDS.find((c) => c.id === ID.lightning);
+      const printing = { id: bolt.id, oracle_id: bolt.oracle_id, name: bolt.name, lang: "en", set_code: bolt.set, collector_number: bolt.collector_number, finishes: ["nonfoil", "foil"] };
+      staged = stageScan(db, { status: "auto", printing, store: printing, finish: "normal", features: {} }, { imageDir: path.join(dir, "scans") }).scan;
+      // A second staged card, priced only by the card index (not in the app's cards table).
+      const indexed = { id: "idx-1", oracle_id: "o-1", name: "Index Card", lang: "en", set_code: "m15", collector_number: "1", finishes: ["nonfoil"] };
+      stageScan(db, { status: "auto", printing: indexed, store: indexed, finish: "normal", features: {} }, { imageDir: path.join(dir, "scans"), force: true });
+      db.close();
 
-  // a one-printing index, so /api/scan gets past "index still being built"
-  const indexFile = path.join(dir, "index.db");
-  const bulk = path.join(dir, "all.jsonl.gz");
-  writeFileSync(bulk, gzipSync(JSON.stringify({
-    object: "card", id: "idx-1", oracle_id: "o-1", name: "Index Card", lang: "en", set: "m15", collector_number: "1", games: ["paper"],
-    finishes: ["nonfoil"], prices: { eur: "6.5" },
-  })));
-  const idx = openIndex(indexFile);
-  await refreshIndex(idx, { source: bulk, setsSource: [{ code: "m15", name: "Magic 2015" }] });
-  idx.close();
-
-  const port = await freePort();
-  base = `http://127.0.0.1:${port}`;
-  proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server.js"], {
-    cwd: ROOT,
-    env: {
-      ...process.env, PORT: String(port), DB_FILE: dbFile, INDEX_DB_FILE: indexFile, STATIC_DIR: path.join(ROOT, "public"),
-      SCAN_IMAGE_DIR: path.join(dir, "scans"), DEBUG_SESSIONS_DIR: debugDir, BACKUP_DIR: path.join(dir, "bk"), SCAN_MATCHER_WAIT_MS: "0",
-      SCAN_AUTO_INDEX: "false", SCHEDULER_ENABLED: "false", CLAUDE_CODE_OAUTH_TOKEN: "", SCAN_CLAUDE_PER_HOUR: "0", APP_VERSION: "9.9.9-test",
+      // a one-printing index, so /api/scan gets past "index still being built"
+      const indexFile = path.join(dir, "index.db");
+      const bulk = path.join(dir, "all.jsonl.gz");
+      writeFileSync(bulk, gzipSync(JSON.stringify({
+        object: "card", id: "idx-1", oracle_id: "o-1", name: "Index Card", lang: "en", set: "m15", collector_number: "1", games: ["paper"],
+        finishes: ["nonfoil"], prices: { eur: "6.5" },
+      })));
+      const idx = openIndex(indexFile);
+      await refreshIndex(idx, { source: bulk, setsSource: [{ code: "m15", name: "Magic 2015" }] });
+      idx.close();
     },
-    stdio: ["ignore", "pipe", "pipe"],
   });
-  let log = "";
-  proc.stdout.on("data", (d) => { log += d; });
-  proc.stderr.on("data", (d) => { log += d; });
-  const deadline = Date.now() + 20000;
-  for (;;) {
-    try { if ((await fetch(`${base}/healthz`)).ok) break; } catch { /* not up yet */ }
-    if (Date.now() > deadline) throw new Error(`server did not start:\n${log}`);
-    await new Promise((r) => setTimeout(r, 150));
-  }
+  ({ dir, base, call } = srv);
+  debugDir = path.join(dir, "debug-sessions");
 });
 
-after(async () => {
-  if (proc && proc.exitCode === null) {
-    const exited = new Promise((r) => proc.once("exit", r));
-    proc.kill("SIGKILL");
-    await exited; // Windows keeps the DB files locked until the process is gone
-  }
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-});
-
-async function call(method, p, json) {
-  const init = { method, headers: {} };
-  if (json !== undefined) { init.body = JSON.stringify(json); init.headers["Content-Type"] = "application/json"; }
-  const res = await fetch(base + p, init);
-  const text = await res.text();
-  let body = null;
-  try { body = JSON.parse(text); } catch { body = text; }
-  return { status: res.status, body };
-}
+after(() => srv?.stop());
 
 describe("POST /api/scan capture fields", () => {
   test("bad capture / dup_of are 400 before anything runs", async () => {

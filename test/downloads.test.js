@@ -4,16 +4,13 @@
 
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { downloadPath, listDownloads } from "../lib/downloads.js";
+import { startServer } from "./helpers/server.js";
 
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const APK = Buffer.from("PK\u0003\u0004 not really an apk");
 const sha = (b) => createHash("sha256").update(b).digest("hex");
 
@@ -56,35 +53,12 @@ describe("lib/downloads", () => {
 });
 
 describe("HTTP /api/downloads", () => {
-  let proc, base;
-  const freePort = () => new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, "127.0.0.1", () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
-    srv.on("error", reject);
-  });
+  let srv, base;
   before(async () => {
-    const port = await freePort();
-    base = `http://127.0.0.1:${port}`;
-    proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server.js"], {
-      cwd: ROOT,
-      env: {
-        ...process.env, PORT: String(port), DB_FILE: path.join(dir, "app.db"), INDEX_DB_FILE: path.join(dir, "index.db"),
-        STATIC_DIR: path.join(ROOT, "public"), DOWNLOAD_DIR: dl, SCAN_IMAGE_DIR: path.join(dir, "scans"),
-        SCAN_AUTO_INDEX: "false", SCHEDULER_ENABLED: "false", CLAUDE_CODE_OAUTH_TOKEN: "", APP_VERSION: "9.9.9-test",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let log = "";
-    proc.stdout.on("data", (d) => { log += d; });
-    proc.stderr.on("data", (d) => { log += d; });
-    const deadline = Date.now() + 20000;
-    for (;;) {
-      try { if ((await fetch(`${base}/healthz`)).ok) break; } catch { /* not up yet */ }
-      if (Date.now() > deadline) throw new Error(`server did not start:\n${log}`);
-      await new Promise((r) => setTimeout(r, 150));
-    }
+    srv = await startServer({ name: "downloads-api", env: { DOWNLOAD_DIR: dl, APP_VERSION: "9.9.9-test" } });
+    base = srv.base;
   });
-  after(() => proc?.kill("SIGKILL"));
+  after(() => srv?.stop());
 
   test("list", async () => {
     const r = await fetch(`${base}/api/downloads`);

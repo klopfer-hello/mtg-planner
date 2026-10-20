@@ -77,7 +77,7 @@ export async function startServer({ name = "server", env = {}, seed = null, scry
 
   async function stop() {
     // Wait for the exit: on Windows the server's open DB files block the cleanup until then.
-    if (proc.exitCode == null) await new Promise((r) => { proc.once("exit", r); proc.kill("SIGKILL"); });
+    if (proc.exitCode == null && proc.signalCode == null) await new Promise((r) => { proc.once("exit", r); proc.kill("SIGKILL"); });
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 

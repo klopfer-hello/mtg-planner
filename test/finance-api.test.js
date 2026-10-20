@@ -6,63 +6,28 @@
 
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { openDb } from "../lib/db.js";
 import { localDay } from "../lib/finance.js";
 import { ID, seedCards } from "./fixtures.js";
+import { startServer } from "./helpers/server.js";
 
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-let dir, proc, base;
-const freePort = () => new Promise((resolve, reject) => {
-  const srv = net.createServer();
-  srv.listen(0, "127.0.0.1", () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
-  srv.on("error", reject);
-});
-const call = async (method, p, body) => {
-  const res = await fetch(base + p, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
-  const text = await res.text();
-  return { status: res.status, body: text ? JSON.parse(text) : null };
-};
+let srv, base, call;
 
 before(async () => {
-  dir = mkdtempSync(path.join(os.tmpdir(), "mtg-planner-test-finance-api-"));
-  const dbFile = path.join(dir, "app.db");
-  const db = openDb(dbFile);
-  seedCards(db);
-  db.prepare(`INSERT INTO collection (scryfall_id, finish, language, condition, binder, quantity, source) VALUES
-    (?, 'normal', 'en', 'near_mint', 'Box', 2, 'app'), (?, 'foil', 'en', 'near_mint', '', 1, 'app')`).run(ID.sol, ID.lightning);
-  db.close();
-  const port = await freePort();
-  base = `http://127.0.0.1:${port}`;
-  proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server.js"], {
-    cwd: ROOT,
-    env: {
-      ...process.env, PORT: String(port), DB_FILE: dbFile, INDEX_DB_FILE: path.join(dir, "missing", "index.db"), STATIC_DIR: path.join(ROOT, "public"),
-      SCAN_IMAGE_DIR: path.join(dir, "scans"), SCAN_AUTO_INDEX: "false", SCHEDULER_ENABLED: "false", CLAUDE_CODE_OAUTH_TOKEN: "",
-      SPELLBOOK_ENABLED: "false",
+  srv = await startServer({
+    name: "finance-api",
+    seed: (dbFile) => {
+      const db = openDb(dbFile);
+      seedCards(db);
+      db.prepare(`INSERT INTO collection (scryfall_id, finish, language, condition, binder, quantity, source) VALUES
+        (?, 'normal', 'en', 'near_mint', 'Box', 2, 'app'), (?, 'foil', 'en', 'near_mint', '', 1, 'app')`).run(ID.sol, ID.lightning);
+      db.close();
     },
-    stdio: ["ignore", "pipe", "pipe"],
   });
-  let log = "";
-  proc.stdout.on("data", (d) => { log += d; });
-  proc.stderr.on("data", (d) => { log += d; });
-  const deadline = Date.now() + 20000;
-  for (;;) {
-    try { if ((await fetch(`${base}/healthz`)).ok) break; } catch { /* not up yet */ }
-    if (Date.now() > deadline) throw new Error(`server did not start:\n${log}`);
-    await new Promise((r) => setTimeout(r, 150));
-  }
+  ({ base, call } = srv);
 });
 
-after(async () => {
-  if (proc && proc.exitCode == null) await new Promise((r) => { proc.once("exit", r); proc.kill("SIGKILL"); });
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-});
+after(() => srv?.stop());
 
 describe("value tab API", () => {
   test("boot seeds today's snapshot; summary, history, movers, top", async () => {

@@ -7,13 +7,10 @@
 
 import { test, describe, beforeEach, afterEach, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { openDb } from "../lib/db.js";
 import { openIndex, refreshIndex } from "../lib/cardindex.js";
@@ -21,6 +18,7 @@ import { PROBE_SESSION_RE, ProbeRunner, createScanSlots, deleteScan, listScans, 
 import { captureLog } from "../lib/scancapture.js";
 import { getScan } from "../lib/scanrow.js";
 import { ID, SCRYFALL_CARDS, seedCards, tempDb } from "./fixtures.js";
+import { startServer } from "./helpers/server.js";
 
 const fx = (id) => SCRYFALL_CARDS.find((c) => c.id === id);
 const asPrinting = (c) => ({
@@ -245,27 +243,12 @@ describe("ProbeRunner", () => {
 // ---------------------------------------------------------------------------
 // HTTP: POST /api/scan {mode:'probe'} on a real server
 
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-let dir, proc, base, indexFile, scanDir;
+let srv, call, indexFile, scanDir;
 
-const freePort = () => new Promise((resolve, reject) => {
-  const srv = net.createServer();
-  srv.listen(0, "127.0.0.1", () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
-  srv.on("error", reject);
-});
 // A JPEG header the size check accepts (SOF0 64x64); its data is garbage, so identify() fails cleanly.
 function fakeJpeg() {
   const sof = Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x40, 0x00, 0x40, 0x03, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
   return Buffer.concat([Buffer.from([0xff, 0xd8]), sof, Buffer.alloc(200, 0x55), Buffer.from([0xff, 0xd9])]).toString("base64");
-}
-async function call(method, p, json) {
-  const init = { method, headers: {} };
-  if (json !== undefined) { init.body = JSON.stringify(json); init.headers["Content-Type"] = "application/json"; }
-  const res = await fetch(base + p, init);
-  const text = await res.text();
-  let body = null;
-  try { body = JSON.parse(text); } catch { body = text; }
-  return { status: res.status, body };
 }
 // Claude calls the server started (the vision cap's timestamps, persisted in the index meta).
 function visionCalls() {
@@ -280,54 +263,33 @@ function visionCalls() {
 
 describe("POST /api/scan mode probe", () => {
   before(async () => {
-    dir = mkdtempSync(path.join(os.tmpdir(), "mtg-planner-test-probe-api-"));
-    const dbFile = path.join(dir, "app.db");
-    scanDir = path.join(dir, "scans");
-    const db = openDb(dbFile);
-    seedCards(db);
-    db.close();
-    indexFile = path.join(dir, "index.db");
-    const bulk = path.join(dir, "all.jsonl.gz");
-    writeFileSync(bulk, gzipSync(JSON.stringify({
-      object: "card", id: "idx-1", oracle_id: "o-1", name: "Index Card", lang: "en", set: "m15", collector_number: "1", games: ["paper"],
-      finishes: ["nonfoil"], prices: { eur: "6.5" },
-    })));
-    const idx = openIndex(indexFile);
-    await refreshIndex(idx, { source: bulk, setsSource: [{ code: "m15", name: "Magic 2015" }] });
-    idx.close();
-
-    const port = await freePort();
-    base = `http://127.0.0.1:${port}`;
-    proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server.js"], {
-      cwd: ROOT,
+    srv = await startServer({
+      name: "probe-api",
       env: {
-        ...process.env, PORT: String(port), DB_FILE: dbFile, INDEX_DB_FILE: indexFile, STATIC_DIR: path.join(ROOT, "public"),
-        SCAN_IMAGE_DIR: scanDir, DEBUG_SESSIONS_DIR: path.join(dir, "debug"), BACKUP_DIR: path.join(dir, "bk"), SCAN_MATCHER_WAIT_MS: "0",
-        SCAN_AUTO_INDEX: "false", SCHEDULER_ENABLED: "false", APP_VERSION: "9.9.9-test",
+        SCAN_MATCHER_WAIT_MS: "0", APP_VERSION: "9.9.9-test",
         // Claude "configured": the CLI is node itself, which fails at once; a call still shows in the vision cap.
         CLAUDE_CODE_OAUTH_TOKEN: "test-token", CLAUDE_BIN: process.execPath, SCAN_CLAUDE_PER_HOUR: "60", CLAUDE_CLI_INSTALL: "false",
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      seed: async (dbFile, dir) => {
+        const db = openDb(dbFile);
+        seedCards(db);
+        db.close();
+        const bulk = path.join(dir, "all.jsonl.gz");
+        writeFileSync(bulk, gzipSync(JSON.stringify({
+          object: "card", id: "idx-1", oracle_id: "o-1", name: "Index Card", lang: "en", set: "m15", collector_number: "1", games: ["paper"],
+          finishes: ["nonfoil"], prices: { eur: "6.5" },
+        })));
+        const idx = openIndex(path.join(dir, "index.db"));
+        await refreshIndex(idx, { source: bulk, setsSource: [{ code: "m15", name: "Magic 2015" }] });
+        idx.close();
+      },
     });
-    let log = "";
-    proc.stdout.on("data", (d) => { log += d; });
-    proc.stderr.on("data", (d) => { log += d; });
-    const deadline = Date.now() + 20000;
-    for (;;) {
-      try { if ((await fetch(`${base}/healthz`)).ok) break; } catch { /* not up yet */ }
-      if (Date.now() > deadline) throw new Error(`server did not start:\n${log}`);
-      await new Promise((r) => setTimeout(r, 150));
-    }
+    call = srv.call;
+    indexFile = path.join(srv.dir, "index.db");
+    scanDir = path.join(srv.dir, "scans");
   });
 
-  after(async () => {
-    if (proc && proc.exitCode === null) {
-      const exited = new Promise((r) => proc.once("exit", r));
-      proc.kill("SIGKILL");
-      await exited;
-    }
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  });
+  after(() => srv?.stop());
 
   test("bad mode / probe_session are 400", async () => {
     const card = fakeJpeg();

@@ -4,69 +4,31 @@
 
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import net from "node:net";
-import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { openDb } from "../lib/db.js";
 import { ID, seedCards } from "./fixtures.js";
+import { startServer } from "./helpers/server.js";
 
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-let dir, proc, base;
-
-const freePort = () => new Promise((resolve, reject) => {
-  const srv = net.createServer();
-  srv.listen(0, "127.0.0.1", () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
-  srv.on("error", reject);
-});
+let srv, dir, call;
 
 before(async () => {
-  dir = mkdtempSync(path.join(os.tmpdir(), "mtg-planner-test-api-"));
-  const dbFile = path.join(dir, "app.db");
-  const db = openDb(dbFile);
-  seedCards(db);
-  const ins = db.prepare("INSERT INTO collection (scryfall_id, finish, language, condition, binder, quantity, source) VALUES (?, 'normal', 'en', 'near_mint', ?, ?, ?)");
-  ins.run(ID.sol, "Box", 3, "manabox");
-  ins.run(ID.lightning, "Scans", 2, "scan");
-  ins.run(ID.serra, "", 1, "manabox");
-  db.close();
-  const port = await freePort();
-  base = `http://127.0.0.1:${port}`;
-  proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server.js"], {
-    cwd: ROOT,
-    env: {
-      ...process.env, PORT: String(port), DB_FILE: dbFile, INDEX_DB_FILE: path.join(dir, "index.db"), STATIC_DIR: path.join(ROOT, "public"),
-      SCAN_AUTO_INDEX: "false", SCHEDULER_ENABLED: "false", CLAUDE_CODE_OAUTH_TOKEN: "",
+  srv = await startServer({
+    name: "api",
+    seed: (dbFile) => {
+      const db = openDb(dbFile);
+      seedCards(db);
+      const ins = db.prepare("INSERT INTO collection (scryfall_id, finish, language, condition, binder, quantity, source) VALUES (?, 'normal', 'en', 'near_mint', ?, ?, ?)");
+      ins.run(ID.sol, "Box", 3, "manabox");
+      ins.run(ID.lightning, "Scans", 2, "scan");
+      ins.run(ID.serra, "", 1, "manabox");
+      db.close();
     },
-    stdio: ["ignore", "pipe", "pipe"],
   });
-  let log = "";
-  proc.stdout.on("data", (d) => { log += d; });
-  proc.stderr.on("data", (d) => { log += d; });
-  const deadline = Date.now() + 20000;
-  for (;;) {
-    try { if ((await fetch(`${base}/healthz`)).ok) break; } catch { /* not up yet */ }
-    if (Date.now() > deadline) throw new Error(`server did not start:\n${log}`);
-    await new Promise((r) => setTimeout(r, 150));
-  }
+  ({ dir, call } = srv);
 });
 
-after(() => {
-  proc?.kill("SIGKILL");
-  rmSync(dir, { recursive: true, force: true });
-});
+after(() => srv?.stop());
 
-async function call(method, p, json, headers = {}) {
-  const init = { method, headers: { ...headers } };
-  if (json !== undefined) { init.body = JSON.stringify(json); init.headers["Content-Type"] ??= "application/json"; }
-  const res = await fetch(base + p, init);
-  const text = await res.text();
-  let body = null;
-  try { body = JSON.parse(text); } catch { body = text; }
-  return { status: res.status, body };
-}
 const enc = encodeURIComponent;
 
 describe("binder API", () => {

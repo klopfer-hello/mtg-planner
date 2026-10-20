@@ -5,12 +5,9 @@
 
 import { test, describe, beforeEach, afterEach, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { openDb } from "../lib/db.js";
 import { ProbeRunner, createScanSlots, incrementScan, recordTruth, stageScan, undoLast, updateScan } from "../lib/scans.js";
 import { commitScans } from "../lib/scancommit.js";
@@ -19,6 +16,7 @@ import { getScan, scanImagePath } from "../lib/scanrow.js";
 import { DEFAULT_THRESHOLDS } from "../lib/scanner.js";
 import { LEARNING_METRICS, blockersOf, evidenceOf, learningReport, relaxOf } from "../lib/learning.js";
 import { ID, SCRYFALL_CARDS, seedCards, stubScryfall, tempDb } from "./fixtures.js";
+import { startServer } from "./helpers/server.js";
 
 const fx = (id) => SCRYFALL_CARDS.find((c) => c.id === id);
 const asPrinting = (c, extra = {}) => ({
@@ -299,62 +297,33 @@ describe("learning report", () => {
 // ---------------------------------------------------------------------------
 // HTTP
 
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // the real fetch (the lib tests' beforeEach stubs Scryfall's)
 const realFetch = globalThis.fetch;
-const freePort = () => new Promise((resolve, reject) => {
-  const srv = net.createServer();
-  srv.listen(0, "127.0.0.1", () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
-  srv.on("error", reject);
-});
 
 describe("HTTP learning + export", () => {
-  let dir, proc, base, ids;
+  let srv, ids;
   const get = async (p) => {
-    const res = await realFetch(base + p);
+    const res = await realFetch(srv.base + p);
     const text = await res.text();
     let body = null;
     try { body = JSON.parse(text); } catch { body = text; }
     return { status: res.status, body };
   };
   before(async () => {
-    dir = mkdtempSync(path.join(os.tmpdir(), "mtg-planner-test-learn-api-"));
-    const dbFile = path.join(dir, "app.db");
-    const db = openDb(dbFile);
-    seedCards(db);
-    const a = stageScan(db, suggest(BOLT, { title: 0.7 }), { imageDir: dir, session: "s1" }).scan;
-    const b = stageScan(db, result(SOL), { imageDir: dir, session: "s1" }).scan;
-    ids = { a: a.id, b: b.id };
-    db.close();
-    const port = await freePort();
-    base = `http://127.0.0.1:${port}`;
-    proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server.js"], {
-      cwd: ROOT,
-      env: {
-        ...process.env, PORT: String(port), DB_FILE: dbFile, INDEX_DB_FILE: path.join(dir, "index.db"), STATIC_DIR: path.join(ROOT, "public"),
-        SCAN_IMAGE_DIR: path.join(dir, "scans"), DEBUG_SESSIONS_DIR: path.join(dir, "debug"), BACKUP_DIR: path.join(dir, "bk"),
-        SCAN_AUTO_INDEX: "false", SCHEDULER_ENABLED: "false", APP_VERSION: "9.9.9-test", CLAUDE_CLI_INSTALL: "false", SPELLBOOK_ENABLED: "false",
+    srv = await startServer({
+      name: "learn-api",
+      env: { APP_VERSION: "9.9.9-test", CLAUDE_CLI_INSTALL: "false" },
+      seed: (dbFile, dir) => {
+        const db = openDb(dbFile);
+        seedCards(db);
+        const a = stageScan(db, suggest(BOLT, { title: 0.7 }), { imageDir: dir, session: "s1" }).scan;
+        const b = stageScan(db, result(SOL), { imageDir: dir, session: "s1" }).scan;
+        ids = { a: a.id, b: b.id };
+        db.close();
       },
-      stdio: ["ignore", "pipe", "pipe"],
     });
-    let log = "";
-    proc.stdout.on("data", (d) => { log += d; });
-    proc.stderr.on("data", (d) => { log += d; });
-    const deadline = Date.now() + 20000;
-    for (;;) {
-      try { if ((await realFetch(`${base}/healthz`)).ok) break; } catch { /* not up yet */ }
-      if (Date.now() > deadline) throw new Error(`server did not start:\n${log}`);
-      await new Promise((r) => setTimeout(r, 150));
-    }
   });
-  after(async () => {
-    if (proc && proc.exitCode === null) {
-      const exited = new Promise((r) => proc.once("exit", r));
-      proc.kill("SIGKILL");
-      await exited;
-    }
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  });
+  after(() => srv?.stop());
 
   test("GET /api/scans/learning", async () => {
     const r = await get("/api/scans/learning");

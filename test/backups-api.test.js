@@ -5,71 +5,35 @@
 
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import net from "node:net";
-import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { SCHEMA_VERSION, openDb } from "../lib/db.js";
 import { ID, seedCards } from "./fixtures.js";
+import { startServer } from "./helpers/server.js";
 
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-let dir, proc, base, backupDir, dbFile;
-
-const freePort = () => new Promise((resolve, reject) => {
-  const srv = net.createServer();
-  srv.listen(0, "127.0.0.1", () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
-  srv.on("error", reject);
-});
+let srv, dir, base, call, backupDir;
 
 before(async () => {
-  dir = mkdtempSync(path.join(os.tmpdir(), "mtg-planner-test-backup-api-"));
-  dbFile = path.join(dir, "app.db");
-  backupDir = path.join(dir, "bk");
-  const db = openDb(dbFile);
-  seedCards(db);
-  db.prepare("INSERT INTO collection (scryfall_id, binder, quantity, source) VALUES (?, 'Box', 3, 'manabox')").run(ID.sol);
-  db.prepare("INSERT INTO binders (name, origin) VALUES ('Box', 'manabox')").run();
-  db.close();
-  const port = await freePort();
-  base = `http://127.0.0.1:${port}`;
-  proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server.js"], {
-    cwd: ROOT,
-    env: {
-      ...process.env, PORT: String(port), DB_FILE: dbFile, INDEX_DB_FILE: path.join(dir, "index.db"), STATIC_DIR: path.join(ROOT, "public"),
-      BACKUP_DIR: backupDir, BACKUP_KEEP: "3", SCAN_IMAGE_DIR: path.join(dir, "scans"),
-      SCAN_AUTO_INDEX: "false", SCHEDULER_ENABLED: "false", CLAUDE_CODE_OAUTH_TOKEN: "", APP_VERSION: "9.9.9-test",
+  srv = await startServer({
+    name: "backup-api",
+    // The combo-check test switches Spellbook off itself: no env override (else PATCH answers 409).
+    env: { BACKUP_KEEP: "3", APP_VERSION: "9.9.9-test", SPELLBOOK_ENABLED: process.env.SPELLBOOK_ENABLED },
+    seed: (file) => {
+      const db = openDb(file);
+      seedCards(db);
+      db.prepare("INSERT INTO collection (scryfall_id, binder, quantity, source) VALUES (?, 'Box', 3, 'manabox')").run(ID.sol);
+      db.prepare("INSERT INTO binders (name, origin) VALUES ('Box', 'manabox')").run();
+      db.close();
     },
-    stdio: ["ignore", "pipe", "pipe"],
   });
-  let log = "";
-  proc.stdout.on("data", (d) => { log += d; });
-  proc.stderr.on("data", (d) => { log += d; });
-  const deadline = Date.now() + 20000;
-  for (;;) {
-    try { if ((await fetch(`${base}/healthz`)).ok) break; } catch { /* not up yet */ }
-    if (Date.now() > deadline) throw new Error(`server did not start:\n${log}`);
-    await new Promise((r) => setTimeout(r, 150));
-  }
+  ({ dir, base, call } = srv);
+  backupDir = path.join(dir, "backups");
 });
 
-after(() => {
-  proc?.kill("SIGKILL");
-  rmSync(dir, { recursive: true, force: true });
-});
+after(() => srv?.stop());
 
-async function call(method, p, json, headers = {}) {
-  const init = { method, headers: { ...headers } };
-  if (json !== undefined) { init.body = JSON.stringify(json); init.headers["Content-Type"] ??= "application/json"; }
-  const res = await fetch(base + p, init);
-  const text = await res.text();
-  let body = null;
-  try { body = JSON.parse(text); } catch { body = text; }
-  return { status: res.status, body, headers: res.headers };
-}
 const upload = (buf, query = "?confirm=1", type = "application/gzip") =>
   fetch(`${base}/api/backups/restore-upload${query}`, { method: "POST", body: buf, headers: { "Content-Type": type } })
     .then(async (res) => ({ status: res.status, body: await res.json() }));

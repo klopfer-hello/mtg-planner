@@ -4,75 +4,35 @@
 
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { openDb } from "../lib/db.js";
 import { recordDeckVersion } from "../lib/deckhistory.js";
 import { ID, seedCards } from "./fixtures.js";
+import { startServer } from "./helpers/server.js";
 
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-let dir, proc, base, deckId;
-
-const freePort = () => new Promise((resolve, reject) => {
-  const srv = net.createServer();
-  srv.listen(0, "127.0.0.1", () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
-  srv.on("error", reject);
-});
+let srv, call, deckId;
 
 before(async () => {
-  dir = mkdtempSync(path.join(os.tmpdir(), "mtg-planner-test-deckbuild-"));
-  const dbFile = path.join(dir, "app.db");
-  const db = openDb(dbFile);
-  seedCards(db);
-  const own = db.prepare("INSERT INTO collection (scryfall_id, binder, quantity, source) VALUES (?, ?, ?, 'app')");
-  own.run(ID.sol, "Box A", 1);
-  own.run(ID.lightning, "", 2);
-  deckId = Number(db.prepare("INSERT INTO decks (name) VALUES ('Burn')").run().lastInsertRowid);
-  const card = db.prepare("INSERT INTO deck_cards (deck_id, board, name, scryfall_id, quantity) VALUES (?, 'main', ?, ?, ?)");
-  card.run(deckId, "Sol Ring", ID.sol, 1);
-  card.run(deckId, "Lightning Bolt", ID.lightning, 2);
-  card.run(deckId, "Counterspell", ID.counterspell, 1);
-  recordDeckVersion(db, deckId, { actor: "app" });
-  db.close();
-  const port = await freePort();
-  base = `http://127.0.0.1:${port}`;
-  proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server.js"], {
-    cwd: ROOT,
-    env: {
-      ...process.env, PORT: String(port), DB_FILE: dbFile, INDEX_DB_FILE: path.join(dir, "index.db"), STATIC_DIR: path.join(ROOT, "public"),
-      SCAN_AUTO_INDEX: "false", SCHEDULER_ENABLED: "false", SPELLBOOK_ENABLED: "false", CLAUDE_CODE_OAUTH_TOKEN: "",
+  srv = await startServer({
+    name: "deckbuild",
+    seed: (dbFile) => {
+      const db = openDb(dbFile);
+      seedCards(db);
+      const own = db.prepare("INSERT INTO collection (scryfall_id, binder, quantity, source) VALUES (?, ?, ?, 'app')");
+      own.run(ID.sol, "Box A", 1);
+      own.run(ID.lightning, "", 2);
+      deckId = Number(db.prepare("INSERT INTO decks (name) VALUES ('Burn')").run().lastInsertRowid);
+      const card = db.prepare("INSERT INTO deck_cards (deck_id, board, name, scryfall_id, quantity) VALUES (?, 'main', ?, ?, ?)");
+      card.run(deckId, "Sol Ring", ID.sol, 1);
+      card.run(deckId, "Lightning Bolt", ID.lightning, 2);
+      card.run(deckId, "Counterspell", ID.counterspell, 1);
+      recordDeckVersion(db, deckId, { actor: "app" });
+      db.close();
     },
-    stdio: ["ignore", "pipe", "pipe"],
   });
-  let log = "";
-  proc.stdout.on("data", (d) => { log += d; });
-  proc.stderr.on("data", (d) => { log += d; });
-  const deadline = Date.now() + 20000;
-  for (;;) {
-    try { if ((await fetch(`${base}/healthz`)).ok) break; } catch { /* not up yet */ }
-    if (Date.now() > deadline) throw new Error(`server did not start:\n${log}`);
-    await new Promise((r) => setTimeout(r, 150));
-  }
+  call = srv.call;
 });
 
-after(() => {
-  proc?.kill("SIGKILL");
-  rmSync(dir, { recursive: true, force: true });
-});
-
-async function call(method, p, json) {
-  const init = { method, headers: {} };
-  if (json !== undefined) { init.body = JSON.stringify(json); init.headers["Content-Type"] = "application/json"; }
-  const res = await fetch(base + p, init);
-  const text = await res.text();
-  let body = null;
-  try { body = JSON.parse(text); } catch { body = text; }
-  return { status: res.status, body };
-}
+after(() => srv?.stop());
 
 describe("build checklist API", () => {
   test("GET /api/decks/:id/build groups the deck; 404 for a missing deck", async () => {

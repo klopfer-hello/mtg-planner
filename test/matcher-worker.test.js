@@ -5,20 +5,17 @@
 
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { gzipSync } from "node:zlib";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { fingerprintMetaPending, getMeta, indexBrief, indexStatus, openIndex, refreshIndex, syncFingerprintMeta, warmIndex } from "../lib/cardindex.js";
 import { Matcher, MatcherWorker, buildFingerprints, buildFingerprintsInWorker, decodeJpeg, encodeJpeg, hasCjpeg, hasDjpeg, hashQuery, rotate180 } from "../lib/fingerprint.js";
 import { identify, identifyOriented, DEFAULT_THRESHOLDS } from "../lib/scanner.js";
 import { nameSimilarity } from "../lib/ocr.js";
-
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+import { startServer } from "./helpers/server.js";
 
 // Seeded procedural "card" (as in fingerprint.test.js).
 function synth(seed, w = 146, h = 204) {
@@ -387,30 +384,17 @@ describe("off the event loop: respawn, fingerprint job, cancelled scans", () => 
 });
 
 describe("server: matcher preload, /healthz and shutdown", () => {
-  const freePort = () => new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, "127.0.0.1", () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
-    srv.on("error", reject);
-  });
-
   test("resumes an unfinished fingerprint job in a worker; progress reaches /api/index/status", async () => {
     const { idx, file } = await makeIndex("server-job");
     const job = JSON.parse(getMeta(idx, "fingerprint_job"));
     idx.prepare("UPDATE meta SET value = ? WHERE key = 'fingerprint_job'").run(JSON.stringify({ ...job, state: "paused" }));
     idx.close();
-    const port = await freePort();
-    const base = `http://127.0.0.1:${port}`;
-    const proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server.js"], {
-      cwd: ROOT,
-      env: {
-        ...process.env, PORT: String(port), DB_FILE: path.join(dir, "server-job-app.db"), INDEX_DB_FILE: file, STATIC_DIR: path.join(ROOT, "public"),
-        SCHEDULER_ENABLED: "false", CLAUDE_CODE_OAUTH_TOKEN: "", FP_KEEP_IMAGES: "false", FP_INDEX_SETS: "",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
+    // SCAN_AUTO_INDEX as inherited (default on): the paused job must resume at boot.
+    const srv = await startServer({
+      name: "matcher-job",
+      env: { INDEX_DB_FILE: file, SCAN_AUTO_INDEX: process.env.SCAN_AUTO_INDEX, FP_KEEP_IMAGES: "false", FP_INDEX_SETS: "" },
     });
-    let log = "";
-    proc.stdout.on("data", (d) => { log += d; });
-    proc.stderr.on("data", (d) => { log += d; });
+    const { base, proc } = srv;
     const exited = new Promise((resolve) => proc.on("exit", (code) => resolve(code)));
     try {
       let st = null;
@@ -419,34 +403,23 @@ describe("server: matcher preload, /healthz and shutdown", () => {
         if (st?.last_job) break;
         await new Promise((r) => setTimeout(r, 100));
       }
-      assert.equal(st?.last_job?.kind, "fingerprints", log);
-      assert.equal(st.last_job.ok, true, log);
+      assert.equal(st?.last_job?.kind, "fingerprints", srv.log());
+      assert.equal(st.last_job.ok, true, srv.log());
       assert.equal(st.last_job.result.state, "done");
       assert.equal(st.fingerprint_job.state, "done");
-      assert.match(log, /fingerprints job finished/);
+      assert.match(srv.log(), /fingerprints job finished/);
       proc.kill("SIGTERM");
-      assert.equal(await exited, 0, log);
+      assert.equal(await exited, 0, srv.log());
     } finally {
-      proc.kill("SIGKILL");
+      await srv.stop();
     }
   });
 
   test("reports scanner.matcher loading → ready and exits cleanly on SIGTERM", async () => {
     const { idx, file } = await makeIndex("server");
     idx.close();
-    const port = await freePort();
-    const base = `http://127.0.0.1:${port}`;
-    const proc = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server.js"], {
-      cwd: ROOT,
-      env: {
-        ...process.env, PORT: String(port), DB_FILE: path.join(dir, "server-app.db"), INDEX_DB_FILE: file, STATIC_DIR: path.join(ROOT, "public"),
-        SCAN_AUTO_INDEX: "false", SCHEDULER_ENABLED: "false", CLAUDE_CODE_OAUTH_TOKEN: "",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let log = "";
-    proc.stdout.on("data", (d) => { log += d; });
-    proc.stderr.on("data", (d) => { log += d; });
+    const srv = await startServer({ name: "matcher", env: { INDEX_DB_FILE: file } });
+    const { base, proc } = srv;
     const exited = new Promise((resolve) => proc.on("exit", (code, signal) => resolve({ code, signal })));
     try {
       let matcher = null;
@@ -460,17 +433,17 @@ describe("server: matcher preload, /healthz and shutdown", () => {
         } catch (err) { if (err.code === "ERR_ASSERTION") throw err; }
         await new Promise((r) => setTimeout(r, 100));
       }
-      assert.equal(matcher?.state, "ready", log);
+      assert.equal(matcher?.state, "ready", srv.log());
       assert.equal(matcher.size, 4);
       assert.ok(matcher.load_ms >= 0);
       const t0 = Date.now();
       proc.kill("SIGTERM");
       const { code } = await exited;
-      assert.equal(code, 0, log);
+      assert.equal(code, 0, srv.log());
       assert.ok(Date.now() - t0 < 5000);
-      assert.match(log, /matcher ready: 4 fingerprints/);
+      assert.match(srv.log(), /matcher ready: 4 fingerprints/);
     } finally {
-      proc.kill("SIGKILL");
+      await srv.stop();
     }
   });
 });
