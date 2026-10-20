@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { openDb, upsertCards } from "../lib/db.js";
-import { normalizeCard } from "../lib/scryfall.js";
+import { normalizeCard, setThrottle } from "../lib/scryfall.js";
 
 /** Open a fresh DB in a temp dir; returns { db, file, cleanup }. */
 export function tempDb() {
@@ -113,11 +113,13 @@ export function seedCollection(db, rows) {
 
 /**
  * Replace globalThis.fetch with a fake Scryfall that resolves /cards/collection
- * identifiers from SCRYFALL_CARDS. Returns { calls, restore }.
+ * identifiers from SCRYFALL_CARDS, with lib/scryfall.js's rate limits off
+ * (restore() brings both back). Returns { calls, restore }.
  */
 export function stubScryfall(pool = SCRYFALL_CARDS) {
   const original = globalThis.fetch;
   const calls = [];
+  setThrottle({ minMs: 0, limitedMs: 0 });
   const lc = (s) => String(s ?? "").toLowerCase();
   const match = (ident) => pool.find((c) => {
     if (ident.id) return c.id === ident.id;
@@ -142,5 +144,5 @@ export function stubScryfall(pool = SCRYFALL_CARDS) {
       status: 200, headers: { "Content-Type": "application/json" },
     });
   };
-  return { calls, restore: () => { globalThis.fetch = original; } };
+  return { calls, restore: () => { globalThis.fetch = original; setThrottle(); } };
 }

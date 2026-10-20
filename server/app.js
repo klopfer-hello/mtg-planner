@@ -39,8 +39,17 @@ export function createApp({ version }) {
       try { return await fn(); } finally { app.importBusy = false; app.background.scheduleEnglishPrices(); }
     },
 
+    /** exclusive() for background writers: refused (503) while a restore swaps the DB. */
+    exclusiveUnlessRestoring(fn) {
+      if (app.restoring) throw new HttpError(503, "restore running");
+      return app.exclusive(fn);
+    },
+
     /** True when chat turns + vision + guide runs fill the Claude concurrency limit. */
-    claudeBusy: () => app.runs.size + activeClaudeRuns().vision + activeClaudeRuns().guide >= MAX_CONCURRENT,
+    claudeBusy: () => {
+      const { vision, guide } = activeClaudeRuns();
+      return app.runs.size + vision + guide >= MAX_CONCURRENT;
+    },
 
     /** SQLite's datetime('now'): decks.updated_at uses it, so "decks changed since" works across a write. */
     sqlNow: () => app.db.prepare("SELECT datetime('now') AS t").get().t,
@@ -81,10 +90,7 @@ export function createApp({ version }) {
   // in 5 s), never during a restore; off with the scheduler (SCHEDULER_ENABLED=false).
   app.tokenFetcher = createAccessoryFetcher({
     db: () => app.db,
-    write: (fn) => {
-      if (app.restoring) throw new HttpError(503, "restore running");
-      return app.exclusive(fn);
-    },
+    write: app.exclusiveUnlessRestoring,
     enabled: () => !app.shuttingDown && schedulerConfig().enabled,
     log: console,
   });

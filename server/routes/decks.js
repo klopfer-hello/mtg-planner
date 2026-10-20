@@ -267,20 +267,6 @@ export function deckRoutes(router, app) {
     sendJson(res, 202, { status: "pending", deck_id: id });
   });
 
-  /** GET /api/decks/:id/status-preview?status=built -> what switching would change (the UI's confirm text). */
-  router.get(`/api/decks/${ID}/status-preview`, ({ params, query }) => {
-    const detail = deckDetail(app.db, Number(params.id));
-    if (!detail) throw new HttpError(404, "Deck not found");
-    const status = query.get("status") || "built";
-    if (!DECK_STATUSES.includes(status)) throw new HttpError(400, `status must be ${DECK_STATUSES.join(" or ")}`);
-    const toBuilt = status === "built" && detail.status !== "built";
-    return {
-      from: detail.status, to: status,
-      in_use_count: toBuilt ? detail.in_use_count : 0,
-      in_use: toBuilt ? detail.shopping.in_use : [],
-    };
-  });
-
   /**
    * POST /api/decks/:id/to-binder {binder?, confirm_master?, picked_only?} -> moved/missing summary + deck detail.
    * picked_only: only the cards ticked in the build checklist (binder groups) move.

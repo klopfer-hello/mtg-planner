@@ -19,11 +19,9 @@ import { setSpellbookSettings } from "../lib/spellbook.js";
 import { setBinderProps } from "../lib/binders.js";
 import { saveDeckRows } from "../lib/decks.js";
 import { ID, seedCards, seedCollection, tempDb } from "./fixtures.js";
+import { OFFLINE } from "./helpers/server.js"; // preloaded into the edit server: Scryfall is unreachable
 
 const SERVER = fileURLToPath(new URL("../mcp-collection.js", import.meta.url));
-
-// Preloaded into the edit server: Scryfall is unreachable.
-const OFFLINE = `--import=data:text/javascript,${encodeURIComponent('globalThis.fetch = async () => { throw new Error("offline (test)"); };')}`;
 
 function startServer(dbFile, { nodeArgs = [], env = {} } = {}) {
   const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", ...nodeArgs, SERVER], {
