@@ -387,6 +387,43 @@ export function mapToPhoto(bitmap, vw, vh, corners, opts = {}) {
 }
 
 /**
+ * Find a card in a still photo without any hint (Scan tab → From photo): detector A2 in free mode on a
+ * copy `photoLongSide` (1440) px long, refined there, scaled back to photo pixels. null when nothing
+ * card-like is found (info.reason 'not-found'). opts like mapToPhoto: {detOpts, grab, photoLongSide, info}.
+ * @returns {number[][]|null} corners in photo pixels
+ */
+export function findCardInStill(bitmap, opts = {}) {
+  const { detOpts = {}, grab = grabRegion, photoLongSide = CAPTURE_DEFAULTS.photoLongSide, info = {} } = opts;
+  const pw = bitmap.width, ph = bitmap.height;
+  const k = Math.min(1, photoLongSide / Math.max(pw, ph));
+  const small = grab(bitmap, { x: 0, y: 0, w: pw, h: ph }, k);
+  const kx = small.w / pw, ky = small.h / ph, short = Math.min(small.w, small.h);
+  info.k = k;
+  const r = detect(small, { ...detOpts, k: Math.max(2, Math.floor(short / 240)) });
+  if (!r.found || !r.corners) { info.reason = "not-found"; return null; }
+  const rf = refine(small, r.corners, { ...detOpts, scale: Math.max(1, short / 480) });
+  info.reason = null;
+  return scaleQuad(rf.corners || r.corners, 1 / kx, 1 / ky);
+}
+
+/**
+ * Card + strip JPEGs from a photo file (an ImageBitmap the caller owns and closes): the card found by
+ * findCardInStill, else the centred default quad (`found: false`). Same result shape as captureCard,
+ * kind 'file'. cfg as captureCard (cardSize, stripRegion, qualities, pixels worker, makeCanvas, detOpts).
+ */
+export async function capturePhotoFile(bitmap, cfg = {}) {
+  const c = { ...CAPTURE_DEFAULTS, ...cfg };
+  const mk = cfg.makeCanvas || makeCanvas;
+  const t0 = clockNow();
+  const info = {};
+  const found = findCardInStill(bitmap, { detOpts: cfg.detOpts, grab: cfg.grab, info });
+  const corners = found || defaultCardQuad(bitmap.width, bitmap.height);
+  const still = { source: bitmap, w: bitmap.width, h: bitmap.height, corners, kind: "file", drift: null, reject: found ? null : info.reason };
+  const out = await cutStill(still, c, mk, t0, bitmap);
+  return { ...out, found: Boolean(found) };
+}
+
+/**
  * Grab a still: ImageCapture.takePhoto() where available (Android Chrome, more
  * pixels), else the current video frame (iOS Safari, or preferPhoto:false
  * when the learned box prior makes the video corners exact). Returns
@@ -561,6 +598,14 @@ export async function captureCard(video, track, corners, cfg = {}) {
   const mk = cfg.makeCanvas || makeCanvas;
   const t0 = clockNow();
   const still = await grabStill(video, track, corners, cfg);
+  return cutStill(still, c, mk, t0, video);
+}
+
+/**
+ * captureCard's second half: card + strip JPEGs of a still {source, w, h, corners, kind, drift, reject}.
+ * The still's source is closed afterwards unless it is `keep` (the video, or a caller-owned bitmap).
+ */
+async function cutStill(still, c, mk, t0, keep) {
   const [cw, ch] = c.cardSize;
   const r = c.stripRegion;
   let sw, sh, grabMs = 0, jobMs = null, cardB64, stripB64, glare = null, worker = false;
@@ -623,7 +668,7 @@ export async function captureCard(video, track, corners, cfg = {}) {
       if (c.glare) glare = yieldTask().then(() => glareSummary(glareMap(card))).catch(() => null);
     }
   } finally {
-    if (still.source && still.source !== video) still.source.close?.();
+    if (still.source && still.source !== keep) still.source.close?.();
   }
   return {
     card: cardB64,

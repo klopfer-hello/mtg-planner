@@ -6,7 +6,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   CAPTURE_DEFAULTS, DET_BLANK_SHARP, SOUND_DEFAULTS, captureAdvice, chooseScanSound, createDetAnalyzer,
-  createScanSounds, defaultCardQuad, glareMap, mapToPhoto, photoMapping, quadSize, warpQuad, workSize,
+  createScanSounds, defaultCardQuad, findCardInStill, glareMap, mapToPhoto, photoMapping, quadSize, warpQuad, workSize,
 } from "../public/scanlib.js";
 import { ProbeController } from "../public/capture.js";
 import { BoxPrior, PRIOR_STORAGE_KEY } from "../public/det/track.mjs";
@@ -173,6 +173,38 @@ test("defaultCardQuad is a centred 63:88 quad, 65 % of the short side, height ca
 
 // ---------------------------------------------------------------------------
 // mapToPhoto: still photo (Android takePhoto) with another aspect/FOV than the preview
+
+// findCardInStill: a photo file (Scan tab → From photo), no hint at all
+describe("findCardInStill", () => {
+  const rotErr = (q, truth) => Math.min(...[0, 1, 2, 3].map((r) => maxErr([0, 1, 2, 3].map((i) => q[(i + r) & 3]), truth)));
+  const grabOf = (key, W, H, quad, seed) => (bmp, rect, k) => {
+    const src = frame(key, W, H, "cloth", seed, quad), w = Math.round(rect.w * k), h = Math.round(rect.h * k);
+    return { w, h, d: resample(src, rect.x, rect.y, rect.w, rect.h, w, h) };
+  };
+
+  test("finds the card in a 12 MP-style photo on a 1440 px copy", () => {
+    const W = 3024, H = 4032, truth = placeCard(W * 0.48, H * 0.5, W * 0.55, -5, 0.01);
+    const info = {};
+    const q = findCardInStill({ width: W, height: H }, { grab: grabOf("file-big", W, H, truth, 21), info });
+    assert.ok(q, `not found: ${info.reason}`);
+    assert.ok(Math.abs(info.k - 1440 / H) < 1e-12);
+    const e = rotErr(q, truth) / cardW(truth);
+    assert.ok(e < 0.02, `corner error ${(100 * e).toFixed(2)} % of the card width`);
+  });
+
+  test("a landscape photo with a small card off-centre", () => {
+    const W = 1600, H = 1200, truth = placeCard(W * 0.62, H * 0.45, W * 0.3, 8);
+    const q = findCardInStill({ width: W, height: H }, { grab: grabOf("file-land", W, H, truth, 22) });
+    assert.ok(q && rotErr(q, truth) / cardW(truth) < 0.02);
+  });
+
+  test("a flat image has no card", () => {
+    const info = {};
+    const flat = (bmp, rect, k) => { const w = Math.round(rect.w * k), h = Math.round(rect.h * k); return { w, h, d: new Uint8ClampedArray(w * h * 4).fill(128) }; };
+    assert.equal(findCardInStill({ width: 1200, height: 1600 }, { grab: flat, info }), null);
+    assert.equal(info.reason, "not-found");
+  });
+});
 
 describe("mapToPhoto", () => {
   // 9:16 preview, 3:4 photo: the photo sees more to the left and right

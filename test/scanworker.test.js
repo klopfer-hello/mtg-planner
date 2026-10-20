@@ -7,7 +7,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
-  bytesToBase64, cameraPlan, CAMERA_RESOLUTIONS, captureCard, chooseCloneRotation, cloneMatches, cloneRelation, cloneToWork, createDetAnalyzer, createScanWorker, glareMap,
+  bytesToBase64, cameraPlan, CAMERA_RESOLUTIONS, captureCard, capturePhotoFile, chooseCloneRotation, cloneMatches, cloneRelation, cloneToWork, createDetAnalyzer, createScanWorker, glareMap,
   glareSummary, grabRegions, grayThumb, isAndroid, openCamera, regionPlan, regionQuad, CAPTURE_DEFAULTS, rotateGray, stripSharpness, warpQuad, workSize,
 } from "../public/scanlib.js";
 import { detect } from "../public/det/detect.mjs";
@@ -221,6 +221,33 @@ describe("scanworker.js ops", () => {
 
 describe("captureCard", () => {
   const video = () => ({ videoWidth: VW, videoHeight: VH, frame: scene });
+
+  test("capturePhotoFile: a photo file → card 1000x1400 + strip, the card found, the caller's bitmap left open", async () => {
+    let closed = false;
+    const bitmap = { width: VW, height: VH, frame: scene, close() { closed = true; } };
+    const grab = (bmp, rect, k) => {
+      const c = makeCanvas(rect.w * k, rect.h * k);
+      c.getContext("2d").drawImage(bmp, rect.x, rect.y, rect.w, rect.h, 0, 0, c.width, c.height);
+      const id = c.getContext("2d").getImageData(0, 0, c.width, c.height);
+      return { w: id.width, h: id.height, d: id.data };
+    };
+    const shot = await capturePhotoFile(bitmap, { makeCanvas, grab });
+    assert.equal(shot.kind, "file");
+    assert.equal(shot.found, true);
+    const card = Buffer.from(shot.card, "base64");
+    assert.deepEqual([card[2] | (card[3] << 8), card[4] | (card[5] << 8)], [1000, 1400]);
+    assert.ok(shot.stripSize[0] >= 600, `strip ${shot.stripSize}`);
+    assert.equal(closed, false);
+  });
+
+  test("capturePhotoFile: no card → the default quad, found false", async () => {
+    const flat = { width: 900, height: 1200, frame: { w: 900, h: 1200, d: new Uint8ClampedArray(900 * 1200 * 4).fill(90) } };
+    const grab = (bmp, rect, k) => { const w = Math.round(rect.w * k), h = Math.round(rect.h * k); return { w, h, d: new Uint8ClampedArray(w * h * 4).fill(90) }; };
+    const shot = await capturePhotoFile(flat, { makeCanvas, grab });
+    assert.equal(shot.found, false);
+    assert.equal(shot.reject, "not-found");
+    assert.ok(shot.card.length > 0);
+  });
 
   test("inline (no worker): card 1000x1400 + strip, JPEGs via toBlob, glare as a promise", async () => {
     const shot = await captureCard(video(), null, QUAD, { preferPhoto: false, makeCanvas, glare: true });

@@ -88,6 +88,7 @@ Open the **Scan** tab and tap **Start camera**.
 - Hold it still. The app recognises it and adds it to your **scan list**.
 - Second copy of the same card? Tap **+1**.
 - Not recognised? Tap the **shutter** button.
+- No camera? **From photo** scans pictures you already have.
 - Done? Tap **Add all to…** and pick a binder or a deck.
 
 Nothing goes into your collection until you tap **Add all to…**. Unsure

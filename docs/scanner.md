@@ -55,6 +55,19 @@ over and over, and confident wrong guesses. The camera needs HTTPS (see
 - A card photographed **upside down** is retried turned by 180° when the first
   attempt is unclear.
 
+### From photo
+
+**From photo** (next to Auto-scan) scans cards from pictures you already have,
+without the camera: on a computer, a tablet, or when the camera won't start.
+
+- One card per photo, up to 20 photos at once. They join the scan list like
+  shutter scans (Claude may help with hard ones).
+- The app looks for the card's outline in the photo and cuts it out. Without a
+  clear outline it sends the whole photo and says so; crop such photos to the
+  card first.
+- Sharp photos in good light work best: the small collector number at the
+  bottom tells reprints with the same art apart.
+
 ## Tips for good scans
 
 - Keep the card flat, without glare, and close enough that the collector line

@@ -144,6 +144,9 @@ Each scanned card gets a label:
 Still no luck? Tap **Find by name** and type the name. Red cards also have a
 **Rescan** button.
 
+**Have photos already, or no camera?** Tap **From photo** under the camera and
+pick one or more pictures (one card each).
+
 **Claude can help with hard cards** (needs the Claude token):
 
 - A card lies still and stays unknown → the app asks Claude once.
