@@ -3,7 +3,8 @@
 // with the edit log and its undo, price refresh and the import log. Every
 // write runs under app.exclusive() (one import or collection change at a time).
 
-import { collectionMaster, defaultImportMode, findBinder, MAX_BINDER_NAME, moveCopies } from "../../lib/binders.js";
+import { collectionMaster, defaultImportMode, findBinder, moveCopies } from "../../lib/binders.js";
+import { MAX_BINDER_NAME } from "../../lib/deckboxes.js";
 import { EXPORT_FORMATS, exportCollection } from "../../lib/collectionexport.js";
 import { cardPrice, setAppMeta, stats } from "../../lib/db.js";
 import { cardUsage } from "../../lib/allocation.js";

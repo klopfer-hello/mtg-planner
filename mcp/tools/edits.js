@@ -3,12 +3,12 @@
 // deleting: that is app-only.
 
 import { randomBytes } from "node:crypto";
-import { getAppMeta, setAppMeta } from "../../lib/db.js";
+import { getAppMeta, parseJson, setAppMeta } from "../../lib/db.js";
 import { BinderError } from "../../lib/binders.js";
 import { EDIT_CONDITIONS, editCopies } from "../../lib/edits.js";
 import { fetchCollection } from "../../lib/scryfall.js";
 import { getDb, getIndex, indexPrinting, log } from "../context.js";
-import { likeEsc, setNum, ToolError } from "../format.js";
+import { nameArgs, nameMatch, setNum, ToolError } from "../format.js";
 
 export const TOOLS = [
   {
@@ -84,8 +84,7 @@ const MASTER_TOKEN_TTL_MS = 3600 * 1000;
 const MASTER_TOKENS_MAX = 10;
 
 function openTokens(d) {
-  let saved = null;
-  try { saved = JSON.parse(getAppMeta(d, MASTER_TOKEN_KEY) || "null"); } catch { saved = null; }
+  const saved = parseJson(getAppMeta(d, MASTER_TOKEN_KEY));
   const list = Array.isArray(saved?.tokens) ? saved.tokens : [];
   return list.filter((t) => t && typeof t.token === "string" && Date.now() - t.at < MASTER_TOKEN_TTL_MS);
 }
@@ -129,8 +128,8 @@ function resolveOwnedCard(d, card) {
   if (byOracle) return byOracle;
   const hits = d.prepare(
     `SELECT DISTINCT c.oracle_id, c.name FROM collection col JOIN cards c ON c.scryfall_id = col.scryfall_id
-      WHERE c.name = ? COLLATE NOCASE OR c.name LIKE ? || ' // %' ESCAPE '\\'`,
-  ).all(ref, likeEsc(ref));
+      WHERE ${nameMatch()}`,
+  ).all(...nameArgs(ref));
   const oracles = [...new Map(hits.map((h) => [h.oracle_id, h])).values()];
   if (oracles.length > 1) {
     throw new ToolError(`"${ref}" names ${oracles.length} different cards (${oracles.map((o) => `${o.name}: oracle_id ${o.oracle_id}`).join("; ")}). ` +

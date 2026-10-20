@@ -8,9 +8,10 @@ import { SCHEMA_VERSION, openDb, migrate } from "../lib/db.js";
 import { importManaBoxCsv } from "../lib/manabox.js";
 import { searchCollection } from "../lib/query.js";
 import {
-  BULK_SUGGEST_COPIES, autoBinderType, collectionMaster, createBinder, defaultImportMode, deleteBinder, listBinders, moveCopies, renameBinder,
+  BULK_SUGGEST_COPIES, collectionMaster, createBinder, defaultImportMode, deleteBinder, listBinders, moveCopies, renameBinder,
   setBinderProps, setCollectionMaster,
 } from "../lib/binders.js";
+import { autoBinderType } from "../lib/deckboxes.js";
 import { ID, seedCards, stubScryfall, tempDb } from "./fixtures.js";
 
 let ctx, stub;

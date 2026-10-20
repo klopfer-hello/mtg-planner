@@ -3,10 +3,9 @@
 
 export class ToolError extends Error {}
 
-export const parseJson = (s, fallback) => {
-  if (s == null || typeof s !== "string") return s ?? fallback;
-  try { return JSON.parse(s); } catch { return fallback; }
-};
+import { nameMatch } from "../lib/db.js";
+
+export { likeEsc, nameArgs, nameMatch, parseJson } from "../lib/db.js";
 
 export const int = (v, def, min, max) => {
   const n = Number.isFinite(Number(v)) && v !== null && v !== "" ? Math.trunc(Number(v)) : def;
@@ -32,11 +31,9 @@ export const OWNED_BY_NAME = `
   SELECT c.scryfall_id, c.oracle_id, c.name, c.set_code, c.set_name, c.collector_number,
          col.finish, col.language, col.condition, col.binder, col.quantity, c.prices
     FROM collection col JOIN cards c ON c.scryfall_id = col.scryfall_id
-   WHERE c.name = ? COLLATE NOCASE OR c.name LIKE ? || ' // %' ESCAPE '\\'
+   WHERE ${nameMatch()}
    ORDER BY col.quantity DESC, c.set_code, c.collector_number`;
 
-/** A user string as a literal LIKE pattern (used with ESCAPE backslash): % and _ match only themselves. */
-export const likeEsc = (v) => String(v).replace(/[\\%_]/g, (c) => `\\${c}`);
 
 export const eurText = (v) => (v == null ? "no EUR price" : `€${v.toFixed(2)}`);
 

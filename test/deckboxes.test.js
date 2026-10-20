@@ -14,7 +14,7 @@ import { createBinder, deckToBinder, listBinders, renameBinder, setBinderProps }
 import { SCHEMA_VERSION, migrate, openDb } from "../lib/db.js";
 import { buildChecklist } from "../lib/deckbuild.js";
 import { searchCollection } from "../lib/query.js";
-import { boxNameSimilarity, boxNameWords, boxSuggestion, deckBoxes, effectiveLock, lockedBinders } from "../lib/deckboxes.js";
+import { boxNameSimilarity, boxNameWords, boxSuggestion, effectiveLock, lockedBinders } from "../lib/deckboxes.js";
 import { ID, seedCards, tempDb } from "./fixtures.js";
 
 let ctx;
@@ -116,7 +116,6 @@ describe("locked binders (deck boxes are locked by default)", () => {
     const other = deck("Other", "idea", [row("Sol Ring", ID.sol, 1)]);
     setBinderProps(ctx.db, "Odds Box", { deck_id: owner });
     assert.equal(lockedBinders(ctx.db).get("odds box").owners[0].id, owner, "the link makes it a deck box: locked (auto)");
-    assert.equal(deckBoxes, lockedBinders, "old name kept");
     const mine = deckDetail(ctx.db, owner, { power: false });
     assert.deepEqual([pick(mine, "Sol Ring").available_for_this, pick(mine, "Sol Ring").in_use], [1, 0]);
     assert.deepEqual(mine.box, { binder: "Odds Box", via: "link" });
