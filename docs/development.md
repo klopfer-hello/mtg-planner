@@ -6,6 +6,7 @@ own build and cut a release.
 - [Architecture](#architecture)
 - [Code map](#code-map)
 - [Building, testing and deploying](#building-testing-and-deploying)
+- [Docs screenshots](#docs-screenshots)
 - [Releases](#releases)
 - [Third-party data and software](#third-party-data-and-software)
 
@@ -133,6 +134,16 @@ docker run --rm -v "$PWD":/app -w /app node:24-slim npm test
 # ...including the OCR/djpeg tests, in the built image (it has the binaries; CI does the same)
 docker run --rm -v "$PWD":/app -w /app --entrypoint npm ghcr.io/klopfer-hello/mtg-planner:latest test
 ```
+
+## Docs screenshots
+
+The pictures in `docs/img/` come from `scripts/screenshots.mjs`: it opens a running
+app in headless Chromium (phone 390x844 at 2x, one desktop shot) and saves WebP files.
+It photographs whatever data the app has, so run it against a copy you are happy to
+publish. Playwright is not a dependency of the app; the script header has the Docker
+command (Playwright gets installed in `/tmp` of that container). Environment: `BASE`,
+`OUT`, `QUALITY`, `DECK`, `BINDER`, `SET`, `CHAT`. The scan clip (`scan-clip.webp`) is
+made by hand from recorded scanner frames.
 
 ## Releases
 
