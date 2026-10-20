@@ -18,6 +18,7 @@ import { accessoriesForRows, createAccessoryFetcher, ensureAccessoryData } from 
 import { syncEnglishPrices } from "./lib/prices.js";
 import { EXPORT_FORMATS, exportCollection } from "./lib/collectionexport.js";
 import { listSets, setDetail } from "./lib/sets.js";
+import { generateGuide, latestGuide } from "./lib/deckguide.js";
 import {
   DECK_STATUSES, DeckError, bracketVerdict, buyListText, cardUsage, deckComboRequest, deckDetail, deckPower, draftDeck, eurForFinish, exportDeck, listDecks,
   addDeckCard, bulkDeckCards, normalizeFormat, parseDecklist, saveDeck, setCommander, shoppingList, updateDeckCard,
@@ -27,7 +28,7 @@ import {
   spellbookSettings,
 } from "./lib/spellbook.js";
 import * as claudeLib from "./lib/claude.js";
-import { MAX_CONCURRENT, activeClaudeRuns, claudeConfigured, killAll, prepareMcpConfig, runTurn, runVision, visionCap } from "./lib/claude.js";
+import { MAX_CONCURRENT, activeClaudeRuns, claudeConfigured, killAll, prepareMcpConfig, runGuide, runTurn, runVision, visionCap } from "./lib/claude.js";
 import {
   checkpointIndex, fetchBulkInfo, getMeta, indexBrief, openIndex, refreshIndex, refreshIndexInWorker, setMeta,
 } from "./lib/cardindex.js";
@@ -595,6 +596,48 @@ function statusPreview(id, status) {
  * POST /api/decks/:id/to-binder {binder?, confirm_master?, picked_only?} -> moved/missing summary + deck detail.
  * picked_only: only the cards ticked in the build checklist (binder groups) move.
  */
+// Deck guides (lib/deckguide.js): one generation per deck at a time, in the background (Claude takes
+// 30-90 s). The facts-only guide (no Claude token, or {facts_only: true}) is made at once.
+const guideJobs = new Map(); // deck id -> {started_at}
+const guideErrors = new Map(); // deck id -> {at, error} of the last failed Claude part
+
+function guideState(id) {
+  if (!db.prepare("SELECT 1 FROM decks WHERE id = ?").get(id)) throw new HttpError(404, "Deck not found");
+  const latest = latestGuide(db, id);
+  const err = guideErrors.get(id);
+  return {
+    status: guideJobs.has(id) ? "pending" : latest ? "ready" : "none",
+    started_at: guideJobs.get(id)?.started_at ?? null,
+    error: err && (!latest || err.at > latest.created_at) ? err.error : null,
+    claude: claudeConfigured(),
+    guide: latest,
+  };
+}
+
+/** POST /api/decks/:id/guide {facts_only?} → 201 ready (facts only) | 202 pending | 409 already running. */
+async function postDeckGuide(req, id) {
+  const body = await readJson(req);
+  if (!db.prepare("SELECT 1 FROM decks WHERE id = ?").get(id)) throw new HttpError(404, "Deck not found");
+  if (guideJobs.has(id)) throw new HttpError(409, "A guide for this deck is already being written");
+  if (body.facts_only === true || !claudeConfigured()) {
+    const { row } = await generateGuide(db, id);
+    guideErrors.delete(id);
+    return { code: 201, body: { ...guideState(id), guide: row ? latestGuide(db, id) : null } };
+  }
+  if (runs.size + activeClaudeRuns().vision + activeClaudeRuns().guide >= MAX_CONCURRENT) {
+    throw new HttpError(429, "Claude is busy right now; try again in a minute");
+  }
+  const started = new Date().toISOString();
+  guideJobs.set(id, { started_at: started });
+  guideErrors.delete(id);
+  const conn = db;
+  generateGuide(conn, id, { runGuide, model: process.env.CLAUDE_GUIDE_MODEL || "sonnet" })
+    .then(({ error }) => { if (error) guideErrors.set(id, { at: new Date().toISOString(), error }); })
+    .catch((err) => { guideErrors.set(id, { at: new Date().toISOString(), error: err.message }); console.warn(`[guide] deck ${id}: ${err.message}`); })
+    .finally(() => guideJobs.delete(id));
+  return { code: 202, body: guideState(id) };
+}
+
 async function postDeckToBinder(req, id) {
   const body = await readJson(req);
   const binder = optString(body.binder, "binder", 200);
@@ -764,7 +807,7 @@ async function postMessage(req, res, chatId) {
   if (!text) throw new HttpError(400, "text is required");
   if (!claudeConfigured()) throw new HttpError(503, "Claude is not configured: set CLAUDE_CODE_OAUTH_TOKEN");
   if (runs.has(chatId)) throw new HttpError(409, "This chat is already answering; wait for it to finish");
-  if (runs.size + activeClaudeRuns().vision >= MAX_CONCURRENT) throw new HttpError(429, `Too many Claude runs in progress (max ${MAX_CONCURRENT}); try again shortly`);
+  if (runs.size + activeClaudeRuns().vision + activeClaudeRuns().guide >= MAX_CONCURRENT) throw new HttpError(429, `Too many Claude runs in progress (max ${MAX_CONCURRENT}); try again shortly`);
 
   const controller = new AbortController();
   runs.set(chatId, controller);
@@ -1845,8 +1888,10 @@ async function handleApi(req, res, url) {
   if ((m = /^\/api\/decks\/(\d+)\/(build(?:\/picks)?|history(?:\/\d+(?:\/restore)?)?)$/.exec(pathname))) {
     return sendJson(res, 200, await deckBuildHistoryApi(req, method, Number(m[1]), m[2]));
   }
-  if ((m = /^\/api\/decks\/(\d+)\/(cards|cards\/bulk|commander|to-binder|status-preview|combos)$/.exec(pathname))) {
+  if ((m = /^\/api\/decks\/(\d+)\/(cards|cards\/bulk|commander|to-binder|status-preview|combos|guide)$/.exec(pathname))) {
     const id = Number(m[1]);
+    if (m[2] === "guide" && method === "GET") return sendJson(res, 200, guideState(id));
+    if (m[2] === "guide" && method === "POST") { const r = await postDeckGuide(req, id); return sendJson(res, r.code, r.body); }
     if (m[2] === "cards/bulk" && method === "POST") return sendJson(res, 200, await postDeckCardsBulk(req, id));
     if (m[2] === "cards" && method === "POST") return sendJson(res, 200, await postDeckCard(req, id));
     if (m[2] === "combos" && method === "POST") return sendJson(res, 202, postDeckCombos(id));

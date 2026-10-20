@@ -39,6 +39,13 @@ kept short for a phone screen: the answer first, a few bullets, and a deck
 summary instead of the full list (ask for details when you want them).
 Conversations keep going across restarts (`--resume`).
 
+**Deck guides** (Decks → a deck → **Guide**) use Claude too, but not the chat:
+one request without any tools gets the deck's facts and list and answers with
+the strategy parts as JSON (`CLAUDE_GUIDE_MODEL`, default `sonnet`; budget
+`CLAUDE_GUIDE_MAX_BUDGET_USD`, default 0.50; timeout `CLAUDE_GUIDE_TIMEOUT_MS`,
+default 180000). It shares the limit of parallel Claude runs with the chat and
+the scanner. See [decks.md](decks.md#deck-guide).
+
 Claude's `search_collection` tool uses the same
 [search syntax](collection.md#search-syntax) as the collection browser.
 Binder names, each row's source (ManaBox, scan or app) and owned vs. free

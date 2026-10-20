@@ -35,7 +35,7 @@ describe("migration v16: binders.locked", () => {
   const cols = (db) => db.prepare("PRAGMA table_info(binders)").all().map((c) => c.name);
 
   test("fresh database has the column; nothing is locked by hand", () => {
-    assert.equal(SCHEMA_VERSION, 17);
+    assert.equal(SCHEMA_VERSION, 18);
     assert.ok(cols(ctx.db).includes("locked"));
     createBinder(ctx.db, "Fresh");
     assert.equal(ctx.db.prepare("SELECT locked FROM binders WHERE name = 'Fresh'").get().locked, null);

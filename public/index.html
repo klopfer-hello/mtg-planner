@@ -1048,6 +1048,19 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 .set-peek { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; padding: 8px 12px 14px 56px; border-top: 1px dashed var(--border); }
 .set-peek img { width: 110px; border-radius: 6px; }
 @media (max-width: 400px) { .set-peek { padding-left: 12px; } }
+.guide h3 { font-size: 1.05rem; margin: 6px 0 0; }
+.guide h4 { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 4px 0 0; }
+.guide-ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; line-height: 1.45; }
+.guide-head { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; align-items: start; }
+.guide-head img { width: 96px; border-radius: 6px; }
+.guide-keys { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+.guide-key { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; align-items: start; }
+.guide-key img, .guide-noimg { width: 64px; aspect-ratio: 63 / 88; border-radius: 4px; background: var(--surface-3); }
+.guide-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 0; font-size: .9rem; }
+.guide-dl dt { font-weight: 700; }
+.guide-dl dd { margin: 0; }
+@media (max-width: 420px) { .guide-dl { grid-template-columns: minmax(0, 1fr); } .guide-dl dd { margin-bottom: 6px; } }
+.guide img.sym { width: 1em; height: 1em; vertical-align: -0.12em; }
 .binder-grid { display: grid; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; min-width: 0; }
 .binder-entry {
   appearance: none; border: 0; border-top: 1px solid var(--border); background: none; color: inherit; text-align: left; cursor: pointer; width: 100%;
@@ -4345,6 +4358,131 @@ function SpellbookPanel({ health, dataVersion }) {
   );
 }
 
+// Deck guide (0.9.0): plain text with {G}-style mana symbols as images (escaped first: safe).
+function SymText({ text }) {
+  const html = useMemo(() => escapeHtml(text || "").replace(MD_SYMBOL_RE, (m, sym) => `<img class="sym" src="${symbolUrl(sym)}" alt="${m}" title="${m}">`), [text]);
+  return <span dangerouslySetInnerHTML={{ __html: html }} />;
+}
+const Bullets = ({ items }) => (items?.length ? <ul className="guide-ul">{items.map((t, i) => <li key={i}><SymText text={t} /></li>)}</ul> : null);
+
+/**
+ * Deck page → Guide: GET /api/decks/:id/guide; Write/Regenerate = POST (Claude in the background, the sheet
+ * polls every 4 s while pending; facts only without a Claude token). Shows the whole guide.
+ */
+function GuideSheet({ deck, onClose }) {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => api(`/api/decks/${deck.id}/guide`).then(setState).catch((e) => setError(e.message)), [deck.id]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (state?.status !== "pending") return undefined;
+    const t = setTimeout(load, 4000);
+    return () => clearTimeout(t);
+  }, [state, load]);
+  const write = async (factsOnly = false) => {
+    setBusy(true); setError(null);
+    try { setState(await api(`/api/decks/${deck.id}/guide`, { method: "POST", json: factsOnly ? { facts_only: true } : {} })); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  };
+  const row = state?.guide;
+  const g = row?.guide;
+  const pending = state?.status === "pending";
+  const s = g?.strategy;
+  return (
+    <Sheet title={`Guide: ${deck.name}`} onClose={onClose}>
+      <div className="stack guide">
+        <ErrorNotice error={error} onDismiss={() => setError(null)} />
+        {!state && !error && <Spinner />}
+        {pending && (
+          <div className="notice" role="status"><Spinner label="" /><div className="grow">Claude is writing your guide. This takes about half a minute; you can close this and come back.</div></div>
+        )}
+        {state?.error && !pending && <div className="notice warn" role="status"><div className="grow">The strategy part failed: {state.error}. {g ? "Below is the guide without it." : ""}</div></div>}
+        {state && state.status === "none" && !pending && (
+          <div className="stack">
+            <p style={{ margin: 0 }}>A short guide to this deck for learning it: what it does, how it wins, what to do each turn, when to mulligan, its key cards and the techniques it uses, with a glossary.</p>
+            {!state.claude && <p className="small muted" style={{ margin: 0 }}>Claude is not connected, so the guide has the facts and techniques but no strategy part.</p>}
+            <div className="row"><button type="button" className="btn primary" disabled={busy} onClick={() => write(false)}><Icon.sparkle /> Write the guide</button></div>
+          </div>
+        )}
+        {g && (
+          <>
+            {row.stale && !pending && <div className="notice warn" role="status"><div className="grow">The deck changed since this guide was written.</div></div>}
+            <section className="card stack guide-glance" aria-label="At a glance">
+              <div className="guide-head">
+                {g.commander?.[0]?.image && <img src={g.commander[0].image} alt={g.commander[0].name} loading="lazy" />}
+                <div className="stack" style={{ gap: 4, minWidth: 0 }}>
+                  {g.commander?.length > 0 && <b>{g.commander.map((c) => c.name).join(" + ")}</b>}
+                  <span className="small">{[g.deck.format && cap(g.deck.format), g.colours?.names?.length ? g.colours.names.join(" / ") : "colourless"].filter(Boolean).join(" · ")}</span>
+                  <span className="small">{g.counts.cards} cards · {g.counts.lands ?? "?"} lands · average mana value {g.counts.avg_mv ?? "?"}</span>
+                  {g.power && <span className="small">Bracket {g.power.bracket} ({g.power.bracket_label}) · power {g.power.score}/10</span>}
+                  {g.value_eur != null && <span className="small muted">Worth about {fmtEur(g.value_eur)}</span>}
+                </div>
+              </div>
+              {s?.summary && <p style={{ margin: 0 }}><SymText text={s.summary} /></p>}
+            </section>
+            {s && (
+              <>
+                <section className="stack"><h3>How it wins</h3><Bullets items={s.how_it_wins} /></section>
+                <section className="stack"><h3>Turn by turn</h3>
+                  <h4>Early (turns 1-3)</h4><Bullets items={s.game_plan.early} />
+                  <h4>Middle (turns 4-6)</h4><Bullets items={s.game_plan.mid} />
+                  <h4>Late (turn 7+)</h4><Bullets items={s.game_plan.late} />
+                </section>
+                <section className="stack"><h3>Mulligan</h3>
+                  <h4>Keep</h4><Bullets items={s.mulligan.keep} />
+                  <h4>Shuffle away</h4><Bullets items={s.mulligan.ship} />
+                </section>
+              </>
+            )}
+            {g.key_cards?.length > 0 && (
+              <section className="stack"><h3>Key cards</h3>
+                <div className="guide-keys">
+                  {g.key_cards.map((k) => (
+                    <div key={k.name} className="guide-key">
+                      {k.image ? <img src={k.image} alt={k.name} loading="lazy" /> : <span className="guide-noimg" />}
+                      <div className="stack small" style={{ gap: 2, minWidth: 0 }}><b>{k.name}</b><span><SymText text={k.why} /></span></div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+            {g.techniques?.length > 0 && (
+              <section className="stack"><h3>Techniques this deck uses</h3>
+                {g.techniques.map((t) => (
+                  <div key={t.key} className="card stack guide-tech" style={{ gap: 6 }}>
+                    <b>{t.name} <span className="muted small">· {plural(t.count, "card")}</span></b>
+                    <span className="small">{t.what}</span>
+                    {t.tip && <span className="small"><b>Here:</b> <SymText text={t.tip} /></span>}
+                    <span className="small muted">{t.cards.join(", ")}{t.count > t.cards.length ? ", …" : ""}</span>
+                  </div>
+                ))}
+              </section>
+            )}
+            {s?.pitfalls?.length > 0 && <section className="stack"><h3>Watch out</h3><Bullets items={s.pitfalls} /></section>}
+            {s?.practice?.length > 0 && <section className="stack"><h3>Learn it</h3><Bullets items={s.practice} /></section>}
+            {g.tokens?.length > 0 && (
+              <section className="stack"><h3>Tokens you need</h3>
+                <Bullets items={g.tokens.map((t) => `${t.name}${t.pt ? ` ${t.pt}` : ""}${t.estimate ? ` (about ${t.estimate})` : ""}`)} />
+              </section>
+            )}
+            {g.glossary?.length > 0 && (
+              <section className="stack"><h3>Words to know</h3>
+                <dl className="guide-dl">{g.glossary.map((x) => <React.Fragment key={x.term}><dt>{x.term}</dt><dd><SymText text={x.meaning} /></dd></React.Fragment>)}</dl>
+              </section>
+            )}
+            <p className="small muted" style={{ margin: 0 }}>Written {fmtAgo(row.created_at)}{row.kind === "facts" ? " · facts only (no Claude)" : ""}.</p>
+            <div className="row">
+              <button type="button" className="btn" disabled={busy || pending} onClick={() => write(false)}><Icon.refresh /> {busy ? "Starting…" : "Write it again"}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </Sheet>
+  );
+}
+
 function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, onOpenCard, onOpenDeck, onAsk, onChanged, onCollectionChanged = onChanged, onWishChanged }) {
   const [deck, setDeck] = useState(null);
   const [error, setError] = useState(null);
@@ -4362,6 +4500,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
   const [powerOpen, setPowerOpen] = useState(false);
   const [buildOpen, setBuildOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [adding, setAdding] = useState(null); // null | "pick" | {card}
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState(() => new Set()); // `${board}|${name}`
@@ -4660,6 +4799,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
               )}
               {deck.cards.length > 0 && <button type="button" className="btn" onClick={() => setBuildOpen(true)}><Icon.checklist /> Build list</button>}
               {deck.status === "built" && <button type="button" className="btn" onClick={() => setDeckBox(true)}><Icon.box /> Put into deck box</button>}
+              {deck.cards.length > 0 && <button type="button" className="btn" onClick={() => setGuideOpen(true)}><Icon.sparkle /> Guide</button>}
               <button type="button" className="btn" onClick={() => setHistoryOpen(true)}><Icon.history /> History</button>
               <a className="btn" href={exportHref} download><Icon.download /> Export</a>
               {!editing && <button type="button" className="btn" onClick={startEdit}><Icon.edit /> Edit</button>}
@@ -4720,6 +4860,7 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
           {deckBox && <DeckBoxSheet deck={deck} onClose={() => setDeckBox(false)} onDone={() => { load(); onCollectionChanged(); }} />}
           {buildOpen && <BuildSheet deck={deck} onClose={() => { setBuildOpen(false); load(); }} onSetBuilt={() => setStatus("built")}
             onCollectionChanged={() => { load(); onCollectionChanged(); }} onOpenCard={onOpenCard} />}
+          {guideOpen && <GuideSheet deck={deck} onClose={() => setGuideOpen(false)} />}
           {historyOpen && <HistorySheet deck={deck} onClose={() => setHistoryOpen(false)}
             onRestored={(res) => { if (res && Array.isArray(res.cards)) setDeck(res); else load(); onChanged(); }} />}
         </>

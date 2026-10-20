@@ -289,6 +289,15 @@ To switch:
 **You should now see:** "Built" selected. Cards other built decks also use get
 **⇄** or **⚠**.
 
+### Learn to play a deck
+
+1. Open the deck.
+2. Tap **Guide**, then **Write the guide**.
+3. Wait about half a minute (you can close the sheet meanwhile).
+
+**You should now see:** how the deck wins, what to do each turn, when to
+mulligan, its key cards, the techniques it uses, and the words to know.
+
 ### Change a deck's cards
 
 - **Add a card:** open the deck, tap **Add card**, search the name, pick the

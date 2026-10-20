@@ -16,6 +16,7 @@ score) work.
 - [Put into deck box](#put-into-deck-box)
 - [Build list](#build-list)
 - [Deck history](#deck-history)
+- [Deck guide](#deck-guide)
 - [API](#api)
 
 ## Adding decks
@@ -296,6 +297,29 @@ an idea deck you are about to build.
   and **Mark deck as built**.
 - Ticking never moves cards. A card that leaves the deck loses its tick.
 
+## Deck guide
+
+**Guide** on a deck writes a short guide for learning to play it, in plain
+English for beginners:
+
+- **At a glance:** commander, colours, cards, lands, average mana value,
+  bracket and power score, value.
+- **How it wins**, a **turn-by-turn** plan (early, middle, late) and
+  **mulligan** rules: when to keep a hand and when to shuffle it away.
+- **Key cards** with pictures and why they matter.
+- **Techniques this deck uses** (ramp, card draw, removal, tokens, sacrifice,
+  graveyard, blink, evasion …): what each one is, how *this* deck uses it, and
+  which cards do it.
+- **Watch out** (common mistakes), **Learn it** (practice steps), the tokens
+  you need, and **Words to know** (every keyword on the cards).
+
+The facts, techniques and glossary are worked out by the app. The strategy
+parts (how it wins, turns, mulligan, key cards, tips) are written by Claude in
+one request (about half a minute, on your Claude plan; nothing else is sent
+anywhere). Without Claude the guide has the facts and techniques only. The
+newest five guides per deck are kept; after you change the deck, the guide
+says so and **Write it again** makes a new one.
+
 ## Deck history
 
 Every change to a deck is saved as a **version**: edits in the app, decks
@@ -320,6 +344,8 @@ same-origin request.
 | --- | --- |
 | `GET /api/decks/:id` | the deck; adds `cover: {scryfall_id, name, image_small, image_normal, image_art, source}` (`source` is `commander` or `top`; null without a card image; the rows of `GET /api/decks` carry it too) and `accessories: {status, tokens: [{key, name, type_line, pt, colors, oracle_text, image_small, scryfall_ids, source, from: [{name, quantity, side?}], estimate, estimate_note, side_only?, owned: {quantity, binders: [{binder, quantity}]}}], markers: [{key, label, kind, note?, sizes?, from, side_only?}], maybe_skipped, unknown}`; `status` is `ok`, `pending` (token data is being fetched: read again after a few seconds) or `unavailable` (card text only); locked binders: `box {binder, via}` (the box this deck owns), per card `in_locked` (= `in_boxes`) `[{binder, deck_id, deck_name, quantity}]` (locked binders of other decks or nobody holding it) and `in_use_locked` (= `in_use_box`, the part of `in_use` lying there), `in_use_locked_count` (= `in_use_box_count`; the list rows carry it too), and `shopping.in_use[]` items add `boxes` and `in_box` |
 | `POST /api/decks/evaluate` | also returns `accessories` for the draft |
+| `GET /api/decks/:id/guide` | `{status: none\|pending\|ready, started_at, error, claude, guide}`; `guide` = the newest `{id, created_at, kind: full\|facts, model, cost_usd, stale, guide: {deck, commander, colours, counts, curve, types, value_eur, power, techniques: [{key, name, what, tip, cards, count}], glossary, tokens, combos, key_cards: [{name, why, image}], strategy: {summary, how_it_wins, game_plan: {early, mid, late}, mulligan: {keep, ship}, pitfalls, practice} \| null}}`; `stale` = the deck has a newer history version; `error` = the last failed Claude part |
+| `POST /api/decks/:id/guide {facts_only?}` | write a guide: with Claude in the background (202, poll GET; 409 while one runs, 429 Claude busy), or facts only at once (201; also without a Claude token) |
 | `POST /api/decks/:id/cards {scryfall_id \| name, board?, quantity?}` | add copies of a card (board `main` by default, 1-999 copies) to a board, merged into a row of the same name; by `scryfall_id` that printing, by `name` an owned printing first, else Scryfall's; returns the deck plus `change: {name, board, scryfall_id, added}`; 404 deck or card not found, 400 bad board/quantity/id |
 | `POST /api/decks/:id/cards/bulk {items: [{name, board}], action, to_board?}` | `action` `remove` or `move` (with `to_board`) for 1-500 rows in one step and one history version; returns the deck plus `change: {action, rows, copies, to_board}`; a row that isn't there → 404 and nothing changes |
 | `GET /api/decks/:id/build` | the build list: `{deck_id, name, status, box_binder, total, picked, complete, movable_picked, groups: [{key, kind, title, binder?, quantity, picked, lines: [{key, source, name, local_name?, quantity, picked, oracle_id, scryfall_id, image_small, mana_cost, cmc, colors, commander, binder?, decks?, price_eur?}]}]}` (`local_name` = the printed name in `CARD_NAME_LANG` when the card index has one); `kind` is `binder`, `other`, `basics`, `buy`, `box` or `tokens` (token lines with `token`, `need`; marker lines with `marker`; not counted in `total`/`picked`) |
