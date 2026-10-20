@@ -19,8 +19,6 @@
 //                into detect(img, opts). toJSON()/restore() keep the learned
 //                box per device (localStorage PRIOR_STORAGE_KEY); UNLEARN_AFTER
 //                accepted captures in a row outside it forget it again.
-//   cardHash     content signature of the card's art window (z-scored 10x8
-//                cell grid, plus the 180-degree reading); hashDist = 1 - corr.
 //   frameThumb   tiny luma thumbnail for the motion signal (thumbDiff = MAD).
 
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -436,53 +434,6 @@ function sampleLum(img, x, y) {
   return (L(i) * (1 - fx) + L(i + 4) * fx) * (1 - fy) + (L(j) * (1 - fx) + L(j + 4) * fx) * fy;
 }
 
-function bilerpQ(q, u, v) {
-  // bilinear interpolation inside the quad (enough for a hash; the card is nearly fronto-parallel)
-  const x = (1 - v) * ((1 - u) * q[0][0] + u * q[1][0]) + v * ((1 - u) * q[3][0] + u * q[2][0]);
-  const y = (1 - v) * ((1 - u) * q[0][1] + u * q[1][1]) + v * ((1 - u) * q[3][1] + u * q[2][1]);
-  return [x, y];
-}
-
-/**
- * Content signature of the card's art window: a 10x8 grid of cell means (3x3 samples each), z-scored,
- * plus the same for the card rotated 180 degrees. Compared by correlation (sigDist = 1 - max corr over
- * 0 / 180 degrees, 0 = identical, ~1 = unrelated): far more tolerant of 1-3 % corner jitter than a dHash,
- * whose bits flip wherever two neighbouring cells are nearly equal. corners: TL,TR,BR,BL in img px.
- */
-export function cardHash(img, corners, GX = 10, GY = 8, region = [0.1, 0.12, 0.9, 0.55]) {
-  // art window of a normal frame (the frame/text layout is shared by all cards and would dominate the
-  // correlation); `r` = the same signature as if the card's corner order were rotated 180 degrees
-  const grid = (rot) => {
-    const S = 3, v = new Float32Array(GX * GY), [u0, v0, u1, v1] = region;
-    for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) {
-      let s = 0;
-      for (let sy = 0; sy < S; sy++) for (let sx = 0; sx < S; sx++) {
-        let u = u0 + (u1 - u0) * (gx + (sx + 0.5) / S) / GX, w = v0 + (v1 - v0) * (gy + (sy + 0.5) / S) / GY;
-        if (rot) { u = 1 - u; w = 1 - w; }
-        const p = bilerpQ(corners, u, w);
-        s += sampleLum(img, p[0], p[1]);
-      }
-      v[gy * GX + gx] = s;
-    }
-    let m = 0; for (let i = 0; i < v.length; i++) m += v[i]; m /= v.length;
-    let sd = 0; for (let i = 0; i < v.length; i++) { v[i] -= m; sd += v[i] * v[i]; }
-    sd = Math.sqrt(sd / v.length) || 1;
-    for (let i = 0; i < v.length; i++) v[i] /= sd;
-    return v;
-  };
-  return { h: grid(false), r: grid(true) };
-}
-
-/**
- * Signature distance (0 identical .. ~1 unrelated .. 2 inverted). rot180: also accept the card read rotated
- * by 180 degrees (only needed when the corner order may flip between captures; it doubles the chance that
- * two different arts look alike, so the capture trigger leaves it off - the tracker keeps the order stable).
- */
-export function hashDist(a, b, rot180 = false) {
-  let c0 = 0, c1 = 0;
-  for (let i = 0; i < a.h.length; i++) { c0 += a.h[i] * b.h[i]; c1 += a.h[i] * b.r[i]; }
-  return 1 - (rot180 ? Math.max(c0, c1) : c0) / a.h.length;
-}
 
 /** 24x40 luma thumbnail for the motion signal (cheap: point samples). */
 export function frameThumb(img, TW = 24, TH = 40) {

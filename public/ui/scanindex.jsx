@@ -93,9 +93,7 @@ const LEARN_REASON = {
 
 /** Compact learning summary (Settings → Scanner & data). */
 function ScannerLearning() {
-  const [rep, setRep] = useState(null);
-  const [error, setError] = useState(null);
-  useEffect(() => { api("/api/scans/learning").then(setRep, (e) => setError(e.message)); }, []);
+  const { data: rep, error } = useApi("/api/scans/learning");
   if (error) return <p className="small muted" style={{ margin: 0 }}>{error}</p>;
   if (!rep) return <Spinner />;
   const o = rep.outcomes || {};

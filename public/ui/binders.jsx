@@ -8,19 +8,10 @@ const UNSORTED = "Unsorted";
 const sameName = (a, b) => a != null && b != null && String(a).toLowerCase() === String(b).toLowerCase();
 
 /** GET /api/binders → {binders, unsorted, master}; reloads with dataVersion. */
+const binderListOf = (d) => ({ binders: d.binders.filter((b) => b.name), unsorted: d.unsorted, master: d.collection_master });
 function useBinderList(dataVersion = 0) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-  const load = useCallback(() => {
-    api("/api/binders")
-      .then((d) => {
-        setData({ binders: asList(d, "binders").filter((b) => b.name), unsorted: d?.unsorted || { copies: 0, cards: 0 }, master: d?.collection_master || "manabox" });
-        setError(null);
-      })
-      .catch((e) => setError(e.message));
-  }, []);
-  useEffect(load, [load, dataVersion]);
-  return { data, error, reload: load };
+  const { data, error, reload } = useApi("/api/binders", [dataVersion], { map: binderListOf });
+  return { data, error, reload };
 }
 
 /**
@@ -115,20 +106,13 @@ const RARITY_LETTER = { common: "C", uncommon: "U", rare: "R", mythic: "M", spec
 const setsCache = new Map();
 function SetsView({ dataVersion, onOpen, onBack }) {
   const [all, setAll] = useState(false);
-  const [data, setData] = useState(() => setsCache.get(0) ?? null);
-  const [error, setError] = useState(null);
-  const [reloadKey, reload] = useReducer((x) => x + 1, 0);
+  const key = all ? 1 : 0;
+  const { data: fresh, error, reload } = useApi(`/api/sets${all ? "?all=1" : ""}`, [dataVersion], { map: (d) => ({ key, sets: d }) });
+  useEffect(() => { if (fresh) setsCache.set(fresh.key, fresh.sets); }, [fresh]);
+  const data = (fresh?.key === key ? fresh.sets : setsCache.get(key) ?? fresh?.sets) ?? null;
   const [q, setQ] = useState("");
   const [sort, setSort] = useState(() => String(store.get("mtg.sets.sort", "new")));
   useEffect(() => { store.set("mtg.sets.sort", sort); }, [sort]);
-  useEffect(() => {
-    let live = true;
-    setError(null);
-    const key = all ? 1 : 0;
-    if (setsCache.has(key)) setData(setsCache.get(key));
-    api(`/api/sets${all ? "?all=1" : ""}`).then((d) => { setsCache.set(key, d); if (live) setData(d); }).catch((e) => { if (live) setError(e.message); });
-    return () => { live = false; };
-  }, [all, dataVersion, reloadKey]);
   const needle = q.trim().toLowerCase();
   const sets = asList(data?.sets).filter((x) => !needle || x.name.toLowerCase().includes(needle) || x.code === needle);
   const sorted = [...sets].sort(sort === "pct" ? (a, b) => b.pct - a.pct || b.owned - a.owned
@@ -180,20 +164,13 @@ function SetsView({ dataVersion, onOpen, onBack }) {
 
 /** One set's checklist (GET /api/sets/:code): owned cards open the card sheet, missing ones show a peek with ♡ / Add to deck. */
 function SetView({ code, dataVersion, onBack, onOpenCard, onChanged }) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
+  const { data, error } = useApi(`/api/sets/${encodeURIComponent(code)}`, [dataVersion],
+    { error: (e) => (e.status === 404 ? "This set is not in the card index." : e.message) });
   const [filter, setFilter] = useState(() => String(store.get("mtg.set.filter", "all")));
   const [peek, setPeek] = useState(null); // oracle_id
   const [sheet, setSheet] = useState(null); // {kind: wish|deck, card}
   const [note, setNote] = useState(null);
   useEffect(() => { store.set("mtg.set.filter", filter); }, [filter]);
-  useEffect(() => {
-    let live = true;
-    setError(null);
-    api(`/api/sets/${encodeURIComponent(code)}`).then((d) => { if (live) setData(d); })
-      .catch((e) => { if (live) setError(e.status === 404 ? "This set is not in the card index." : e.message); });
-    return () => { live = false; };
-  }, [code, dataVersion]);
   const back = <div><button type="button" className="btn ghost" onClick={onBack} style={{ marginLeft: -8 }}><Icon.back /> Sets</button></div>;
   if (error) return <div className="stack-lg">{back}<ErrorNotice error={error} /></div>;
   if (!data) return <div className="stack-lg">{back}<Spinner /></div>;
@@ -417,7 +394,7 @@ function BinderHeader({ binder, entry, list, onBack, onOpen, onOpenDeck, onMenu,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [toast, toastEl] = useEditToast(null);
-  const locked = Boolean(entry?.locked ?? entry?.reserved);
+  const locked = Boolean(entry?.locked);
   const toggleLock = async () => {
     setBusy(true); setError(null);
     try {
@@ -518,15 +495,9 @@ function BinderMenuSheet({ entry, list, onClose, onChanged, onRenamed, onDeleted
   const [name, setName] = useState(entry.name);
   const [picking, setPicking] = useState(false);
   const [deleting, setDeleting] = useState(null); // "unsort" | "delete"
-  const [decks, setDecks] = useState(null);
-  const locked = Boolean(entry.locked ?? entry.reserved);
+  const locked = Boolean(entry.locked);
   const isBox = entry.type === "deck_box" || locked;
-  useEffect(() => {
-    if (!isBox) return undefined;
-    let live = true;
-    api("/api/decks").then((d) => { if (live) setDecks(asList(d)); }).catch((e) => { if (live) setError(`Could not load decks: ${e.message}`); });
-    return () => { live = false; };
-  }, [isBox]);
+  const { data: decks, error: decksError } = useApi(isBox ? "/api/decks" : null, [], { error: (e) => `Could not load decks: ${e.message}` });
   const url = `/api/binders/${encodeURIComponent(entry.name)}`;
   const run = async (fn) => {
     setBusy(true); setError(null);
@@ -552,6 +523,7 @@ function BinderMenuSheet({ entry, list, onClose, onChanged, onRenamed, onDeleted
     <Sheet title={entry.name} onClose={onClose}>
       <div className="stack-lg">
         {error && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
+        {decksError && <ErrorNotice error={decksError} />}
         <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, minWidth: 0, gap: 8 }}>
           <legend className="label" style={{ marginBottom: 8 }}>Type</legend>
           <div className="chips" role="group" aria-label="Binder type">
@@ -642,16 +614,8 @@ function BinderMenuSheet({ entry, list, onClose, onChanged, onRenamed, onDeleted
 function CoverPicker({ binder, current, busy, onPick }) {
   const [q, setQ] = useState("");
   const dq = useDebounced(q.trim(), 300);
-  const [rows, setRows] = useState(null);
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    let live = true;
-    setError(null);
-    api(`/api/collection?${new URLSearchParams({ binder, q: dq, group: "printing", sort: "price", dir: "desc", limit: "24" })}`)
-      .then((d) => { if (live) setRows(d.rows); })
-      .catch((e) => { if (live) setError(e.message); });
-    return () => { live = false; };
-  }, [binder, dq]);
+  const { data: rows, error } = useApi(`/api/collection?${new URLSearchParams({ binder, q: dq, group: "printing", sort: "price", dir: "desc", limit: "24" })}`,
+    [], { map: (d) => d.rows });
   return (
     <div className="stack" style={{ gap: 8 }}>
       <input className="input" type="search" style={{ fontSize: 16 }} aria-label="Search cards for the cover" placeholder="Search this binder…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -862,14 +826,7 @@ function MoveSheet({ title, intro, maxQty = null, exclude = null, children, subm
       <form className="stack" onSubmit={submit}>
         {intro}
         {maxQty != null && maxQty > 1 && (
-          <div className="row between">
-            <span className="label">Copies to move</span>
-            <div className="stepper" role="group" aria-label="Copies to move">
-              <button type="button" aria-label="One less" disabled={qty <= 1} onClick={() => setQty(qty - 1)} style={{ width: 44, height: 44 }}><Icon.minus /></button>
-              <output aria-live="polite">{qty}</output>
-              <button type="button" aria-label="One more" disabled={qty >= maxQty} onClick={() => setQty(qty + 1)} style={{ width: 44, height: 44 }}><Icon.plus /></button>
-            </div>
-          </div>
+          <Stepper big label="Copies to move" value={qty} max={maxQty} onChange={setQty} />
         )}
         {children}
         <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>

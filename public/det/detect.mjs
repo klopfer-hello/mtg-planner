@@ -378,8 +378,6 @@ function intersectL(a, b) {
   return [(a.c * b.ny - a.ny * b.c) / det, (a.nx * b.c - a.c * b.nx) / det];
 }
 
-const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
 /** Width/height ratio of the planar rectangle imaged as quad q (TL,TR,BR,BL), Zhang & He 2007. */
 export function rectAspect(q, f, u0, v0) {
@@ -454,10 +452,6 @@ const applyH = (H, x, y) => { const z = H[6] * x + H[7] * y + H[8]; return [(H[0
 // ---------------------------------------------------------------------------
 // 4. quad hypotheses
 
-function angDiffMod180(a, b) { // radians, inputs are unit direction vectors
-  const c = Math.abs(a.dx * b.dx + a.dy * b.dy);
-  return Math.acos(Math.min(1, c));
-}
 
 function sideCov(L, a, b) {
   // fraction of the side a->b (inner 8..92%) covered by line L's intervals (no allocation)

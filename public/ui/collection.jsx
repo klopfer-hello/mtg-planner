@@ -30,19 +30,9 @@ const appendTerm = (q, term) => {
 
 // binder: null = whole collection, "" = Unsorted, else that binder (GET /api/stats?binder=, exact, case-insensitive).
 function StatsBar({ dataVersion, binder = null, scopeLine = true, compact = false }) {
-  const [stats, setStats] = useState(null);
-  const [error, setError] = useState(null);
-  const reqId = useRef(0);
-  const load = useCallback(() => {
-    const id = ++reqId.current;
-    setError(null);
-    setStats(null);
-    const qs = binder == null ? "" : `?${new URLSearchParams({ binder })}`;
-    api(`/api/stats${qs}`)
-      .then((d) => { if (id === reqId.current) setStats(d); })
-      .catch((e) => { if (id === reqId.current) setError(`Could not load stats: ${e.message}`); });
-  }, [binder]);
-  useEffect(load, [load, dataVersion]);
+  const qs = binder == null ? "" : `?${new URLSearchParams({ binder })}`;
+  const { data, error, loading, reload: load } = useApi(`/api/stats${qs}`, [dataVersion], { error: (e) => `Could not load stats: ${e.message}` });
+  const stats = loading ? null : data;
   if (error) return <ErrorNotice error={error} onRetry={load} />;
   const s = stats || {};
   const scope = binder == null ? null : binder || UNSORTED;
@@ -62,17 +52,12 @@ function StatsBar({ dataVersion, binder = null, scopeLine = true, compact = fals
 }
 
 function QueryHelp() {
-  const [help, setHelp] = useState(null);
-  const [error, setError] = useState(null);
-  const load = () => {
-    if (help) return;
-    setError(null);
-    api("/api/query-help").then((d) => setHelp(d.help)).catch((e) => setError(e.message));
-  };
+  const [opened, setOpened] = useState(false); // loads on the first open
+  const { data: help, error, reload } = useApi(opened ? "/api/query-help" : null, [], { map: (d) => d.help });
   return (
-    <details className="disclosure" onToggle={(e) => { if (e.currentTarget.open) load(); }}>
+    <details className="disclosure" onToggle={(e) => { if (e.currentTarget.open) setOpened(true); }}>
       <summary>Search syntax</summary>
-      {error && <ErrorNotice error={error} onRetry={load} />}
+      {error && <ErrorNotice error={error} onRetry={reload} />}
       {!help && !error && <p className="muted small">Loading…</p>}
       {help && (
         <>
@@ -515,29 +500,18 @@ function CollectionBrowser({ binder, entry, binderList, initialQ = null, dataVer
  * sections render only their header; an open one pages its cards like the flat list.
  */
 function SectionList({ by, params, dq, group, view, dataVersion, binderName, onOpenCard, selecting, isSelected, onToggle }) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
   const [open, setOpen] = useState(() => new Set());
-  const reqId = useRef(0);
   const sp = params();
   sp.delete("sort"); sp.delete("dir");
   sp.set("by", by);
   const qs = sp.toString();
-  const load = useCallback(() => {
-    const id = ++reqId.current;
-    setError(null);
-    api(`/api/collection/sections?${qs}`)
-      .then((d) => {
-        if (id !== reqId.current) return;
-        const list = asList(d, "sections");
-        setData(list);
-        // Few sections or a search: open the first ones, else everything starts closed.
-        setOpen((prev) => (prev.size ? prev : new Set(list.length <= 2 ? list.map((s) => s.key) : dq ? list.slice(0, 3).map((s) => s.key) : [])));
-      })
-      .catch((e) => { if (id === reqId.current) setError(e.status === 400 ? `Search error: ${e.message}` : e.message); });
-  }, [qs, dq]);
-  useEffect(() => { setOpen(new Set()); setData(null); }, [by, qs]);
-  useEffect(load, [load, dataVersion]);
+  const { data, error, reload: load, setData } = useApi(`/api/collection/sections?${qs}`, [dataVersion],
+    { map: (d) => d.sections, error: (e) => (e.status === 400 ? `Search error: ${e.message}` : e.message) });
+  useEffect(() => { setOpen(new Set()); setData(null); }, [by, qs, setData]);
+  // Few sections or a search: open the first ones, else everything starts closed.
+  useEffect(() => {
+    if (data) setOpen((prev) => (prev.size ? prev : new Set(data.length <= 2 ? data.map((s) => s.key) : dq ? data.slice(0, 3).map((s) => s.key) : [])));
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggle = (k) => setOpen((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const unit = { set: ["set", "sets"], color: ["colour", "colours"], rarity: ["rarity", "rarities"], type: ["type", "types"] }[by] || ["section", "sections"];
   if (error) return <ErrorNotice error={error} onRetry={load} />;
@@ -637,10 +611,9 @@ function BulkMoveSheet({ items, group, binder, guarded, onClose, onDone }) {
   const what = plural(items.length, group === "card" ? "card" : "printing");
   return (
     <MoveSheet title={`Move ${what}`} exclude={scoped ? binder : null} submitLabel="Move" onClose={onClose}
-      intro={<span className="small muted" style={{ overflowWrap: "anywhere" }}>{items.slice(0, 6).map((i) => i.name).join(", ")}{items.length > 6 ? ` and ${items.length - 6} more` : ""}</span>}
+      intro={<span className="small muted" style={{ overflowWrap: "anywhere" }}>{selectionNames(items)}</span>}
       onMove={async ({ to_binder, create }) => {
-        const from = scoped && binder != null ? { from_binder: binder } : {};
-        const list = items.map((i) => (group === "card" && i.oracle_id ? { oracle_id: i.oracle_id, ...from } : { printing_id: i.scryfall_id, ...from }));
+        const list = selectionItems(items, group, scoped ? binder : null);
         const res = await guarded((confirm) => api("/api/collection/move", { method: "POST", json: { items: list, to_binder, create, confirm_master: confirm } }));
         if (!res) return false;
         onDone(res);

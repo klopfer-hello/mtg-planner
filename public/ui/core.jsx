@@ -102,6 +102,32 @@ function useDebounced(value, ms) {
   return v;
 }
 
+/**
+ * GET `path` and keep the answer: {data, error, loading, reload, setData}. A null path loads nothing.
+ * It loads again when the path or one of `deps` changes, or on reload(); an answer that arrives after
+ * that (or after unmount) is dropped. The last data stays while the next load runs. Options: `map(d)`
+ * shapes the answer, `error(e)` turns a failure into the shown message (default e.message).
+ */
+function useApi(path, deps = [], { map = null, error: errorText = null } = {}) {
+  const [state, setState] = useState({ data: null, error: null, loading: path != null });
+  const [tick, reload] = useReducer((x) => x + 1, 0);
+  const opts = useRef(null);
+  opts.current = { map, errorText };
+  useEffect(() => {
+    if (path == null) return undefined;
+    let live = true;
+    setState((s) => ({ ...s, error: null, loading: true }));
+    api(path).then(
+      (d) => { if (live) setState({ data: opts.current.map ? opts.current.map(d) : d, error: null, loading: false }); },
+      (e) => { if (live) setState((s) => ({ ...s, error: opts.current.errorText ? opts.current.errorText(e) : e.message, loading: false })); },
+    );
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, tick, ...deps]);
+  const setData = useCallback((v) => setState((s) => ({ ...s, data: typeof v === "function" ? v(s.data) : v })), []);
+  return { ...state, reload, setData };
+}
+
 /** SQLite datetime('now') is "YYYY-MM-DD HH:MM:SS" in UTC without a zone. */
 function parseTs(s) {
   if (!s) return null;
@@ -139,7 +165,6 @@ const conditionLabel = (s) => (s || "").split("_").map(cap).join(" ");
 // ---------------------------------------------------------------------------
 // Card symbols: {W/U} -> WU.svg, {2} -> 2.svg, {T} -> T.svg
 
-const SYMBOL_RE = /\{([^{}\s]{1,8})\}/g;
 function symbolUrl(sym) {
   let code = sym.toUpperCase().replace(/\//g, "");
   if (code === "½") code = "HALF";

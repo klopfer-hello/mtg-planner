@@ -520,24 +520,22 @@ function DeckExtras({ deck, onClose }) {
 
 /** Settings → Online services: the Commander Spellbook combo check (shared by the server and the planner). */
 function SpellbookPanel({ health, dataVersion }) {
-  const [enabled, setEnabled] = useState(null);
+  const { data: settings, error: loadError, setData } = useApi("/api/settings", [dataVersion], { error: (e) => `Could not load settings: ${e.message}` });
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
-  const [forced, setForced] = useState(false);
-  useEffect(() => {
-    api("/api/settings").then((d) => { setEnabled(typeof d?.spellbook_enabled === "boolean" ? d.spellbook_enabled : null); setForced(Boolean(d?.spellbook?.env_disabled)); })
-      .catch((e) => setError(`Could not load settings: ${e.message}`));
-  }, [dataVersion]);
+  const [actionError, setError] = useState(null);
+  const error = actionError ?? loadError;
+  const enabled = typeof settings?.spellbook_enabled === "boolean" ? settings.spellbook_enabled : null;
+  const forced = Boolean(settings?.spellbook?.env_disabled);
+  const show = (on, envOff) => setData((d) => ({ ...d, spellbook_enabled: on, spellbook: { ...d?.spellbook, env_disabled: envOff } }));
   const toggle = async (on) => {
-    setBusy(true); setError(null); setForced(false);
+    setBusy(true); setError(null); show(enabled, false);
     try {
       const d = await api("/api/settings", { method: "PATCH", json: { spellbook_enabled: on } });
       const now = typeof d?.spellbook_enabled === "boolean" ? d.spellbook_enabled : on;
-      setEnabled(now);
-      if (on && !now) setForced(true);
+      show(now, on && !now);
     } catch (e) {
       // 409: SPELLBOOK_ENABLED=false on the server keeps it off.
-      if (on && e.status === 409) { setEnabled(false); setForced(true); } else setError(e.message);
+      if (on && e.status === 409) show(false, true); else setError(e.message);
     } finally { setBusy(false); }
   };
   const sb = health?.spellbook;

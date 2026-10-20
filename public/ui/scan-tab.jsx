@@ -33,11 +33,7 @@ function ScanRow({ s, status, selected, onSelect, onPatch, onDelete, onIncrement
         </div>
       </div>
       <div className="ctrls">
-        <div className="stepper" role="group" aria-label="Quantity">
-          <button type="button" aria-label="One less" disabled={qty <= 1} onClick={() => onPatch({ quantity: qty - 1 })}><Icon.minus /></button>
-          <output aria-live="polite">{qty}</output>
-          <button type="button" aria-label="One more" onClick={onIncrement}><Icon.plus /></button>
-        </div>
+        <Stepper label="Quantity" value={qty} onChange={(n) => (n > qty ? onIncrement() : onPatch({ quantity: n }))} />
         <button type="button" className={`btn sm finish-btn ${finish}${finishGuessed(s) ? " finish-q" : ""}`} disabled={fins.length < 2}
           title={fins.length < 2 ? `Only printed ${FINISH_LABEL[finish] || finish}` : `${finishGuessed(s) ? "Not read from the card (session setting). " : ""}Switch to ${FINISH_LABEL[nextFinish]}`}
           onClick={() => onPatch({ finish: nextFinish })}>{finish !== "nonfoil" && "✦ "}{FINISH_LABEL[finish] || finish}{finishGuessed(s) ? "?" : ""}</button>
@@ -180,9 +176,9 @@ function ScanTab({ active, health, onCommitted }) {
   const loadScans = useCallback(async () => {
     try {
       const d = await api("/api/scans?status=staged");
-      const list = asList(d, "scans", "rows").slice().sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
+      const list = asList(d, "scans").slice().sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
       setScans(list);
-      setScanTotals(d && !Array.isArray(d) ? d.totals?.staged ?? null : null);
+      setScanTotals(d.totals?.staged ?? null);
       setListError(null);
       setSelected((sel) => new Set([...sel].filter((id) => list.some((s) => s.id === id))));
     } catch (e) {
@@ -474,13 +470,11 @@ function ScanTab({ active, health, onCommitted }) {
     if (settingsRef.current.calibration) setSheet((sh) => sh || { type: "truth", entry: { scan, result: r, preview, payload: body } });
   }
 
-  // Re-send a body already sent once (Send again, Retry, Different card, Ask Claude). The server's
-  // dup_of (the removed beta.1 "Same card?" chip) is never sent by this UI.
+  // Re-send a body already sent once (Send again, Retry, Different card, Ask Claude).
   const resend = (body, preview, extra = {}) => {
     const b = { ...body, ...extra };
     for (const k of Object.keys(b)) if (b[k] == null) delete b[k];
     delete b.mode;
-    delete b.dup_of;
     if (!queueRef.current) return;
     const { capture, allowClaude, force, ...rest } = b;
     pushItem({ id: null, payload: { body: rest, preview }, capture: capture || null, allowClaude: allowClaude !== false, force: Boolean(force) });
@@ -489,7 +483,7 @@ function ScanTab({ active, health, onCommitted }) {
   // The upload queue's callbacks (latest closures).
   handlers.current = {
     send: (item) => {
-      const { capture: _c, allowClaude: _a, dup_of: _d, force: _f, ...rest } = item.payload?.body || {};
+      const { capture: _c, allowClaude: _a, force: _f, ...rest } = item.payload?.body || {};
       const body = { ...rest, allowClaude: item.allowClaude !== false };
       if (item.capture) body.capture = item.capture;
       if (item.force) body.force = true;

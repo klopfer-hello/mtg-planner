@@ -18,7 +18,6 @@ const CONDITIONS = [
   ["mint", "Mint", "M"], ["near_mint", "Near Mint", "NM"], ["excellent", "Excellent", "EX"], ["good", "Good", "GD"],
   ["light_played", "Light Played", "LP"], ["played", "Played", "PL"], ["poor", "Poor", "PR"],
 ];
-const BOARDS = [["main", "Main deck"], ["side", "Sideboard"], ["commander", "Commander"], ["maybe", "Maybeboard"]];
 const FINISH_LABEL = { nonfoil: "Non-foil", foil: "Foil", etched: "Etched" };
 const STATUS_LABEL = { auto: "✓ matched", suggest: "? confirm", review: "✗ pick", failed: "✗ unknown", duplicate: "= same as last" };
 const STATUS_COLOR = { auto: "#62d18d", suggest: "#f0c062", duplicate: "#f0c062", review: "#ff8274", failed: "#ff8274", error: "#ff8274" };
@@ -142,15 +141,12 @@ const fmtElapsed = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); retur
  * `recording` = the session being recorded now (not deletable, list reloads when it stops).
  */
 function RecordedSessions({ recording }) {
-  const [list, setList] = useState(null);
-  const [error, setError] = useState(null);
+  const { data: list, error: loadError, reload: load } = useApi("/api/debug/sessions", [recording],
+    { map: (d) => d.sessions, error: (e) => `Could not load recorded sessions: ${e.message}` });
+  const [actionError, setError] = useState(null);
+  const error = actionError ?? loadError;
   const [ask, setAsk] = useState(null); // id awaiting the inline "Delete?" confirm
   const [busy, setBusy] = useState(null);
-  const load = useCallback(() => {
-    api("/api/debug/sessions").then((d) => { setList(d.sessions || []); setError(null); })
-      .catch((e) => setError(`Could not load recorded sessions: ${e.message}`));
-  }, []);
-  useEffect(load, [load, recording]);
   const remove = async (id) => {
     setBusy(id); setError(null);
     try { await api(`/api/debug/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }); setAsk(null); load(); }

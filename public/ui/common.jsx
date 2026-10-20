@@ -26,7 +26,23 @@ function ErrorNotice({ error, onRetry, onDismiss }) {
   );
 }
 
-const SOURCE_BADGE = { manabox: "warn", claude: "accent", manual: "", scan: "ok", app: "accent" };
+/**
+ * −/+ stepper (a group named `label`; + stops at `max`). `big`: a sheet form row with the label shown and
+ * 44 px buttons; else only the buttons (list rows, menus).
+ */
+function Stepper({ label, value, min = 1, max = Infinity, disabled = false, onChange, big = false }) {
+  const size = big ? { width: 44, height: 44 } : undefined;
+  const group = (
+    <div className="stepper" role="group" aria-label={label}>
+      <button type="button" aria-label="One less" disabled={disabled || value <= min} onClick={() => onChange(value - 1)} style={size}><Icon.minus /></button>
+      <output aria-live="polite">{value}</output>
+      <button type="button" aria-label="One more" disabled={disabled || value >= max} onClick={() => onChange(value + 1)} style={size}><Icon.plus /></button>
+    </div>
+  );
+  return big ? <div className="row between"><span className="label">{label}</span>{group}</div> : group;
+}
+
+const SOURCE_BADGE ={ manabox: "warn", claude: "accent", manual: "", scan: "ok", app: "accent" };
 function SourceBadge({ source }) {
   return <span className={`badge ${SOURCE_BADGE[source] ?? ""}`}>{source === "claude" ? "✦ claude" : source}</span>;
 }
