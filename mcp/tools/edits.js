@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { getAppMeta, setAppMeta } from "../../lib/db.js";
 import { BinderError } from "../../lib/binders.js";
 import { EDIT_CONDITIONS, editCopies } from "../../lib/edits.js";
-import { fetchCollectionPolitely } from "../../lib/manabox.js";
+import { fetchCollection } from "../../lib/scryfall.js";
 import { getDb, getIndex, indexPrinting, log } from "../context.js";
 import { likeEsc, setNum, ToolError } from "../format.js";
 
@@ -164,7 +164,7 @@ async function resolveNewPrinting(d, oracle, spec, wantLang) {
   }
   if (!found.size) {
     try {
-      const { cards } = await fetchCollectionPolitely([{ set, collector_number: cn }]);
+      const { cards } = await fetchCollection([{ set, collector_number: cn }]);
       for (const c of cards) found.set(c.id, { id: c.id, lang: c.lang, oracle_id: c.oracle_id, name: c.name });
     } catch (err) { log(`Scryfall printing lookup failed: ${err.message}`); }
   }

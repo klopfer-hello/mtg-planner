@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { fetchCollectionPolitely, importManaBoxCsv, parseCsv, refreshOwnedCards } from "../lib/manabox.js";
+import { importManaBoxCsv, parseCsv, refreshOwnedCards } from "../lib/manabox.js";
 import { LIMITED_INTERVAL_MS, fetchCollection } from "../lib/scryfall.js";
 import { deckDetail, listDecks } from "../lib/decks.js";
 import { setCommander, updateDeckCard } from "../lib/deckedit.js";
@@ -280,16 +280,14 @@ describe("importManaBoxCsv", () => {
     assert.equal(listDecks(ctx.db)[0].id, id, "same deck");
   });
 
-  test("fetchCollectionPolitely batches by 75 and spaces requests", async () => {
+  test("fetchCollection batches by 75", async () => {
     const ids = Array.from({ length: 160 }, (_, i) => ({ id: `00000000-0000-0000-0000-${String(1000 + i).padStart(12, "0")}` }));
-    const t0 = Date.now();
-    const res = await fetchCollectionPolitely(ids, { intervalMs: 50 });
+    const res = await fetchCollection(ids);
     assert.deepEqual(stub.calls.map((c) => c.length), [75, 75, 10]);
     assert.equal(res.notFound.length, 160);
-    assert.ok(Date.now() - t0 >= 100, "two gaps between three requests");
   });
 
-  test("plain fetchCollection (saveDeck, resolveDeckItems) also keeps /cards/collection at 2 req/s", async () => {
+  test("fetchCollection keeps /cards/collection at 2 req/s", async () => {
     const ids = Array.from({ length: 160 }, (_, i) => ({ id: `00000000-0000-0000-0000-${String(2000 + i).padStart(12, "0")}` }));
     const inner = globalThis.fetch;
     const times = [];
