@@ -224,6 +224,7 @@ here?"** Say yes to sort in mtg-planner from now on.
 | `t:creature c:g` | green creatures |
 | `eur>5` | cards worth more than €5 |
 | `is:foil` | your foil copies |
+| `t:goblin or t:elf` | goblins and elves |
 
 All codes: [collection.md](collection.md#search-syntax).
 
@@ -238,8 +239,7 @@ All codes: [collection.md](collection.md#search-syntax).
 
 > **If it doesn't work**
 >
-> - **Search says "unknown key":** check the code's spelling. There is no
->   `or`.
+> - **Search says "unknown key":** check the code's spelling.
 > - **No Undo next to a change:** the copies changed again since. Undo the
 >   newer change first.
 

@@ -215,7 +215,18 @@ values with spaces go in quotes.
 | `src:manabox`, `src:scan`, `src:app` | where the copy came from (ManaBox import, scanner, organised in the app) |
 | `-t:land` | negation of any term |
 
-All terms are ANDed; there is no `or` and no parentheses.
+Terms are ANDed. Use `or` for alternatives and parentheses to group them; `-`
+also negates a group. `or` binds weaker than the spaces, so
+`t:creature c:u or bolt` means (blue creatures) or bolt.
+
+| Type this | Finds |
+| --- | --- |
+| `t:goblin or t:elf` | goblins and elves |
+| `c:r (t:instant or t:sorcery)` | red instants and sorceries |
+| `-(s:lea or s:leb)` | everything except Alpha and Beta |
+
+Quote a value that contains parentheses or the word or (`"or"`). `qty` can't
+be combined with other terms by `or` (search it separately).
 
 Unknown keys return an error that lists the supported syntax.
 

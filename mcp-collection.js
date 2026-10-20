@@ -175,7 +175,8 @@ const TOOLS = [
     name: "search_collection",
     description:
       "Search the cards the user OWNS (not all of Magic — use the scryfall tools for that) with a Scryfall-like query " +
-      "language. Terms are ANDed; prefix a term with '-' to negate it; quote multi-word values.\n" +
+      "language. Terms are ANDed; 'or' and (parentheses) combine alternatives (t:goblin or t:elf; c:r (t:instant or " +
+      "t:sorcery)); prefix a term or a group with '-' to negate it; quote multi-word values.\n" +
       `Syntax: ${QUERY_HELP}.\n` +
       "Notes: c: is the card's colors (c:wu = at least white and blue, c=wu exactly, c<=wu within); id: is color " +
       "identity and means 'within' (what fits a commander of that identity); f:<format> = legal in that format " +

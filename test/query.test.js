@@ -20,6 +20,19 @@ describe("compileQuery", () => {
     assert.deepEqual(where.params, ["%bolt%", "%sol ring%"]);
   });
 
+  test("or groups compile to one parenthesised WHERE clause with bound params in order", () => {
+    const { where, having } = compileQuery("c:r (t:instant or t:sorcery)");
+    assert.match(where.sql, / AND \(\(c\.type_line LIKE \?\) OR \(c\.type_line LIKE \?\)\)$/);
+    assert.deepEqual(where.params, ["%instant%", "%sorcery%"]);
+    assert.equal(having.sql, "1");
+    const neg = compileQuery("-(s:lea or s:leb)");
+    assert.equal(neg.where.sql, "NOT (((c.set_code = ?) OR (c.set_code = ?)))");
+    assert.deepEqual(neg.where.params, ["lea", "leb"]);
+    const q = compileQuery("qty>=2 or qty=0");
+    assert.equal(q.where.sql, "1");
+    assert.deepEqual(q.having.params, [2, 0]);
+  });
+
   test("negation wraps the clause in NOT", () => {
     const { where } = compileQuery("-t:creature");
     assert.equal(where.sql, "NOT (c.type_line LIKE ?)");
@@ -239,6 +252,32 @@ describe("searchCollection", () => {
 
   test("bad query throws", () => {
     assert.throws(() => searchCollection(ctx.db, { q: "zzz:1" }), /Unknown search key/);
+  });
+
+  test("or and parentheses", () => {
+    assert.deepEqual(names("bolt or angel"), ["Lightning Bolt", "Serra Angel"]);
+    assert.deepEqual(names("bolt OR angel"), ["Lightning Bolt", "Serra Angel"]);
+    assert.deepEqual(names("t:creature (c:u or c:w)"), ["Atraxa, Praetors' Voice", "Delver of Secrets // Insectile Aberration", "Serra Angel"]);
+    assert.deepEqual(names("(t:instant or t:artifact) -c:u"), ["Lightning Bolt", "Sol Ring"]);
+    // a b or c = (a b) or c
+    assert.deepEqual(names("t:creature c:u or bolt"), ["Atraxa, Praetors' Voice", "Delver of Secrets // Insectile Aberration", "Lightning Bolt"]);
+    assert.deepEqual(names("-(t:creature or t:instant)"), ["Sol Ring"]);
+    assert.deepEqual(names("((bolt)) or (sol (ring or nothing))"), ["Lightning Bolt", "Sol Ring"]);
+    assert.deepEqual(names('"or"'), ["Atraxa, Praetors' Voice", "Azorius Charm"], "a quoted or is a name search");
+    // qty stays in HAVING next to an or-group of row terms
+    assert.deepEqual(names("(t:instant or t:creature) qty>=4"), ["Lightning Bolt", "Serra Angel"]);
+    assert.deepEqual(binderMatches(ctx.db, { q: "sol or bolt" }).cards, 2);
+  });
+
+  test("or/parentheses errors", () => {
+    assert.throws(() => names("bolt or"), /`or` needs a search term/);
+    assert.throws(() => names("or bolt"), /`or` needs a search term/);
+    assert.throws(() => names("bolt or or angel"), /`or` needs a search term/);
+    assert.throws(() => names("(bolt"), /Missing `\)`/);
+    assert.throws(() => names("bolt)"), /Unexpected `\)`/);
+    assert.throws(() => names("()"), /Empty parentheses/);
+    assert.throws(() => names("qty>=4 or bolt"), /Can't combine qty>=4 with/);
+    assert.throws(() => names("-(qty>=4 bolt)"), /Can't combine/);
   });
 
   test("binderMatches: binders holding matching cards, per binder counts, Unsorted as ''", () => {

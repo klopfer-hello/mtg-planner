@@ -1955,6 +1955,12 @@ const SORTS = [
   ["qty", "Quantity", "desc"], ["set", "Set", "asc"], ["rarity", "Rarity", "desc"],
 ];
 const tokenize = (q) => q.match(/-?[a-z]*(?:[:<>=!]+)?(?:"[^"]*"|\S+)/gi) || [];
+/** q plus a filter chip's term; a search with a bare `or` is wrapped first, so the chip applies to all of it. */
+const appendTerm = (q, term) => {
+  const base = q.trim();
+  if (!base) return term;
+  return tokenize(base).some((t) => t.toLowerCase() === "or") ? `(${base}) ${term}` : `${base} ${term}`;
+};
 
 // binder: null = whole collection, "" = Unsorted, else that binder (GET /api/stats?binder=, exact, case-insensitive).
 function StatsBar({ dataVersion, binder = null, scopeLine = true, compact = false }) {
@@ -2249,7 +2255,7 @@ function CollectionBrowser({ binder, entry, binderList, initialQ = null, dataVer
   const toggleFilter = (term) => {
     const lower = term.toLowerCase();
     const has = tokens.some((t) => t.toLowerCase() === lower);
-    setQ(has ? tokens.filter((t) => t.toLowerCase() !== lower).join(" ") : [q.trim(), term].filter(Boolean).join(" "));
+    setQ(has ? tokens.filter((t) => t.toLowerCase() !== lower).join(" ") : appendTerm(q, term));
   };
   const changeSort = (s) => {
     setSort(s);
@@ -8042,7 +8048,7 @@ function BinderOverview({ list, onOpen, onGoImport, onGoScan, onChanged }) {
   }, [dq, data]);
   const tokens = tokenize(q);
   const hasToken = (term) => tokens.some((t) => t.toLowerCase() === term.toLowerCase());
-  const toggleTerm = (term) => setQ(hasToken(term) ? tokens.filter((t) => t.toLowerCase() !== term.toLowerCase()).join(" ") : [q.trim(), term].filter(Boolean).join(" "));
+  const toggleTerm = (term) => setQ(hasToken(term) ? tokens.filter((t) => t.toLowerCase() !== term.toLowerCase()).join(" ") : appendTerm(q, term));
   // A cleared field stops filtering at once (the debounced value lags 300 ms).
   const searching = Boolean(dq) && Boolean(q.trim());
   const ready = !searching || (found && found.q === dq);
