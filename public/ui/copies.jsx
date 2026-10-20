@@ -24,19 +24,13 @@ const rowItem = (r, quantity) => ({
   scryfall_id: r.scryfall_id, finish: r.finish, language: r.language, condition: r.condition, binder: r.binder ?? "",
   ...(r.source ? { source: r.source } : {}), quantity,
 });
-
-function QtyStepper({ label, value, max, onChange }) {
-  return (
-    <div className="row between">
-      <span className="label">{label}</span>
-      <div className="stepper" role="group" aria-label={label}>
-        <button type="button" aria-label="One less" disabled={value <= 1} onClick={() => onChange(value - 1)} style={{ width: 44, height: 44 }}><Icon.minus /></button>
-        <output aria-live="polite">{value}</output>
-        <button type="button" aria-label="One more" disabled={value >= max} onClick={() => onChange(value + 1)} style={{ width: 44, height: 44 }}><Icon.plus /></button>
-      </div>
-    </div>
-  );
-}
+/** Move/delete items for a Select-mode selection: whole cards (oracle_id) or printings, only from `binder` when set. */
+const selectionItems = (items, group, binder = null) => items.map((i) => {
+  const from = binder != null ? { from_binder: binder } : {};
+  return group === "card" && i.oracle_id ? { oracle_id: i.oracle_id, ...from } : { printing_id: i.scryfall_id, ...from };
+});
+/** "A, B, C and 4 more": the first six names of a selection. */
+const selectionNames = (items) => `${items.slice(0, 6).map((i) => i.name).join(", ")}${items.length > 6 ? ` and ${items.length - 6} more` : ""}`;
 
 /** One owned row: "MOM #12 · IT · Foil · Near Mint · in Trade binder". */
 function CopyLine({ row, extra = null }) {
@@ -151,7 +145,7 @@ function EditCopySheet({ card, row, onClose, onDone }) {
         </div>
         {row.quantity > 1 && (
           <div className="stack" style={{ gap: 4 }}>
-            <QtyStepper label="Copies to change" value={qty} max={row.quantity} onChange={setQty} />
+            <Stepper big label="Copies to change" value={qty} max={row.quantity} onChange={setQty} />
             {qty < row.quantity && <span className="small muted">The other {plural(row.quantity - qty, "copy", "copies")} stay as they are.</span>}
           </div>
         )}
@@ -183,6 +177,42 @@ function EditCopySheet({ card, row, onClose, onDone }) {
   );
 }
 
+/**
+ * The buttons of a two-step delete (`step` 1 | 2, kept by the parent): step 1 "Delete <what>…" + Cancel,
+ * step 2 the `warning`, `confirm` (e.g. a typed count; it then takes the focus) and the red "Delete <what>"
+ * + Back. Each step's buttons have their own key and step 2's Back gets the focus: a held Enter on step 1's
+ * button must not also press the final one.
+ */
+function TwoStepDelete({ step, what, warning, confirm = null, error, busy, canStart = true, ready = true, onStep, onDelete, onCancel, onBack }) {
+  if (step === 1) {
+    return (
+      <>
+        <ErrorNotice error={error} />
+        <div key="step1" className="row">
+          <button type="button" className="btn danger grow" disabled={!canStart} onClick={() => onStep(2)}><Icon.trash /> Delete {what}…</button>
+          <button type="button" className="btn ghost" onClick={onCancel}>Cancel</button>
+        </div>
+      </>
+    );
+  }
+  return (
+    <>
+      <div className="notice error" role="alert">
+        <span aria-hidden="true">⚠️</span>
+        <div className="grow">{warning}</div>
+      </div>
+      {confirm}
+      <ErrorNotice error={error} />
+      <div key="step2" className="row">
+        <button type="button" className="btn danger-fill grow" disabled={busy || !ready} onClick={onDelete}>
+          {busy ? "Deleting…" : <><Icon.trash /> Delete {what}</>}
+        </button>
+        <button type="button" className="btn ghost" disabled={busy} onClick={onBack} autoFocus={!confirm}>Back</button>
+      </div>
+    </>
+  );
+}
+
 /** Delete owned copies of one row: 1st step shows what goes, 2nd a red "Delete N copies". */
 function DeleteCopySheet({ card, row, onClose, onDone }) {
   const [guarded, masterDialog] = useMasterConfirm();
@@ -210,31 +240,11 @@ function DeleteCopySheet({ card, row, onClose, onDone }) {
           <dt>Copies</dt><dd>{step === 1 ? `${qty} of ${row.quantity}` : <b>{what}</b>}</dd>
           <dt>Value</dt><dd>{unit == null ? "no price" : `${fmtEur(unit * qty)}${qty > 1 ? ` (${fmtEur(unit)} each)` : ""}`}</dd>
         </dl>
-        {step === 1 ? (
-          <>
-            {row.quantity > 1 && <QtyStepper label="Copies to delete" value={qty} max={row.quantity} onChange={setQty} />}
-            {row.source === "manabox" && <span className="small muted">These copies came from ManaBox. If ManaBox is still the master you'll be asked to make mtg-planner the master first; later imports leave them deleted.</span>}
-            <div key="step1" className="row">
-              <button type="button" className="btn danger grow" onClick={() => setStep(2)}><Icon.trash /> Delete {what}…</button>
-              <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="notice error" role="alert">
-              <span aria-hidden="true">⚠️</span>
-              <div className="grow"><b>{what} of {card.name}</b> leave your collection. You can undo it right after, or later in Settings → Collection → Recent changes.</div>
-            </div>
-            <ErrorNotice error={error} />
-            {/* Own key + focus on Back: a held Enter on step 1's button must not also press this one. */}
-            <div key="step2" className="row">
-              <button type="button" className="btn danger-fill grow" disabled={busy} onClick={run}>
-                {busy ? "Deleting…" : <><Icon.trash /> Delete {what}</>}
-              </button>
-              <button type="button" className="btn ghost" disabled={busy} onClick={() => setStep(1)} autoFocus>Back</button>
-            </div>
-          </>
-        )}
+        {step === 1 && row.quantity > 1 && <Stepper big label="Copies to delete" value={qty} max={row.quantity} onChange={setQty} />}
+        {step === 1 && row.source === "manabox" && <span className="small muted">These copies came from ManaBox. If ManaBox is still the master you'll be asked to make mtg-planner the master first; later imports leave them deleted.</span>}
+        <TwoStepDelete step={step} what={what} error={error} busy={busy} onStep={setStep} onDelete={run} onCancel={onClose}
+          onBack={() => { setStep(1); setError(null); }}
+          warning={<><b>{what} of {card.name}</b> leave your collection. You can undo it right after, or later in Settings → Collection → Recent changes.</>} />
       </div>
       {masterDialog}
     </Sheet>
@@ -288,8 +298,7 @@ function BulkDeleteSheet({ items, group, binder, onClose, onDone }) {
   const run = async () => {
     if (busy || Number(typed) !== n) return;
     setBusy(true); setError(null);
-    const from = scoped ? { from_binder: binder } : {};
-    const list = items.map((i) => (group === "card" && i.oracle_id ? { oracle_id: i.oracle_id, ...from } : { printing_id: i.scryfall_id, ...from }));
+    const list = selectionItems(items, group, binder);
     try {
       const res = await guarded((confirm) => api("/api/collection/delete", { method: "POST", json: { items: list, confirm: true, expected_copies: n, confirm_master: confirm } }));
       if (res) onDone(res, n);
@@ -305,7 +314,7 @@ function BulkDeleteSheet({ items, group, binder, onClose, onDone }) {
   return (
     <Sheet title={`Delete ${what}?`} onClose={onClose}>
       <div className="stack">
-        <span className="small" style={{ overflowWrap: "anywhere" }}>{items.slice(0, 6).map((i) => i.name).join(", ")}{items.length > 6 ? ` and ${items.length - 6} more` : ""}</span>
+        <span className="small" style={{ overflowWrap: "anywhere" }}>{selectionNames(items)}</span>
         <span className="small muted">{scoped
           ? `Only copies in ${binder || UNSORTED} are deleted.`
           : `Every copy of the selected ${group === "card" ? "cards (all printings)" : "printings"} is deleted, from all binders, also copies your search hides.`}</span>
@@ -318,32 +327,17 @@ function BulkDeleteSheet({ items, group, binder, onClose, onDone }) {
           </dl>
         )}
         {count && n === 0 && <p className="muted" style={{ margin: 0 }}>Nothing to delete.</p>}
-        {step === 1 && <ErrorNotice error={error} />}
-        {step === 1 ? (
-          <div key="step1" className="row">
-            <button type="button" className="btn danger grow" disabled={!count || n === 0} onClick={() => setStep(2)}><Icon.trash /> Delete {count ? plural(n, "copy", "copies") : "copies"}…</button>
-            <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          </div>
-        ) : (
-          <>
-            <div className="notice error" role="alert">
-              <span aria-hidden="true">⚠️</span>
-              <div className="grow"><b>{plural(n, "copy", "copies")} leave your collection.</b> You can undo it right after, or later in Settings → Collection → Recent changes.</div>
-            </div>
+        <TwoStepDelete step={step} what={count ? plural(n, "copy", "copies") : "copies"} error={error} busy={busy}
+          canStart={Boolean(count) && n > 0} ready={Boolean(typed) && Number(typed) === n} onStep={setStep} onDelete={run} onCancel={onClose}
+          onBack={() => { setStep(1); setTyped(""); setError(null); }}
+          warning={<><b>{plural(n, "copy", "copies")} leave your collection.</b> You can undo it right after, or later in Settings → Collection → Recent changes.</>}
+          confirm={(
             <div className="field">
               <label htmlFor="bulk-del-count">Type <b>{n}</b> to confirm</label>
               <input id="bulk-del-count" className="input" style={{ fontSize: 16 }} inputMode="numeric" autoComplete="off" autoFocus
                 value={typed} onChange={(e) => setTyped(e.target.value.replace(/\D/g, ""))} placeholder={String(n)} />
             </div>
-            <ErrorNotice error={error} />
-            <div key="step2" className="row">
-              <button type="button" className="btn danger-fill grow" disabled={busy || Number(typed) !== n || !typed} onClick={run}>
-                {busy ? "Deleting…" : <><Icon.trash /> Delete {plural(n, "copy", "copies")}</>}
-              </button>
-              <button type="button" className="btn ghost" disabled={busy} onClick={() => { setStep(1); setTyped(""); setError(null); }}>Back</button>
-            </div>
-          </>
-        )}
+          )} />
       </div>
       {masterDialog}
     </Sheet>

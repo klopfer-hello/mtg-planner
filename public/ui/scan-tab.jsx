@@ -33,11 +33,7 @@ function ScanRow({ s, status, selected, onSelect, onPatch, onDelete, onIncrement
         </div>
       </div>
       <div className="ctrls">
-        <div className="stepper" role="group" aria-label="Quantity">
-          <button type="button" aria-label="One less" disabled={qty <= 1} onClick={() => onPatch({ quantity: qty - 1 })}><Icon.minus /></button>
-          <output aria-live="polite">{qty}</output>
-          <button type="button" aria-label="One more" onClick={onIncrement}><Icon.plus /></button>
-        </div>
+        <Stepper label="Quantity" value={qty} onChange={(n) => (n > qty ? onIncrement() : onPatch({ quantity: n }))} />
         <button type="button" className={`btn sm finish-btn ${finish}${finishGuessed(s) ? " finish-q" : ""}`} disabled={fins.length < 2}
           title={fins.length < 2 ? `Only printed ${FINISH_LABEL[finish] || finish}` : `${finishGuessed(s) ? "Not read from the card (session setting). " : ""}Switch to ${FINISH_LABEL[nextFinish]}`}
           onClick={() => onPatch({ finish: nextFinish })}>{finish !== "nonfoil" && "✦ "}{FINISH_LABEL[finish] || finish}{finishGuessed(s) ? "?" : ""}</button>

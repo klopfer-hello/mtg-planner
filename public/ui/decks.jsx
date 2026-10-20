@@ -538,11 +538,7 @@ function CardActionsMenu({ deck, card, anchor, busy, error, onRun, onOpenCard, o
       ))}
       <div className="menu-qty">
         <span>Copies</span>
-        <div className="stepper" role="group" aria-label="Copies">
-          <button type="button" aria-label="One less" disabled={busy || qty <= 1} onClick={() => patch({ quantity: qty - 1 }, "qty")}><Icon.minus /></button>
-          <output aria-live="polite">{qty}</output>
-          <button type="button" aria-label="One more" disabled={busy} onClick={() => patch({ quantity: qty + 1 }, "qty")}><Icon.plus /></button>
-        </div>
+        <Stepper label="Copies" value={qty} disabled={busy} onChange={(n) => patch({ quantity: n }, "qty")} />
       </div>
       {item("Remove from deck", remove, { icon: <Icon.trash />, danger: true })}
       {error && <div className="menu-error small" role="alert">{typeof error === "string" ? error : error.message}</div>}

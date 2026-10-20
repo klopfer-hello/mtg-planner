@@ -279,7 +279,7 @@ function AddToDeckSheet({ card, deck: fixedDeck = null, onClose, onDone }) {
             {ADD_BOARDS.map((b) => <button key={b} type="button" aria-pressed={board === b} onClick={() => setBoard(b)}>{BOARD_LABEL[b]}</button>)}
           </div>
         </div>
-        <QtyStepper label="Copies" value={qty} max={99} onChange={setQty} />
+        <Stepper big label="Copies" value={qty} max={99} onChange={setQty} />
         <span className="small muted">Printing: {card.scryfall_id ? `this one${printing}` : "one you own, else a current one"}.</span>
         <ErrorNotice error={error} onDismiss={() => setError(null)} />
         <div className="row">
@@ -345,7 +345,7 @@ function WishSheet({ card = null, item = null, onClose, onDone }) {
             <label className="radio-row"><input type="radio" name="wish-any" checked={!any} onChange={() => setAny(false)} /> Only {exactLabel || "this printing"}</label>
           </fieldset>
         )}
-        <QtyStepper label="Copies wanted" value={qty} max={99} onChange={setQty} />
+        <Stepper big label="Copies wanted" value={qty} max={99} onChange={setQty} />
         <div className="field">
           <label htmlFor="wish-finish">Finish</label>
           <select id="wish-finish" className="select" value={finish} onChange={(e) => setFinish(e.target.value)}>

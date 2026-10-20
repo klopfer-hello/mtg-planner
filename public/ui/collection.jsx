@@ -611,10 +611,9 @@ function BulkMoveSheet({ items, group, binder, guarded, onClose, onDone }) {
   const what = plural(items.length, group === "card" ? "card" : "printing");
   return (
     <MoveSheet title={`Move ${what}`} exclude={scoped ? binder : null} submitLabel="Move" onClose={onClose}
-      intro={<span className="small muted" style={{ overflowWrap: "anywhere" }}>{items.slice(0, 6).map((i) => i.name).join(", ")}{items.length > 6 ? ` and ${items.length - 6} more` : ""}</span>}
+      intro={<span className="small muted" style={{ overflowWrap: "anywhere" }}>{selectionNames(items)}</span>}
       onMove={async ({ to_binder, create }) => {
-        const from = scoped && binder != null ? { from_binder: binder } : {};
-        const list = items.map((i) => (group === "card" && i.oracle_id ? { oracle_id: i.oracle_id, ...from } : { printing_id: i.scryfall_id, ...from }));
+        const list = selectionItems(items, group, scoped ? binder : null);
         const res = await guarded((confirm) => api("/api/collection/move", { method: "POST", json: { items: list, to_binder, create, confirm_master: confirm } }));
         if (!res) return false;
         onDone(res);

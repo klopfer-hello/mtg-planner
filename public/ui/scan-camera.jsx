@@ -18,7 +18,6 @@ const CONDITIONS = [
   ["mint", "Mint", "M"], ["near_mint", "Near Mint", "NM"], ["excellent", "Excellent", "EX"], ["good", "Good", "GD"],
   ["light_played", "Light Played", "LP"], ["played", "Played", "PL"], ["poor", "Poor", "PR"],
 ];
-const BOARDS = [["main", "Main deck"], ["side", "Sideboard"], ["commander", "Commander"], ["maybe", "Maybeboard"]];
 const FINISH_LABEL = { nonfoil: "Non-foil", foil: "Foil", etched: "Etched" };
 const STATUS_LABEL = { auto: "✓ matched", suggest: "? confirm", review: "✗ pick", failed: "✗ unknown", duplicate: "= same as last" };
 const STATUS_COLOR = { auto: "#62d18d", suggest: "#f0c062", duplicate: "#f0c062", review: "#ff8274", failed: "#ff8274", error: "#ff8274" };

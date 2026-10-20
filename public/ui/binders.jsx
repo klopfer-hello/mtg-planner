@@ -826,14 +826,7 @@ function MoveSheet({ title, intro, maxQty = null, exclude = null, children, subm
       <form className="stack" onSubmit={submit}>
         {intro}
         {maxQty != null && maxQty > 1 && (
-          <div className="row between">
-            <span className="label">Copies to move</span>
-            <div className="stepper" role="group" aria-label="Copies to move">
-              <button type="button" aria-label="One less" disabled={qty <= 1} onClick={() => setQty(qty - 1)} style={{ width: 44, height: 44 }}><Icon.minus /></button>
-              <output aria-live="polite">{qty}</output>
-              <button type="button" aria-label="One more" disabled={qty >= maxQty} onClick={() => setQty(qty + 1)} style={{ width: 44, height: 44 }}><Icon.plus /></button>
-            </div>
-          </div>
+          <Stepper big label="Copies to move" value={qty} max={maxQty} onChange={setQty} />
         )}
         {children}
         <fieldset className="stack" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>

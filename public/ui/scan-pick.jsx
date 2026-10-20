@@ -360,7 +360,7 @@ function CommitSheet({ ids, onClose, onDone }) {
             <div className="field">
               <label htmlFor="commit-board">Board</label>
               <select id="commit-board" className="select" value={board} onChange={(e) => setBoard(e.target.value)}>
-                {BOARDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                {["main", "side", "commander", "maybe"].map((k) => <option key={k} value={k}>{BOARD_LABEL[k]}</option>)}
               </select>
             </div>
             <p className="small muted" style={{ margin: 0 }}>Deck cards are added to the deck list; they don't change your binders.</p>
