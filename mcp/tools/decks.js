@@ -3,14 +3,14 @@
 // update_deck_notes (actor claude, kept in the deck history).
 
 import { BOARDS, DECK_STATUSES, DeckError } from "../../lib/deckrules.js";
-import { bracketVerdict, deckPower, draftDeck, powerLines } from "../../lib/deckpower.js";
+import { bracketVerdict, evaluateDraft, powerLines } from "../../lib/deckpower.js";
 import { DECK_NOTES_MAX, setDeckNotes } from "../../lib/deckedit.js";
 import { deckDetail, findDeck, listDecks, saveDeck, shoppingList } from "../../lib/decks.js";
 import { deckToText } from "../../lib/decktext.js";
 import { wishlistShopping } from "../../lib/wishlist.js";
 import { deckVersion, listDeckVersions } from "../../lib/deckhistory.js";
 import { guideMeta } from "../../lib/deckguide.js";
-import { accessoriesForRows, accessoriesText, ensureAccessoryData } from "../../lib/accessories.js";
+import { accessoriesText, ensureAccessoryData } from "../../lib/accessories.js";
 import { COMBO_WAIT_MS, combos, getDb } from "../context.js";
 import { deckLine, int, ToolError } from "../format.js";
 
@@ -334,15 +334,12 @@ async function evaluateDeckTool(args) {
   const items = hasText ? null : cardItems(args.cards);
   const commander = Array.isArray(args.commander) ? args.commander.slice(0, 2).map(String) : args.commander != null ? String(args.commander) : null;
   const d = getDb();
-  const draft = await draftDeck(d, { text: hasText ? args.decklist : null, items, format: args.format ? String(args.format) : null, commander });
+  const { draft, accessories: acc, ...p } = await evaluateDraft(d, { text: hasText ? args.decklist : null, items, format: args.format ? String(args.format) : null, commander }, {
+    evaluate: (request, opts) => combos().evaluate(request, opts), waitMs: COMBO_WAIT_MS,
+  });
   if (!draft.rows.length) {
     throw new ToolError(`No cards recognised${draft.parse_errors.length ? ` (e.g. "${draft.parse_errors[0]}")` : ""}.`);
   }
-  const view = draft.request ? await combos().evaluate(draft.request, { waitMs: COMBO_WAIT_MS }) : undefined;
-  const p = deckPower(d, draft.deck, draft.rows, { combos: view });
-  await ensureAccessoryData(d, draft.rows, { timeoutMs: COMBO_WAIT_MS });
-  const acc = accessoriesForRows(d, draft.rows.map(({ all_parts: _p, ...r }) => r));
-  if (acc.fetch_ids.length) acc.status = "unavailable";
   const counts = BOARDS.map((b) => `${b} ${draft.rows.filter((r) => r.board === b).reduce((a, r) => a + r.quantity, 0)}`).join(", ");
   const lines = [`Draft${draft.deck.format ? ` [${draft.deck.format}]` : ""} (not saved): ${counts}.${p.power.commander ? "" : " Not a Commander deck: stats only (no bracket or score)."}`];
   if (draft.unresolved.length) lines.push(`Not found on Scryfall (check spelling; left out of the checks): ${draft.unresolved.join("; ")}`);
