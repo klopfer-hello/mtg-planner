@@ -9,7 +9,7 @@ import { EXPORT_FORMATS, exportCollection } from "../../lib/collectionexport.js"
 import { cardPrice, setAppMeta, stats } from "../../lib/db.js";
 import { cardUsage } from "../../lib/allocation.js";
 import { eurForFinish } from "../../lib/prices.js";
-import { deleteCopies, editCopies, listEdits, relanguageScans, undoEdit } from "../../lib/edits.js";
+import { deleteCopies, editCopies, listEdits, undoEdit } from "../../lib/edits.js";
 import { addCardList, resolveCardList } from "../../lib/listimport.js";
 import { IMPORT_MODES, importManaBoxCsv, refreshOwnedCards } from "../../lib/manabox.js";
 import { QUERY_HELP, SECTION_BYS, collectionSections, searchCollection } from "../../lib/query.js";
@@ -197,12 +197,6 @@ export function collectionRoutes(router, app) {
   });
   router.get("/api/collection/edits", ({ query }) => ({ edits: listEdits(app.db, { limit: query.get("limit") || 50 }) }));
   router.post("/api/collection/edits/:id(\\d+)/undo", ({ params }) => app.exclusive(async () => undoEdit(app.db, Number(params.id))));
-
-  router.post("/api/maintenance/relanguage-scans", async ({ req }) => {
-    const body = await readJson(req);
-    const dryRun = body.dry_run === undefined ? true : body.dry_run;
-    return app.exclusive(() => relanguageScans(app.db, { scan_ids: body.scan_ids, dry_run: dryRun }, { getPrinting: scanner.printingLookup() }));
-  });
 
   router.post("/api/refresh-prices", async () => {
     const result = await app.exclusive(() => refreshOwnedCards(app.db).catch(throwImportError));

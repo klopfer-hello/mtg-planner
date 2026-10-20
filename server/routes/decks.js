@@ -299,8 +299,7 @@ export function deckRoutes(router, app) {
 
   router.get(`/api/decks/${ID}/export`, ({ res, params }) => {
     const detail = getDeckOr404(Number(params.id));
-    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Disposition": attachment(detail.name, "txt", "deck"), "Cache-Control": "no-store" });
-    res.end(exportDeck(detail));
+    return sendTextFile(res, detail.name, exportDeck(detail));
   });
 
   router.get(`/api/decks/${ID}`, ({ params }) => getDeckOr404(Number(params.id)));

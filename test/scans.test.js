@@ -436,7 +436,6 @@ describe("binders and ManaBox replace", () => {
     assert.throws(() => renameBinder(ctx.db, "Nope", "X"), (e) => e.status === 404);
     assert.throws(() => renameBinder(ctx.db, "Trade", "Tausch"), (e) => e.status === 409 && e.extra?.code === "confirm_master",
       "moving ManaBox rows needs the one-time master confirmation");
-    assert.throws(() => deleteBinder(ctx.db, "Trade", { source: "scan" }), (e) => e.status === 400);
     assert.deepEqual(flat().map((b) => [b.name, b.copies, b.sources.join("+")]), [["Trade", 4, "manabox+scan"], ["", 1, "manabox"]]);
   });
 

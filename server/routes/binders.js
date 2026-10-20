@@ -29,12 +29,10 @@ export function binderRoutes(router, app) {
       return props ? { ...setBinderProps(app.db, r.name, body), renamed: r.renamed, merged: r.merged, converted_copies: r.converted_copies } : r;
     });
   });
-  // ?cards=unsort|delete. The legacy ?source=scan (unlogged delete of the scanned rows) answers 400.
+  // ?cards=unsort|delete.
   router.delete("/api/binders/:name(.+)", ({ params, query }) => {
     const name = decodeParam(params.name, "Bad binder name");
-    const opts = query.has("source")
-      ? { source: query.get("source") }
-      : { cards: query.get("cards") || "unsort", confirm_master: query.get("confirm_master") === "1" };
+    const opts = { cards: query.get("cards") || "unsort", confirm_master: query.get("confirm_master") === "1" };
     return app.exclusive(async () => deleteBinder(app.db, name, opts));
   });
 }

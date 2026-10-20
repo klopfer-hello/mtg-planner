@@ -1,17 +1,18 @@
 // lib/edits.js: editing / deleting owned copies (splits, merges, ManaBox rows and
 // the collection master), the edit log with exact undo and conflict detection,
-// deck allocation after edits, what ManaBox imports do afterwards, the scan
-// relanguage data fix, and migration v8 from a v7 database with data.
+// deck allocation after edits, what ManaBox imports do afterwards, old
+// relanguage log entries, and migration v8 from a v7 database with data.
 // Scryfall is stubbed; no network.
 
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_VERSION, openDb, setAppMeta, upsertCards } from "../lib/db.js";
+import { SCHEMA_VERSION, openDb, setAppMeta, transaction, upsertCards } from "../lib/db.js";
+import { tracker, writeLog } from "../lib/editlog.js";
 import { collectionMaster, deleteBinder, listBinders, moveCopies, setCollectionMaster } from "../lib/binders.js";
 import { deckDetail, saveDeckRows } from "../lib/decks.js";
 import { importManaBoxCsv } from "../lib/manabox.js";
-import { deleteCopies, editCopies, listEdits, relanguageScans, undoEdit } from "../lib/edits.js";
+import { deleteCopies, editCopies, listEdits, undoEdit } from "../lib/edits.js";
 import { normalizeCard } from "../lib/scryfall.js";
 import { commitScans } from "../lib/scancommit.js";
 import { ID, SCRYFALL_CARDS, seedCards, stubScryfall, tempDb } from "./fixtures.js";
@@ -645,81 +646,37 @@ describe("ManaBox imports after edits / deletes", () => {
   });
 });
 
-describe("relanguageScans", () => {
-  const BOLT_IT_ROW = normalizeCard(BOLT_IT);
+describe("legacy relanguage entries", () => {
   const now = new Date().toISOString();
-  function scan(id, o = {}) {
+
+  test("stay undoable: the copies and the scans' stored printing and updated_at come back", () => {
+    upsertCards(ctx.db, [normalizeCard(BOLT_IT)]);
+    seed([[ID.lightning, 1, { binder: "Scans" }]]);
     ctx.db.prepare(
       `INSERT INTO scans (id, created_at, updated_at, status, printing_id, store_printing_id, oracle_id, name, finish, condition, quantity,
                           lang_detected, store_lang, committed_at, committed_to)
-       VALUES (?, ?, ?, ?, ?, ?, 'o-bolt', 'Lightning Bolt', 'normal', 'near_mint', ?, 'it', ?, ?, ?)`,
-    ).run(id, now, now, o.status ?? "committed", o.printing_id ?? BOLT_IT.id, o.store ?? ID.lightning, o.quantity ?? 1, o.store_lang ?? "en",
-      now, JSON.stringify(o.to ?? { type: "binder", name: "Scans" }));
-  }
-  const getPrinting = (id) => (id === BOLT_IT.id ? { id, lang: "it", finishes: ["nonfoil", "foil"] } : null);
-
-  test("dry run reports, apply moves exactly the scans' copies, re-run is a no-op, undo restores", async () => {
-    // 3 copies in the binder: 2 from the Italian scans 86/87, 1 a genuinely English scan (88).
-    seed([[ID.lightning, 3, { binder: "Scans" }], [ID.sol, 1, { binder: "Scans" }]]);
-    scan(86); scan(87); scan(88, { printing_id: ID.lightning });
-    scan(89, { status: "staged" });
+       VALUES (5, ?, '2026-01-01T00:00:00.000Z', 'committed', ?, ?, 'o-bolt', 'Lightning Bolt', 'normal', 'near_mint', 1, 'it', 'en', ?, ?)`,
+    ).run(now, BOLT_IT.id, ID.lightning, now, JSON.stringify({ type: "binder", name: "Scans" }));
     const before = all();
-    const dry = await relanguageScans(ctx.db, { scan_ids: [86, 87, 88, 89, 90] }, { getPrinting, fetchCards: noFetch });
-    assert.equal(dry.applied, false);
-    assert.deepEqual(dry.changes.map((c) => [c.scan_id, c.from, c.to, c.copies, c.binder]), [
-      [86, { scryfall_id: ID.lightning, language: "en" }, { scryfall_id: BOLT_IT.id, language: "it" }, 1, "Scans"],
-      [87, { scryfall_id: ID.lightning, language: "en" }, { scryfall_id: BOLT_IT.id, language: "it" }, 1, "Scans"],
-    ]);
-    assert.deepEqual(dry.skipped.map((s) => [s.scan_id, s.reason]), [
-      [88, "stored as detected"], [89, "not committed"], [90, "scan not found"],
-    ]);
-    assert.deepEqual(all(), before, "dry run changes nothing");
-
-    const run = await relanguageScans(ctx.db, { scan_ids: [86, 87], dry_run: false }, { getPrinting, fetchCards: fetchPool([BOLT_IT]) });
-    assert.equal(run.applied, true);
-    assert.ok(run.edit_id);
-    assert.deepEqual(keys(), ["01/normal/en/near_mint/Scans/scan=1", "02/normal/en/near_mint/Scans/scan=1", "a1/normal/it/near_mint/Scans/scan=2"]);
-    assert.deepEqual(ctx.db.prepare("SELECT store_printing_id, store_lang FROM scans WHERE id IN (86, 87)").all().map((r) => [r.store_printing_id, r.store_lang]),
-      [[BOLT_IT.id, "it"], [BOLT_IT.id, "it"]]);
+    // What the removed data fix wrote: the scan's copy moved to the detected (Italian) printing.
+    const editId = transaction(ctx.db, () => {
+      const t = tracker(ctx.db);
+      const row = ctx.db.prepare("SELECT * FROM collection WHERE scryfall_id = ?").get(ID.lightning);
+      t.touch(row);
+      t.touch({ ...row, scryfall_id: BOLT_IT.id, language: "it" });
+      ctx.db.prepare("UPDATE collection SET scryfall_id = ?, language = 'it' WHERE id = ?").run(BOLT_IT.id, row.id);
+      ctx.db.prepare("UPDATE scans SET store_printing_id = ?, store_lang = 'it', updated_at = ? WHERE id = 5").run(BOLT_IT.id, now);
+      return writeLog(ctx.db, {
+        kind: "relanguage", actor: "maintenance", summary: "Stored 1 scanned copy (1 scan) in the scanned language (IT)", copies: 1, rows: t.finish(),
+        scans: [{ id: 5, before: { store_printing_id: ID.lightning, store_lang: "en", updated_at: "2026-01-01T00:00:00.000Z" }, after: { store_printing_id: BOLT_IT.id, store_lang: "it" } }],
+      });
+    });
     const [log] = listEdits(ctx.db);
-    assert.deepEqual([log.kind, log.actor, log.copies], ["relanguage", "maintenance", 2]);
-    // Running it again touches nothing (the English scan's copy stays English).
-    const again = await relanguageScans(ctx.db, { scan_ids: [86, 87], dry_run: false }, { getPrinting, fetchCards: noFetch });
-    assert.equal(again.applied, false);
-    assert.deepEqual(again.changes, []);
-    undoEdit(ctx.db, run.edit_id);
+    assert.deepEqual([log.id, log.kind, log.actor, log.undoable], [editId, "relanguage", "maintenance", true]);
+    undoEdit(ctx.db, editId);
     assert.deepEqual(all(), before);
-    assert.deepEqual({ ...ctx.db.prepare("SELECT store_printing_id, store_lang FROM scans WHERE id = 86").get() }, { store_printing_id: ID.lightning, store_lang: "en" });
-  });
-
-  test("skips scans whose copies are gone; the language falls back to the cards row / scan", async () => {
-    upsertCards(ctx.db, [BOLT_IT_ROW]);
-    seed([[ID.lightning, 1, { binder: "Scans" }]]);
-    scan(1, { quantity: 2 });
-    const r = await relanguageScans(ctx.db, { scan_ids: [1] }, {});
-    assert.deepEqual(r.changes, []);
-    assert.match(r.skipped[0].reason, /no longer in "Scans"/);
-    // A deck commit that recorded the binder of its owned copies is fixed there.
-    seed([[ID.lightning, 1, { binder: "Deck" }]]);
-    scan(2, { to: { type: "deck", id: 1, name: "Deck", board: "main", owned: true, binder: "Deck" } });
-    const d = await relanguageScans(ctx.db, { scan_ids: [2], dry_run: false }, { fetchCards: noFetch });
-    assert.equal(d.applied, true);
-    assert.deepEqual(d.changes[0].to, { scryfall_id: BOLT_IT.id, language: "it" });
-  });
-
-  test("deck commits without owned copies (or older ones that don't say) never touch a same-named binder", async () => {
-    upsertCards(ctx.db, [BOLT_IT_ROW]);
-    // A genuinely English copy in binder "X" from another scan.
-    seed([[ID.lightning, 1, { binder: "X" }]]);
-    scan(1, { to: { type: "deck", id: 1, name: "X", board: "main", owned: false, binder: null } });
-    scan(2, { to: { type: "deck", id: 1, name: "X", board: "main" } });
-    const before = all();
-    const r = await relanguageScans(ctx.db, { scan_ids: [1, 2], dry_run: false }, { fetchCards: noFetch });
-    assert.equal(r.applied, false);
-    assert.deepEqual(r.skipped.map((s) => [s.scan_id, s.reason]), [
-      [1, "deck commit without owned copies"], [2, "deck commit (binder of its copies not recorded)"],
-    ]);
-    assert.deepEqual(all(), before);
+    assert.deepEqual({ ...ctx.db.prepare("SELECT store_printing_id, store_lang, updated_at FROM scans WHERE id = 5").get() },
+      { store_printing_id: ID.lightning, store_lang: "en", updated_at: "2026-01-01T00:00:00.000Z" });
   });
 
   test("commitScans records owned + binder for deck targets", async () => {
@@ -738,22 +695,6 @@ describe("relanguageScans", () => {
       assert.equal(to(12).owned, true);
       assert.equal(to(12).binder, "Burn");
     } finally { stub.restore(); }
-  });
-
-  test("undo restores the scans' updated_at", async () => {
-    seed([[ID.lightning, 1, { binder: "Scans" }]]);
-    scan(5);
-    ctx.db.prepare("UPDATE scans SET updated_at = '2026-01-01T00:00:00.000Z' WHERE id = 5").run();
-    const run = await relanguageScans(ctx.db, { scan_ids: [5], dry_run: false }, { getPrinting, fetchCards: fetchPool([BOLT_IT]) });
-    assert.notEqual(ctx.db.prepare("SELECT updated_at FROM scans WHERE id = 5").get().updated_at, "2026-01-01T00:00:00.000Z");
-    undoEdit(ctx.db, run.edit_id);
-    assert.equal(ctx.db.prepare("SELECT updated_at FROM scans WHERE id = 5").get().updated_at, "2026-01-01T00:00:00.000Z");
-  });
-
-  test("validation", async () => {
-    for (const body of [{}, { scan_ids: [] }, { scan_ids: ["x"] }, { scan_ids: [1], dry_run: "no" }]) {
-      await assert.rejects(relanguageScans(ctx.db, body), err(400), JSON.stringify(body));
-    }
   });
 });
 
