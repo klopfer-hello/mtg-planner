@@ -35,6 +35,7 @@ import { getPrinting, openIndex } from "./lib/cardindex.js";
 import { fetchCollectionPolitely } from "./lib/manabox.js";
 import { WishlistError, addWishlistItem, listWishlist, wishlistShopping } from "./lib/wishlist.js";
 import { deckVersion, listDeckVersions } from "./lib/deckhistory.js";
+import { guideMeta } from "./lib/deckguide.js";
 import { accessoriesForRows, accessoriesText, ensureAccessoryData } from "./lib/accessories.js";
 
 const VERSION = process.env.APP_VERSION || "dev";
@@ -833,6 +834,19 @@ function withExtrasStatus(detail) {
   return detail;
 }
 
+/**
+ * The deck guide line for get_deck: the app writes beginner guides (Decks → deck → Guide, also as PDF);
+ * Claude can point the user there instead of writing a long play guide into the chat.
+ */
+function guideLine(d, deckId) {
+  let g = null;
+  try { g = guideMeta(d, deckId); } catch { g = null; } // an older database without deck_guides
+  if (!g) return "Deck guide: none yet. The user can make one in the app (Decks → this deck → Guide → Write the guide; also as a PDF).";
+  const kind = g.kind === "facts" ? " (facts only, no strategy part)" : "";
+  const stale = g.stale ? ", the deck changed since (Write it again updates it)" : "";
+  return `Deck guide: written ${String(g.created_at).slice(0, 10)}${kind}${stale}. The user opens it on the deck page (Guide, or PDF).`;
+}
+
 async function getDeck(args) {
   const d = getDb();
   const target = targetBracket(args.target_bracket);
@@ -842,7 +856,7 @@ async function getDeck(args) {
     throw new ToolError(`No deck matches "${args.deck}".${names.length ? `\nDecks:\n${names.join("\n")}` : " The user has no decks."}`);
   }
   const detail = await detailWithCombos(d, deck.id);
-  const text = deckToText(detail);
+  const text = `${deckToText(detail)}\n${guideLine(d, deck.id)}`;
   return target ? `${text}\n\n${bracketVerdict(detail.power, target)}` : text;
 }
 

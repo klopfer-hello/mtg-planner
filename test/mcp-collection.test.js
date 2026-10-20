@@ -188,6 +188,10 @@ describe("mcp-collection.js", () => {
     assert.match(res.text, /Updated the notes of deck #\d+ "Notes deck"/);
     const shown = await mcp.call("get_deck", { deck: id });
     assert.ok(shown.text.includes(NOTES), shown.text);
+    assert.match(shown.text, /Deck guide: none yet\. The user can make one in the app/);
+    const v = ctx.db.prepare("SELECT MAX(id) AS v FROM deck_versions WHERE deck_id = ?").get(id).v;
+    ctx.db.prepare("INSERT INTO deck_guides (deck_id, created_at, deck_version_id, kind, data) VALUES (?, '2026-10-20T10:00:00Z', ?, 'facts', '{}')").run(id, v);
+    assert.match((await mcp.call("get_deck", { deck: id })).text, /Deck guide: written 2026-10-20 \(facts only, no strategy part\)\. The user opens it/);
     assert.match(shown.text, /Sol Ring/);
     assert.match((await mcp.call("update_deck_notes", { deck: id, notes: NOTES })).text, /unchanged/);
     assert.match((await mcp.call("update_deck_notes", { deck: id, notes: "" })).text, /Cleared the notes/);
