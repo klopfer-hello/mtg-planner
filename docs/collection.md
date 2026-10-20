@@ -8,6 +8,7 @@ of your collection, how to edit copies, and the search syntax.
 - [Binders](#binders)
 - [The collection master](#the-collection-master)
 - [Editing owned copies](#editing-owned-copies)
+- [Sets](#sets)
 - [Exporting](#exporting)
 - [Search syntax](#search-syntax)
 - [API](#api)
@@ -183,6 +184,25 @@ A card's details list every owned copy with **Move… / Edit… / Delete…**:
 - Claude's `edit_copies` tool uses the same edits (logged with Claude as the
   author, undoable the same way); it cannot delete.
 
+## Sets
+
+**Binders → Sets** shows every set you own cards of and how complete it is.
+
+- A set counts **different cards**: any printing or language of a card from
+  that set counts once. A borderless or showcase version of a card you own is
+  not "missing". Tokens and art cards don't count.
+- Each set shows *owned / all cards*, a bar, and roughly what the missing cards
+  would cost (the cheapest € printing of each in that set).
+- Sort by newest, most complete, name or cheapest to finish; the search box
+  finds a set by name or code.
+- Tap a set for its checklist: **All**, **Missing**, **Owned**. An owned card
+  opens its details. A missing card shows its picture, price and copies you own
+  from *other* sets, with **Wishlist** and **Add to deck**.
+- Special sets (memorabilia, mini games) are hidden; **Show … too** lists them.
+
+The card lists come from the card index (Settings → Scanner & data): sets
+released after its last refresh appear after the next nightly update.
+
 ## Exporting
 
 **Settings → Collection → Export collection** downloads every copy you own as
@@ -258,6 +278,8 @@ same-origin request.
 | `PATCH /api/binders/:name {name?, type?, cover_scryfall_id?, deck_id?, locked?, favorite?, confirm_master?}` | rename (merging into an existing binder; type, cover, lock and favourite come along); `favorite` true / false (400 for Unsorted); `locked` true / false, null = automatic (400 otherwise, also for Unsorted); `type` null = automatic; `cover_scryfall_id` must be a printing in the binder, null = most valuable card; `deck_id` links the deck that owns this box (sets that deck's `box_binder`, clears any other deck's link to this binder and the deck's previous box; null unlinks; 400 not an id, 404 no such deck) |
 | `DELETE /api/binders/:name?cards=unsort\|delete&confirm_master=1` | delete; `unsort` (default) moves the cards to Unsorted, `delete` deletes them (logged in the edit log, undoable) |
 | `POST /api/collection/move` | `{items, to_binder, create?, confirm_master?}`; an item is `{scryfall_id, finish, language, condition, binder, source?, quantity}` (copies of one row key), `{oracle_id, from_binder?}` (every copy of a card) or `{printing_id, from_binder?}` (every copy of a printing); `to_binder: ""` is Unsorted |
+| `GET /api/sets?all=1` | `{sets: [{code, name, set_type, parent_set_code, released_at, cards, owned, missing, pct, missing_eur, unpriced, copies}], hidden}`: sets with at least one owned card, newest first; `cards` = distinct cards (oracle ids) of the set without tokens/art cards; `owned` = of those you own in any printing/language of the set; `missing_eur` = cheapest English EUR printing per missing card (`unpriced` without one); memorabilia/minigame/vanguard/token sets only with `all=1` (`hidden` = how many were left out); 503 without a card index |
+| `GET /api/sets/:code` | `{set, cards: [{oracle_id, name, rarity, eur, id, image_small, collector_number, printings, owned, langs, finishes, owned_id, elsewhere}], totals: {cards, owned, missing, missing_eur, unpriced, pct}}` sorted by number; `id` = the cheapest English printing, `owned_id` = an owned printing (card sheet), `elsewhere` = copies owned from other sets; 404 unknown set |
 | `GET /api/collection/export?format=manabox\|csv&binder=` | CSV download of the owned copies (all sources; `binder` as below, omitted = all); `manabox` (default) = ManaBox's export columns, read back by the importer; `csv` = name, set, set_name, collector_number, finish, language, condition, binder, quantity, price_eur, value_eur, source, scryfall_id; 400 for another format |
 | `GET /api/collection?binder=` | the collection list filtered by exact binder (`binder=` = Unsorted); `section_by=set\|color\|rarity\|type&section=<key>` = one section |
 | `GET /api/collection/sections?by=set\|color\|rarity\|type&q&group&binder` | `{by, sections: [{key, label, cards, copies, value_eur}]}` for the same view as `/api/collection` |

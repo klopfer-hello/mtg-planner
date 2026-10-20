@@ -1025,6 +1025,29 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 .binder-row .type-select { width: auto; min-height: 40px; font-size: .88rem; }
 /* Binder overview: a compact list on phones (thumb, name, copies · value), tiles on desktop. */
 .binder-group-h { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 800; margin: 0 2px; }
+.set-list { display: grid; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; min-width: 0; }
+.set-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; width: 100%; text-align: left;
+  appearance: none; border: 0; background: none; padding: 12px 14px; cursor: pointer; border-top: 1px solid var(--border); color: inherit; font: inherit; min-height: 56px; }
+.set-row:first-child { border-top: 0; }
+.set-row:hover { background: var(--surface-2); }
+.set-row .nm { font-weight: 600; overflow-wrap: anywhere; }
+.set-row .sub { grid-column: 1 / -1; font-size: .8rem; color: var(--muted); }
+.set-row .pct, .set-sum .pct { font-variant-numeric: tabular-nums; font-weight: 700; }
+.set-bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.set-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.set-bar.done > span { background: var(--ok); }
+.set-card { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; width: 100%; text-align: left;
+  appearance: none; border: 0; background: none; padding: 8px 12px; min-height: 48px; cursor: pointer; color: inherit; font: inherit; border-top: 1px solid var(--border); }
+.set-list > :first-child { border-top: 0; }
+.set-card:hover { background: var(--surface-2); }
+.set-card .cn { color: var(--muted); font-variant-numeric: tabular-nums; font-size: .85rem; overflow-wrap: anywhere; }
+.set-card .nm { min-width: 0; overflow-wrap: anywhere; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.set-card.missing .nm b { font-weight: 500; color: var(--muted); }
+.set-card .end { display: flex; gap: 8px; align-items: center; font-size: .85rem; font-variant-numeric: tabular-nums; }
+.set-card .note { grid-column: 2 / -1; font-size: .78rem; color: var(--muted); }
+.set-peek { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; padding: 8px 12px 14px 56px; border-top: 1px dashed var(--border); }
+.set-peek img { width: 110px; border-radius: 6px; }
+@media (max-width: 400px) { .set-peek { padding-left: 12px; } }
 .binder-grid { display: grid; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; min-width: 0; }
 .binder-entry {
   appearance: none; border: 0; border-top: 1px solid var(--border); background: none; color: inherit; text-align: left; cursor: pointer; width: 100%;
@@ -2096,6 +2119,8 @@ function parseCollectionRoute(hash) {
   if (parts[0] !== "collection") return null;
   const withQ = (r) => (q ? { ...r, q } : r);
   if (parts[1] === "all") return withQ({ view: "all" });
+  if (parts[1] === "sets") return { view: "sets" };
+  if (parts[1] === "set" && /^[a-z0-9]{2,8}$/i.test(parts[2] || "")) return { view: "set", code: parts[2].toLowerCase() };
   if (parts[1] === "unsorted") return withQ({ view: "binder", binder: "" });
   if (parts[1] === "binder" && parts.length > 2) {
     try { return withQ({ view: "binder", binder: decodeURIComponent(parts.slice(2).join("/")) }); } catch { /* bad escape */ }
@@ -2103,6 +2128,8 @@ function parseCollectionRoute(hash) {
   return { view: "overview" };
 }
 const collectionHash = (r) => (r.view === "all" ? "#collection/all"
+  : r.view === "sets" ? "#collection/sets"
+  : r.view === "set" ? `#collection/set/${r.code}`
   : r.view === "binder" ? (r.binder ? `#collection/binder/${encodeURIComponent(r.binder)}` : "#collection/unsorted")
   : "#collection") + (r.q && r.view !== "overview" ? `?q=${encodeURIComponent(r.q)}` : "");
 /** Change the hash (push, or replace keeping the history state) and tell the listeners. */
@@ -2161,6 +2188,8 @@ function CollectionTab({ dataVersion, homeKey = 0, onOpenCard, onOpenDeck, onGoI
   if (route.view === "overview") {
     return <BinderOverview list={binderList} onOpen={open} onGoImport={onGoImport} onGoScan={onGoScan} onChanged={onChanged} />;
   }
+  if (route.view === "sets") return <SetsView key="sets" dataVersion={dataVersion} onOpen={open} onBack={back} />;
+  if (route.view === "set") return <SetView key={route.code} code={route.code} dataVersion={dataVersion} onBack={back} onOpenCard={onOpenCard} onChanged={onChanged} />;
   if (route.view === "binder" && !entry) {
     return binderList.error ? <ErrorNotice error={`Could not load binders: ${binderList.error}`} onRetry={binderList.reload} /> : <Spinner />;
   }
@@ -8157,6 +8186,163 @@ function BinderEntry({ name, label = name, cover, copies, value, badge = null, l
  * Collection tab start page: All cards, Unsorted (when it holds copies) and one entry per
  * binder (cover, copies · value), grouped by type. Phones: a compact list; desktop: tiles.
  */
+const SET_SORTS = [["new", "Newest"], ["pct", "Most complete"], ["name", "Name"], ["cost", "Cheapest to finish"]];
+const RARITY_LETTER = { common: "C", uncommon: "U", rare: "R", mythic: "M", special: "S", bonus: "B" };
+
+/** Binders → Sets: every set you own cards of, how complete it is and what the rest would cost (GET /api/sets). */
+// Last /api/sets answer per "all" switch (the count takes ~1 s on the server): Back shows it at once, a fresh one replaces it.
+const setsCache = new Map();
+function SetsView({ dataVersion, onOpen, onBack }) {
+  const [all, setAll] = useState(false);
+  const [data, setData] = useState(() => setsCache.get(0) ?? null);
+  const [error, setError] = useState(null);
+  const [reloadKey, reload] = useReducer((x) => x + 1, 0);
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState(() => String(store.get("mtg.sets.sort", "new")));
+  useEffect(() => { store.set("mtg.sets.sort", sort); }, [sort]);
+  useEffect(() => {
+    let live = true;
+    setError(null);
+    const key = all ? 1 : 0;
+    if (setsCache.has(key)) setData(setsCache.get(key));
+    api(`/api/sets${all ? "?all=1" : ""}`).then((d) => { setsCache.set(key, d); if (live) setData(d); }).catch((e) => { if (live) setError(e.message); });
+    return () => { live = false; };
+  }, [all, dataVersion, reloadKey]);
+  const needle = q.trim().toLowerCase();
+  const sets = asList(data?.sets).filter((x) => !needle || x.name.toLowerCase().includes(needle) || x.code === needle);
+  const sorted = [...sets].sort(sort === "pct" ? (a, b) => b.pct - a.pct || b.owned - a.owned
+    : sort === "name" ? (a, b) => a.name.localeCompare(b.name)
+    : sort === "cost" ? (a, b) => (a.missing_eur - b.missing_eur) || b.pct - a.pct
+    : () => 0);
+  return (
+    <div className="stack-lg">
+      <div>
+        <button type="button" className="btn ghost" onClick={onBack} style={{ marginLeft: -8 }}><Icon.back /> Binders</button>
+      </div>
+      <div className="row between">
+        <h2>Sets</h2>
+        <ShareButton title="Sets" hash="#collection/sets" />
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>How many different cards of each set you own, in any printing or language of that set. Tokens and art cards don't count.</p>
+      <div className="row" style={{ gap: 8 }}>
+        <div className="search grow" style={{ flexBasis: 180 }}>
+          <Icon.search />
+          <input className="input" type="search" placeholder="Find a set…" aria-label="Find a set" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <label className="sr-only" htmlFor="sets-sort">Sort sets</label>
+        <select id="sets-sort" className="select" style={{ width: "auto" }} value={sort} onChange={(e) => setSort(e.target.value)}>
+          {SET_SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </div>
+      {error && <ErrorNotice error={`Could not load the sets: ${error}`} onRetry={reload} />}
+      {!data && !error && <Spinner label="Counting your sets…" />}
+      {data && !sorted.length && <div className="empty"><h3>{needle ? "No set matches" : "No sets yet"}</h3></div>}
+      {sorted.length > 0 && (
+        <div className="set-list">
+          {sorted.map((x) => (
+            <button key={x.code} type="button" className="set-row" onClick={() => onOpen({ view: "set", code: x.code })}
+              aria-label={`${x.name}: ${x.owned} of ${x.cards} cards`}>
+              <span className="nm">{x.name}</span>
+              <span className="pct">{x.owned}/{x.cards}</span>
+              <span className={`set-bar${x.owned === x.cards ? " done" : ""}`} aria-hidden="true"><span style={{ width: `${Math.min(100, x.pct)}%` }} /></span>
+              <span className="sub">{x.code.toUpperCase()}{x.released_at ? ` · ${x.released_at.slice(0, 4)}` : ""} · {x.pct}%{x.missing ? ` · ~${fmtEur(x.missing_eur)} to complete${x.unpriced ? ` (+${x.unpriced} unpriced)` : ""}` : " · complete ✓"}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {data?.hidden > 0 && !all && (
+        <button type="button" className="btn ghost" style={{ justifySelf: "start" }} onClick={() => setAll(true)}>Show {plural(data.hidden, "special set")} too</button>
+      )}
+    </div>
+  );
+}
+
+/** One set's checklist (GET /api/sets/:code): owned cards open the card sheet, missing ones show a peek with ♡ / Add to deck. */
+function SetView({ code, dataVersion, onBack, onOpenCard, onChanged }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [filter, setFilter] = useState(() => String(store.get("mtg.set.filter", "all")));
+  const [peek, setPeek] = useState(null); // oracle_id
+  const [sheet, setSheet] = useState(null); // {kind: wish|deck, card}
+  const [note, setNote] = useState(null);
+  useEffect(() => { store.set("mtg.set.filter", filter); }, [filter]);
+  useEffect(() => {
+    let live = true;
+    setError(null);
+    api(`/api/sets/${encodeURIComponent(code)}`).then((d) => { if (live) setData(d); })
+      .catch((e) => { if (live) setError(e.status === 404 ? "This set is not in the card index." : e.message); });
+    return () => { live = false; };
+  }, [code, dataVersion]);
+  const back = <div><button type="button" className="btn ghost" onClick={onBack} style={{ marginLeft: -8 }}><Icon.back /> Sets</button></div>;
+  if (error) return <div className="stack-lg">{back}<ErrorNotice error={error} /></div>;
+  if (!data) return <div className="stack-lg">{back}<Spinner /></div>;
+  const t = data.totals;
+  const cards = data.cards.filter((c) => (filter === "missing" ? !c.owned : filter === "owned" ? c.owned > 0 : true));
+  const asCard = (c) => ({ scryfall_id: c.id, oracle_id: c.oracle_id, name: c.name, set_code: data.set.code, collector_number: c.collector_number });
+  return (
+    <div className="stack-lg">
+      {back}
+      <div className="row between" style={{ alignItems: "flex-start" }}>
+        <div className="grow" style={{ minWidth: 0 }}>
+          <h2 style={{ overflowWrap: "anywhere" }}>{data.set.name}</h2>
+          <span className="small muted">{data.set.code.toUpperCase()}{data.set.released_at ? ` · ${data.set.released_at.slice(0, 4)}` : ""}</span>
+        </div>
+        <ShareButton title={data.set.name} hash={`#collection/set/${data.set.code}`} />
+      </div>
+      <div className="card stack set-sum" style={{ gap: 8 }}>
+        <div className="row between"><b>{t.owned} of {t.cards} cards</b><span className="pct">{t.pct}%</span></div>
+        <div className={`set-bar${t.owned === t.cards ? " done" : ""}`} aria-hidden="true"><span style={{ width: `${Math.min(100, t.pct)}%` }} /></div>
+        <span className="small muted">{t.missing
+          ? `${plural(t.missing, "card")} missing · ~${fmtEur(t.missing_eur)} to complete (cheapest printings)${t.unpriced ? ` · ${t.unpriced} without a price` : ""}`
+          : "Complete ✓"}</span>
+      </div>
+      <div className="segmented" role="group" aria-label="Show">
+        {[["all", `All ${t.cards}`], ["missing", `Missing ${t.missing}`], ["owned", `Owned ${t.owned}`]].map(([k, l]) => (
+          <button key={k} type="button" aria-pressed={filter === k} onClick={() => setFilter(k)}>{l}</button>
+        ))}
+      </div>
+      {note && <div className="notice ok" role="status"><div className="grow">{note}</div><button type="button" className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setNote(null)}><Icon.close /></button></div>}
+      {cards.length === 0 ? <div className="empty"><h3>{filter === "missing" ? "Nothing missing" : "No cards here"}</h3></div> : (
+        <div className="set-list">
+          {cards.map((c) => {
+            const have = c.owned > 0;
+            const open = peek === c.oracle_id;
+            return (
+              <React.Fragment key={c.oracle_id}>
+                <button type="button" className={`set-card${have ? "" : " missing"}`} aria-expanded={have ? undefined : open}
+                  onClick={() => (have ? onOpenCard(c.owned_id) : setPeek(open ? null : c.oracle_id))}>
+                  <span className="cn">{c.collector_number}</span>
+                  <span className="nm"><b>{c.name}</b>{c.rarity && <span className="badge" title={c.rarity}>{RARITY_LETTER[c.rarity] || c.rarity[0].toUpperCase()}</span>}
+                    {have && c.langs.filter((l) => l !== "en").map((l) => <LangTag key={l} lang={l} />)}</span>
+                  <span className="end">{have ? <span className="badge ok">✓ {c.owned}</span> : <span className="muted">{c.eur != null ? fmtEur(c.eur) : "—"}</span>}</span>
+                  {!have && c.elsewhere > 0 && <span className="note">You own {c.elsewhere} from other sets</span>}
+                </button>
+                {open && (
+                  <div className="set-peek">
+                    {c.image_small ? <img src={c.image_small} alt={c.name} loading="lazy" /> : <span />}
+                    <div className="stack small" style={{ gap: 8, alignContent: "start" }}>
+                      <span>#{c.collector_number}{c.printings > 1 ? ` · ${c.printings} printings in this set` : ""}</span>
+                      <span className="muted">{c.eur != null ? `From ${fmtEur(c.eur)}` : "No € price"}{c.elsewhere > 0 ? ` · you own ${c.elsewhere} from other sets` : ""}</span>
+                      <div className="row" style={{ gap: 6 }}>
+                        <button type="button" className="btn sm" onClick={() => setSheet({ kind: "wish", card: asCard(c) })}><Icon.heart /> Wishlist</button>
+                        <button type="button" className="btn sm" onClick={() => setSheet({ kind: "deck", card: asCard(c) })}><Icon.plus /> Add to deck</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+      )}
+      {sheet?.kind === "wish" && <WishSheet card={sheet.card} onClose={() => setSheet(null)}
+        onDone={(res) => { setSheet(null); setNote(res?.merged ? `On your wishlist: ${res.item.quantity} wanted` : `${sheet.card.name} added to your wishlist`); }} />}
+      {sheet?.kind === "deck" && <AddToDeckSheet card={sheet.card} onClose={() => setSheet(null)}
+        onDone={(res, deck) => { setSheet(null); setNote(`${sheet.card.name} added to ${deck.name}`); onChanged?.(); }} />}
+    </div>
+  );
+}
+
 function BinderOverview({ list, onOpen, onGoImport, onGoScan, onChanged }) {
   const { data, error, reload } = list;
   const [sheet, setSheet] = useState(null); // "new" | "manage"
@@ -8203,6 +8389,7 @@ function BinderOverview({ list, onOpen, onGoImport, onGoScan, onChanged }) {
       <div className="row between">
         <h2>Binders</h2>
         <div className="row" style={{ gap: 6 }}>
+          <button type="button" className="btn" onClick={() => onOpen({ view: "sets" })} disabled={!hasCards}><Icon.grid /> Sets</button>
           <button type="button" className="btn" onClick={() => setSheet("new")}><Icon.plus /> New binder</button>
           <button type="button" className="btn ghost" onClick={() => setSheet("manage")} disabled={!data || !binders.length}><Icon.edit /> Manage</button>
         </div>

@@ -219,6 +219,12 @@ Deck boxes are locked automatically. Details:
 The first time you move ManaBox cards, the app asks **"Organise ManaBox cards
 here?"** Say yes to sort in mtg-planner from now on.
 
+### Sets
+
+Tap **Sets** at the top of the Binders tab. Each set shows how many of its
+cards you own and what the rest would cost. Tap a set, then **Missing**, to
+see what you still need. Tap a missing card for **Wishlist** or **Add to deck**.
+
 ### Search
 
 | Type this | Finds |

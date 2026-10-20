@@ -17,6 +17,7 @@ import { CARD_FACTS_META, IMPORT_MODES, backfillCardFacts, cardFactsPending, imp
 import { accessoriesForRows, createAccessoryFetcher, ensureAccessoryData } from "./lib/accessories.js";
 import { syncEnglishPrices } from "./lib/prices.js";
 import { EXPORT_FORMATS, exportCollection } from "./lib/collectionexport.js";
+import { listSets, setDetail } from "./lib/sets.js";
 import {
   DECK_STATUSES, DeckError, bracketVerdict, buyListText, cardUsage, deckComboRequest, deckDetail, deckPower, draftDeck, eurForFinish, exportDeck, listDecks,
   addDeckCard, bulkDeckCards, normalizeFormat, parseDecklist, saveDeck, setCommander, shoppingList, updateDeckCard,
@@ -1669,6 +1670,17 @@ async function handleApi(req, res, url) {
   }
   if (pathname === "/api/query-help" && method === "GET") return sendJson(res, 200, { help: QUERY_HELP });
   if (pathname === "/api/collection" && method === "GET") return sendJson(res, 200, collectionRows(query));
+  // Set completion (lib/sets.js; the set lists come from the card index through the worker).
+  if (pathname === "/api/sets" && method === "GET") {
+    if (!idx) throw new HttpError(503, "The card index is not ready yet");
+    return sendJson(res, 200, await listSets(db, indexLookup, { all: query.get("all") === "1" }));
+  }
+  if ((m = /^\/api\/sets\/([a-z0-9]{2,8})$/i.exec(pathname)) && method === "GET") {
+    if (!idx) throw new HttpError(503, "The card index is not ready yet");
+    const detail = await setDetail(db, indexLookup, m[1]);
+    if (!detail) throw new HttpError(404, "Unknown set");
+    return sendJson(res, 200, detail);
+  }
   // The owned copies as CSV: ?format=manabox (ManaBox's export layout, default) | csv (plain sheet), ?binder= ('' = Unsorted).
   if (pathname === "/api/collection/export" && method === "GET") {
     const format = query.get("format") || "manabox";

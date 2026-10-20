@@ -99,6 +99,8 @@ More: [how to scan](docs/guide.md#2-scanning) · [docs/scanner.md](docs/scanner.
 ## Your collection
 
 - **Import:** export a CSV in ManaBox, then upload it in **Settings**.
+- **Sets:** Binders → **Sets** shows how complete each set is and what the
+  missing cards cost.
 - **Export:** Settings → Collection → **Export collection** gives you a CSV
   in ManaBox's layout, or one for spreadsheets.
 - **Search:** find cards with short codes. Example: `t:creature eur>2` =
