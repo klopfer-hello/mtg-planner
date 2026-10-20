@@ -29,7 +29,7 @@ score) work.
   [collection.md](collection.md#importing-from-manabox)).
 - Add scanned cards straight to a deck (see
   [scanner.md](scanner.md#scan-list--binder-or-deck)).
-- **Add card** (right above the card list): search a card, pick the printing, choose the board
+- **＋ (Add card)**, right above the card list: search a card, pick the printing, choose the board
   (main, side, maybe, commander) and the copies. From any card's details,
   **Add to deck** does the same for a deck you pick.
 - **Select** on a deck: tick cards (or **All**), then **Remove** them or
@@ -55,6 +55,13 @@ Decks can be exported as a text list you can import elsewhere.
 
 <img src="img/desktop-deck.webp" width="640" alt="A deck page on a computer">
 
+The deck page is compact. **Chips** under the name open pop-ups: cards and value,
+bracket, power score, **Stats**, the deck box, **Tokens & extras** and the **Guide**
+(with a PDF download next to it). **Icon buttons** below: ✨ ask the planner, 📄 guide
+(a dot when one exists), ☑ build list, 🕘 history, ✏ edit, and **⋯** for put into deck
+box, export and delete. Above the cards: filter (only cards to buy), select and ＋ add.
+Hold the pointer on an icon (or long-press) to see its name.
+
 - Each card shows how many copies you own (counted across all printings) and
   how many are **missing**.
 - The deck shows its **value in EUR** (owned, to buy, maybeboard) and the
@@ -63,7 +70,7 @@ Decks can be exported as a text list you can import elsewhere.
 - You can set the **commander** (up to two for partner/background pairs;
   legendary creatures in the deck are suggested) and move cards between
   boards.
-- **Notes**: tap **Edit** on a deck to write notes in Markdown (`## headings`,
+- **Notes**: tap **✏ (Edit)** on a deck to write notes in Markdown (`## headings`,
   `- lists`, `**bold**`, `{G}` for mana symbols, up to 5,000 characters). Long
   notes fold up with **Show more**. Claude can write them too when you ask
   ("write a game plan into the notes"). Every change is a version in **History**.
@@ -76,7 +83,7 @@ Decks can be exported as a text list you can import elsewhere.
 
 ## Deck stats
 
-Open **Stats** on any deck (every format):
+Tap the **Stats** chip on any deck (every format); it opens as a pop-up:
 
 - **Mana curve:** how many cards cost 0, 1, 2 … 7+, split into creatures and
   other spells. X spells get an "X" mark.

@@ -109,7 +109,7 @@ More: [how to scan](docs/guide.md#2-scanning) · [docs/scanner.md](docs/scanner.
 - **Binders:** the Binders tab starts with your binders (cover, copies,
   value), grouped by type. Tap one to open it. Move cards between them.
 - **Edit or delete** copies from a card's details. Every change can be
-  **undone** in Settings → Recent changes.
+  **undone** in Settings → Collection → Recent changes.
 - **ManaBox or the app in charge?** ManaBox at first; the app asks once before it takes over. [Details](docs/collection.md#the-collection-master)
 
 More: [docs/collection.md](docs/collection.md)

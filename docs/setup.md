@@ -90,9 +90,10 @@ the load time. A scan sent while it is still loading waits for it, at most
 
 ## The Settings tab
 
-The **Settings** tab (gear icon, formerly *Import*) holds the ManaBox import,
-the collection master and default import mode, recent changes with undo,
-backups, and the scanner's card index.
+The **Settings** tab (gear icon) is a short list; each entry opens as a pop-up:
+**Import** (ManaBox CSV), **Collection** (master, default import mode, export,
+recent changes with undo), **Backups**, **Online services** and **Scanner & data**
+(card index, prices).
 
 ## Phones and HTTPS
 

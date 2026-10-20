@@ -35,7 +35,7 @@ Not set up yet? Start with the [Installation guide](install.md).
 
 ## 1. First steps
 
-<img src="img/settings.webp" width="260" alt="Settings tab with the ManaBox import">
+<img src="img/settings.webp" width="260" alt="Settings: a short list of sections">
 
 Already use the ManaBox app? Import your collection first.
 No ManaBox? Go straight to [Scanning](#2-scanning).
@@ -156,7 +156,7 @@ pick one or more pictures (one card each).
 - A card lies still and stays unknown → the app asks Claude once.
 - Sometimes a red card shows **Ask Claude**. Tap it to let Claude try.
 - Claude's answers show **✦ Claude** and **? confirm**. You confirm them.
-- Turn it off: **More scan settings → Ask Claude automatically for hard cards**.
+- Turn it off: **⚙ (scan settings) → Ask Claude automatically for hard cards**.
 
 ### Put the scans into a binder or deck
 
@@ -252,7 +252,7 @@ All codes: [collection.md](collection.md#search-syntax).
 3. Follow the sheet. Deleting asks twice.
 
 **Undo:** tap **Undo** in the message right after. Missed it? Open
-**Settings → Recent changes** and tap **Undo** there.
+**Settings → Collection → Recent changes** and tap **Undo** there.
 
 > **If it doesn't work**
 >
@@ -265,6 +265,10 @@ All codes: [collection.md](collection.md#search-syntax).
 ## 4. Decks
 
 <img src="img/deck.webp" width="260" alt="A deck page">
+
+**On a deck page:** tap the chips under the name for details (value, stats, tokens,
+guide). The icon row: ✨ ask Claude, 📄 guide, ☑ build list, 🕘 history, ✏ edit, ⋯ more
+(deck box, export, delete). Above the cards: ☑ select and ＋ add a card.
 
 Open the **Decks** tab.
 
@@ -282,7 +286,7 @@ Open the **Decks** tab.
 - **Filter:** the buttons above the list: **★ Favourites**, **Built**,
   **Ideas**, formats and colours. **Clear filters** resets them.
 - **Share:** the arrow next to the deck's name sends a link to the deck.
-- **Notes:** open the deck, tap **Edit**, write in **Notes**. Or ask Claude:
+- **Notes:** open the deck, tap **✏ (Edit)**, write in **Notes**. Or ask Claude:
   "Write a short game plan into the notes of my Atraxa deck."
 
 ### Idea or built?
@@ -304,7 +308,7 @@ To switch:
 <img src="img/guide.webp" width="260" alt="A deck guide">
 
 1. Open the deck.
-2. Tap **Guide**, then **Write the guide**.
+2. Tap the **📄 guide** button, then **Write the guide**.
 3. Wait about half a minute (you can close the sheet meanwhile).
 
 **You should now see:** how the deck wins, what to do each turn, when to
@@ -316,7 +320,7 @@ deck page: **Open** or **PDF**.
 
 <img src="img/deck-menu.webp" width="260" alt="The menu next to a card in a deck">
 
-- **Add a card:** open the deck, tap **Add card** above the card list, search the name, pick the
+- **Add a card:** open the deck, tap **＋** above the card list, search the name, pick the
   printing. Choose the board and the copies, then tap **Add to deck**.
 - **From a card's details:** tap **Add to deck** and pick the deck.
 - **One card:** tap **⋯** next to it for copies, board, commander or remove.
@@ -345,7 +349,7 @@ several, tap **Select**, tick the cards, then **Remove**.
 
 1. Open the deck.
 2. Make sure it is **Built** (see above).
-3. Tap **Put into deck box**.
+3. Tap **⋯ → Put into deck box**.
 4. Tap **Move cards into “Deck box: …”**.
 
 **You should now see:** where each card came from. The cards sit in the
@@ -386,7 +390,7 @@ Good to know:
 
 - New decks from Claude appear in **Decks** as **Idea**.
 - Claude can **correct** a copy (language, printing, foil, condition). It
-  tells you the change first. Undo it in **Settings → Recent changes**.
+  tells you the change first. Undo it in **Settings → Collection → Recent changes**.
 - Claude can **never delete** cards.
 - Old chats: tap **☰ Chats**. **＋ New chat** starts a fresh one.
 

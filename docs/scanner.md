@@ -59,7 +59,7 @@ over and over, and confident wrong guesses. The camera needs HTTPS (see
 
 ### From photo
 
-**From photo** (next to Auto-scan) scans cards from pictures you already have,
+**From photo** (the 🖼 button on the camera, or next to **Start camera**) scans cards from pictures you already have,
 without the camera: on a computer, a tablet, or when the camera won't start.
 
 - One card per photo, up to 20 photos at once. They join the scan list like
