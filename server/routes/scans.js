@@ -128,7 +128,7 @@ export function scanRoutes(router, app) {
     );
   }
 
-  const priceOf = (result) => scanPriceEur(result, { db: app.db, lookupEn: (p) => indexLookup("storagePrinting", p, "en").catch(() => null) });
+  const priceOf = (result) => scanPriceEur(result, { db: app.db, indexPrices: scanner.indexPrices() });
 
   async function postScan(req, res) {
     // A client that gives up (UI timeout/cancel, closed tab) cancels the scan:
