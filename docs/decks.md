@@ -27,14 +27,14 @@ score) work.
   [collection.md](collection.md#importing-from-manabox)).
 - Add scanned cards straight to a deck (see
   [scanner.md](scanner.md#scan-list--binder-or-deck)).
-- **Add card** on a deck: search a card, pick the printing, choose the board
+- **Add card** (right above the card list): search a card, pick the printing, choose the board
   (main, side, maybe, commander) and the copies. From any card's details,
   **Add to deck** does the same for a deck you pick.
 - **Select** on a deck: tick cards (or **All**), then **Remove** them or
   **Move…** them to another board. One step = one version in **History**, so
   you can go back.
-- One card at a time: the **⋯** next to a card changes copies, board or
-  commander, or removes it.
+- One card at a time: the **⋯** next to a card opens a small menu: card details,
+  set as commander, move to another board, copies − / +, remove.
 
 Decks can be exported as a text list you can import elsewhere.
 
@@ -318,7 +318,8 @@ parts (how it wins, turns, mulligan, key cards, tips) are written by Claude in
 one request (about half a minute, on your Claude plan; nothing else is sent
 anywhere). Without Claude the guide has the facts and techniques only. The
 newest five guides per deck are kept; after you change the deck, the guide
-says so and **Write it again** makes a new one.
+says so and **Write it again** makes a new one. Once written, the guide also
+shows on the deck page itself, with **Open** and **PDF**.
 
 **Download PDF** gives the same guide as an A4 file to print or keep: the deck at
 a glance with the commander's picture and a mana-curve chart, then the plan,

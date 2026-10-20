@@ -1048,6 +1048,10 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 .set-peek { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; padding: 8px 12px 14px 56px; border-top: 1px dashed var(--border); }
 .set-peek img { width: 110px; border-radius: 6px; }
 @media (max-width: 400px) { .set-peek { padding-left: 12px; } }
+.guide-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 14px; }
+.guide-item-icon { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.guide-item-icon svg { width: 20px; height: 20px; }
+@media (max-width: 400px) { .guide-item { grid-template-columns: auto minmax(0, 1fr); } .guide-item > .row { grid-column: 1 / -1; } }
 .guide h3 { font-size: 1.05rem; margin: 6px 0 0; }
 .guide h4 { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 4px 0 0; }
 .guide-ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; line-height: 1.45; }
@@ -1061,6 +1065,18 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 .guide-dl dd { margin: 0; }
 @media (max-width: 420px) { .guide-dl { grid-template-columns: minmax(0, 1fr); } .guide-dl dd { margin-bottom: 6px; } }
 .guide img.sym { width: 1em; height: 1em; vertical-align: -0.12em; }
+.card-menu { position: fixed; z-index: 120; background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow-lg); padding: 6px; display: grid; gap: 2px; max-height: calc(100vh - 16px); overflow: auto; }
+.card-menu .menu-head { display: grid; gap: 2px; padding: 6px 10px 8px; border-bottom: 1px solid var(--border); margin-bottom: 4px; overflow-wrap: anywhere; }
+.menu-item { appearance: none; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+  display: flex; gap: 10px; align-items: center; min-height: 44px; padding: 0 10px; border-radius: 8px; }
+.menu-item svg { width: 18px; height: 18px; color: var(--muted); flex: none; }
+.menu-item:hover, .menu-item:focus-visible { background: var(--surface-2); outline: none; }
+.menu-item:disabled { opacity: .5; cursor: default; }
+.menu-item.danger, .menu-item.danger svg { color: var(--bad); }
+.menu-qty { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 0 4px 0 10px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 4px 0; }
+.menu-error { color: var(--bad); padding: 4px 10px; }
+.deck-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .binder-grid { display: grid; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; min-width: 0; }
 .binder-entry {
   appearance: none; border: 0; border-top: 1px solid var(--border); background: none; color: inherit; text-align: left; cursor: pointer; width: 100%;
@@ -3022,7 +3038,7 @@ function DeckCardRow({ card, onOpenCard, onActions, selecting = false, selected 
         {useLine}
       </button>
       {onActions && !selecting && (
-        <button type="button" className="btn ghost icon row-more" aria-label={`Actions for ${card.name}`} title="Board, quantity, commander" onClick={() => onActions(card)}><Icon.more /></button>
+        <button type="button" className="btn ghost icon row-more" aria-label={`Actions for ${card.name}`} title="Board, quantity, commander" onClick={(e) => onActions(card, e.currentTarget)}><Icon.more /></button>
       )}
       </div>
       {peek && !unresolved && !selecting && (
@@ -3056,77 +3072,79 @@ const isCommanderFormat = (deck) => String(deck?.format || "").trim().toLowerCas
 const hasCommander = (deck) => (deck?.counts?.commander ?? 0) > 0 || (deck?.cards || []).some((c) => c.board === "commander");
 
 /** Per-card actions: commander, board moves, quantity, remove. */
-function CardActionsSheet({ deck, card, busy, error, onRun, onOpenCard, onClose }) {
+/**
+ * The ⋯ next to a deck card: a small dropdown menu at the button (no sheet). Card details, set as
+ * commander (replace one of several), move to another board, quantity −/+ (the menu stays open),
+ * remove. Closes on a tap outside, Escape, scrolling or resizing; flips upward near the bottom.
+ */
+function CardActionsMenu({ deck, card, anchor, busy, error, onRun, onOpenCard, onClose }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState(null);
   const qty = card.quantity ?? 1;
   const isCmd = card.board === "commander";
-  const cmdCount = (deck.cards || []).filter((c) => c.board === "commander").length;
-  const cmdHint = isCmd ? null
-    : cmdCount === 0 ? null
-    : isCommanderFormat(deck) && cmdCount === 1 ? "Partners and backgrounds become a second commander; otherwise it replaces the current one (which moves to the main deck)."
-    : cmdCount > 1 ? "Replaces the current commanders (they move to the main deck), or pick one to replace:"
-    : "Replaces the current commander, which moves to the main deck.";
+  const commanders = (deck.cards || []).filter((c) => c.board === "commander");
   const patch = (body, label) => onRun(`/api/decks/${deck.id}/cards`, "PATCH", { name: card.name, board: card.board, ...body }, label);
   const remove = () => {
     if (!window.confirm(`Remove ${card.name} from the ${(BOARD_LABEL[card.board] || card.board).toLowerCase()}?`)) return;
     patch({ quantity: 0 }, "remove");
   };
+  // Place the menu at the button (below, else above); false when the button left the screen.
+  const place = useCallback(() => {
+    const el = ref.current;
+    if (!el || !anchor || !anchor.isConnected) return false;
+    const r = anchor.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+    if (r.bottom < 0 || r.top > vh) return false;
+    const w = Math.min(280, vw - 16), h = el.offsetHeight;
+    const left = Math.min(Math.max(8, r.right - w), vw - w - 8);
+    let top = r.bottom + 4;
+    if (top + h > vh - 8) top = r.top - h - 4 >= 8 ? r.top - h - 4 : Math.max(8, vh - h - 8);
+    setPos({ left, top, width: w });
+    return true;
+  }, [anchor]);
+  useLayoutEffect(() => { place(); }, [place, card, error, commanders.length]);
+  useEffect(() => {
+    ref.current?.querySelector("[role=menuitem]:not(:disabled)")?.focus({ preventScroll: true });
+    const away = (e) => { if (ref.current && !ref.current.contains(e.target) && !anchor?.contains(e.target)) onClose(); };
+    const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); anchor?.focus?.(); } };
+    // Scrolling moves the menu with its button; it closes once the button is off screen.
+    const moved = (e) => { if (ref.current?.contains(e.target)) return; if (!place()) onClose(); };
+    document.addEventListener("pointerdown", away, true);
+    document.addEventListener("keydown", key, true);
+    window.addEventListener("scroll", moved, true);
+    window.addEventListener("resize", moved);
+    return () => {
+      document.removeEventListener("pointerdown", away, true);
+      document.removeEventListener("keydown", key, true);
+      window.removeEventListener("scroll", moved, true);
+      window.removeEventListener("resize", moved);
+    };
+  }, [anchor, onClose, place]);
+  const item = (label, onClick, { icon = null, danger = false, disabled = false } = {}) => (
+    <button type="button" role="menuitem" className={`menu-item${danger ? " danger" : ""}`} disabled={busy || disabled} onClick={onClick}>{icon}{label}</button>
+  );
   return (
-    <Sheet title={card.name} onClose={onClose}>
-      <div className="stack">
-        <div className="card-actions-head">
-          {card.image_small ? <img src={card.image_small} alt="" /> : <span className="ph" />}
-          <div className="stack small" style={{ gap: 4 }}>
-            <span>{card.type_line || <span className="muted">Not found on Scryfall</span>}</span>
-            <span className="row" style={{ gap: 6 }}>
-              <span className="badge accent">{BOARD_LABEL[card.board] || card.board}</span>
-              <span className="muted">{qty}× · {fmtPrice(card.price)}</span>
-            </span>
-            {card.scryfall_id && <button type="button" className="btn sm" style={{ justifySelf: "start" }} onClick={() => onOpenCard(card.scryfall_id)}>Card details</button>}
-          </div>
+    <div ref={ref} className="card-menu" role="menu" aria-label={`Actions for ${card.name}`}
+      style={pos ? { left: pos.left, top: pos.top, width: pos.width } : { visibility: "hidden", left: 0, top: 0 }}>
+      <div className="menu-head small"><b>{card.name}</b><span className="muted">{qty}× · {BOARD_LABEL[card.board] || card.board}</span></div>
+      {card.scryfall_id && item("Card details", () => { onClose(); onOpenCard(card.scryfall_id); }, { icon: <Icon.search /> })}
+      {!isCmd && commanders.length <= 1 && item(commanders.length ? "Make commander" : "Set as commander",
+        () => onRun(`/api/decks/${deck.id}/commander`, "POST", { name: card.name }, "commander"), { icon: <Icon.crown /> })}
+      {!isCmd && commanders.length > 1 && commanders.map((c) => item(`Commander instead of ${c.name}`,
+        () => onRun(`/api/decks/${deck.id}/commander`, "POST", { name: card.name, replace: c.name }, "commander"), { icon: <Icon.crown /> }))}
+      {MOVE_BOARDS.filter((b) => b !== card.board).map((b) => (
+        <React.Fragment key={b}>{item(`Move to ${BOARD_LABEL[b]}`, () => patch({ to_board: b }, "move"), { icon: <Icon.up /> })}</React.Fragment>
+      ))}
+      <div className="menu-qty">
+        <span>Copies</span>
+        <div className="stepper" role="group" aria-label="Copies">
+          <button type="button" aria-label="One less" disabled={busy || qty <= 1} onClick={() => patch({ quantity: qty - 1 }, "qty")}><Icon.minus /></button>
+          <output aria-live="polite">{qty}</output>
+          <button type="button" aria-label="One more" disabled={busy} onClick={() => patch({ quantity: qty + 1 }, "qty")}><Icon.plus /></button>
         </div>
-
-        {!isCmd && (
-          <div className="stack" style={{ gap: 4 }}>
-            <button type="button" className="btn primary" disabled={busy} onClick={() => onRun(`/api/decks/${deck.id}/commander`, "POST", { name: card.name }, "commander")}>
-              <Icon.crown /> Set as commander
-            </button>
-            {cmdHint && <span className="small muted">{cmdHint}</span>}
-            {cmdCount > 1 && (
-              <div className="action-grid">
-                {(deck.cards || []).filter((c) => c.board === "commander").map((c) => (
-                  <button key={c.name} type="button" className="btn sm" disabled={busy}
-                    onClick={() => onRun(`/api/decks/${deck.id}/commander`, "POST", { name: card.name, replace: c.name }, "commander")}>Replace {c.name}</button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="stack" style={{ gap: 6 }}>
-          <span className="label">Move to</span>
-          <div className="action-grid">
-            {MOVE_BOARDS.filter((b) => b !== card.board).map((b) => (
-              <button key={b} type="button" className="btn" disabled={busy} onClick={() => patch({ to_board: b }, "move")}>{BOARD_LABEL[b]}</button>
-            ))}
-          </div>
-        </div>
-
-        <div className="row between">
-          <span className="label">Quantity</span>
-          <div className="stepper" role="group" aria-label="Quantity">
-            <button type="button" aria-label="One less" disabled={busy || qty <= 1} onClick={() => patch({ quantity: qty - 1 }, "qty")}><Icon.minus /></button>
-            <output aria-live="polite">{qty}</output>
-            <button type="button" aria-label="One more" disabled={busy} onClick={() => patch({ quantity: qty + 1 }, "qty")}><Icon.plus /></button>
-          </div>
-        </div>
-
-        <ErrorNotice error={error} />
-        {deck.source === "manabox" && (
-          <p className="small muted" style={{ margin: 0 }}>Synced from ManaBox: board changes (commander, sideboard, maybeboard) survive the next sync while the card is still in the binder; quantities come from ManaBox again.</p>
-        )}
-        <button type="button" className="btn danger" disabled={busy} onClick={remove}><Icon.trash /> Remove from deck</button>
       </div>
-    </Sheet>
+      {item("Remove from deck", remove, { icon: <Icon.trash />, danger: true })}
+      {error && <div className="menu-error small" role="alert">{typeof error === "string" ? error : error.message}</div>}
+    </div>
   );
 }
 
@@ -4369,6 +4387,28 @@ const Bullets = ({ items }) => (items?.length ? <ul className="guide-ul">{items.
  * Deck page → Guide: GET /api/decks/:id/guide; Write/Regenerate = POST (Claude in the background, the sheet
  * polls every 4 s while pending; facts only without a Claude token). Shows the whole guide.
  */
+/** The deck's guide on the deck page: written when, Open (the sheet) and Download PDF; "being written" while pending. */
+function DeckGuideItem({ deck, onOpen }) {
+  const g = deck.guide;
+  if (!g) return null;
+  if (g.pending && !g.id) {
+    return <div className="notice" role="status"><Spinner label="" /><div className="grow">Claude is writing the deck guide…</div></div>;
+  }
+  return (
+    <div className="card guide-item">
+      <span className="guide-item-icon" aria-hidden="true"><Icon.file /></span>
+      <div className="stack" style={{ gap: 2, minWidth: 0 }}>
+        <b>Deck guide</b>
+        <span className="small muted">{g.pending ? "A new one is being written · " : ""}written {fmtAgo(g.created_at)}{g.kind === "facts" ? " · facts only" : ""}{g.stale ? " · the deck changed since" : ""}</span>
+      </div>
+      <div className="row" style={{ gap: 6 }}>
+        <button type="button" className="btn sm" onClick={onOpen}>Open</button>
+        <a className="btn sm primary" href={`/api/decks/${deck.id}/guide.pdf`} download><Icon.download /> PDF</a>
+      </div>
+    </div>
+  );
+}
+
 function GuideSheet({ deck, onClose }) {
   const [state, setState] = useState(null);
   const [error, setError] = useState(null);
@@ -4519,6 +4559,11 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
   useEffect(load, [load, dataVersion]); // also after the planner saved this deck
+  useEffect(() => {
+    if (!deck?.guide?.pending || guideOpen) return undefined;
+    const t = setTimeout(load, 5000);
+    return () => clearTimeout(t);
+  }, [deck, guideOpen, load]);
   // Combos still pending (the server fetches them in the background): look again after 4 s, at most twice per deck.
   const pendingTries = useRef({ id, n: 0 });
   const combosPending = deck?.id === id && (deck?.combos?.status === "pending" || deck?.accessories?.status === "pending");
@@ -4675,7 +4720,9 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
       setCardBusy(false);
     }
   };
-  const openActions = (c) => { setCardError(null); setActionCard({ board: c.board, name: c.name }); };
+  const [actionAnchor, setActionAnchor] = useState(null);
+  const openActions = (c, anchor = null) => { setCardError(null); setActionAnchor(anchor); setActionCard({ board: c.board, name: c.name }); };
+  const closeActions = useCallback(() => setActionCard(null), []);
   const actionTarget = actionCard && deck?.cards.find((c) => c.board === actionCard.board && c.name === actionCard.name);
   const suggestions = commanderSuggestions(deck);
   const needsCommander = deck && (isCommanderFormat(deck) || Array.isArray(deck.commander_suggestions)) && !hasCommander(deck);
@@ -4791,13 +4838,9 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
             <DeckNeedNotice deck={deck} />
             <DeckStats deck={deck} />
             <DeckExtras deck={deck} />
+            <DeckGuideItem deck={deck} onOpen={() => setGuideOpen(true)} />
             <div className="row">
               <button type="button" className="btn primary" onClick={() => onAsk(deck)}><Icon.sparkle /> Ask the planner</button>
-              <button type="button" className="btn" onClick={() => setAdding("pick")}><Icon.plus /> Add card</button>
-              {deck.cards.length > 0 && (
-                <button type="button" className={`btn${selecting ? " primary" : ""}`} aria-pressed={selecting}
-                  onClick={() => (selecting ? stopSelecting() : setSelecting(true))}><Icon.check /> {selecting ? "Done" : "Select"}</button>
-              )}
               {deck.cards.length > 0 && <button type="button" className="btn" onClick={() => setBuildOpen(true)}><Icon.checklist /> Build list</button>}
               {deck.status === "built" && <button type="button" className="btn" onClick={() => setDeckBox(true)}><Icon.box /> Put into deck box</button>}
               {deck.cards.length > 0 && <button type="button" className="btn" onClick={() => setGuideOpen(true)}><Icon.sparkle /> Guide</button>}
@@ -4812,6 +4855,13 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
 
           <DeckShopping deck={deck} onOpenDeck={onOpenDeck} onWishChanged={onWishChanged} />
 
+          <div className="deck-tools" role="toolbar" aria-label="Cards">
+            <button type="button" className="btn primary" onClick={() => setAdding("pick")}><Icon.plus /> Add card</button>
+            {deck.cards.length > 0 && (
+              <button type="button" className={`btn${selecting ? " primary" : ""}`} aria-pressed={selecting}
+                onClick={() => (selecting ? stopSelecting() : setSelecting(true))}><Icon.check /> {selecting ? "Done" : "Select"}</button>
+            )}
+          </div>
           {deck.cards.length > 0 && (counts.toBuy > 0 || counts.inUse > 0) && (
             <label className="row" style={{ minHeight: 44, cursor: "pointer" }}>
               <input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} style={{ width: 20, height: 20, accentColor: "var(--accent)" }} />
@@ -4853,15 +4903,15 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
           )}
           {adding?.card && <AddToDeckSheet card={adding.card} deck={deck} onClose={() => setAdding(null)} onDone={afterAdd} />}
           {actionTarget && (
-            <CardActionsSheet deck={deck} card={actionTarget} busy={cardBusy} error={cardError}
+            <CardActionsMenu deck={deck} card={actionTarget} anchor={actionAnchor} busy={cardBusy} error={cardError}
               onRun={runCardAction} onOpenCard={(cid) => { setActionCard(null); onOpenCard(cid); }}
-              onClose={() => setActionCard(null)} />
+              onClose={closeActions} />
           )}
           {powerOpen && <PowerSheet deck={deck} onClose={() => setPowerOpen(false)} onChanged={() => { load(); onChanged(); }} />}
           {deckBox && <DeckBoxSheet deck={deck} onClose={() => setDeckBox(false)} onDone={() => { load(); onCollectionChanged(); }} />}
           {buildOpen && <BuildSheet deck={deck} onClose={() => { setBuildOpen(false); load(); }} onSetBuilt={() => setStatus("built")}
             onCollectionChanged={() => { load(); onCollectionChanged(); }} onOpenCard={onOpenCard} />}
-          {guideOpen && <GuideSheet deck={deck} onClose={() => setGuideOpen(false)} />}
+          {guideOpen && <GuideSheet deck={deck} onClose={() => { setGuideOpen(false); load(); }} />}
           {historyOpen && <HistorySheet deck={deck} onClose={() => setHistoryOpen(false)}
             onRestored={(res) => { if (res && Array.isArray(res.cards)) setDeck(res); else load(); onChanged(); }} />}
         </>

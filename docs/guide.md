@@ -297,13 +297,15 @@ To switch:
 
 **You should now see:** how the deck wins, what to do each turn, when to
 mulligan, its key cards, the techniques it uses, and the words to know.
-**Download PDF** saves it as a file to print.
+**Download PDF** saves it as a file to print. The guide then stays on the
+deck page: **Open** or **PDF**.
 
 ### Change a deck's cards
 
-- **Add a card:** open the deck, tap **Add card**, search the name, pick the
+- **Add a card:** open the deck, tap **Add card** above the card list, search the name, pick the
   printing. Choose the board and the copies, then tap **Add to deck**.
 - **From a card's details:** tap **Add to deck** and pick the deck.
+- **One card:** tap **⋯** next to it for copies, board, commander or remove.
 - **Remove or move several:** tap **Select**, tick the cards, then
   **Remove** or **Move…**. Tap **Done** to leave.
 - **Changed your mind?** **History** has every earlier version.

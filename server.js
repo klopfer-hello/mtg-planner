@@ -18,7 +18,7 @@ import { accessoriesForRows, createAccessoryFetcher, ensureAccessoryData } from 
 import { syncEnglishPrices } from "./lib/prices.js";
 import { EXPORT_FORMATS, exportCollection } from "./lib/collectionexport.js";
 import { listSets, setDetail } from "./lib/sets.js";
-import { generateGuide, latestGuide } from "./lib/deckguide.js";
+import { generateGuide, guideMeta, latestGuide } from "./lib/deckguide.js";
 import { fetchGuideImages, renderGuidePdf } from "./lib/guidepdf.js";
 import {
   DECK_STATUSES, DeckError, bracketVerdict, buyListText, cardUsage, deckComboRequest, deckDetail, deckPower, draftDeck, eurForFinish, exportDeck, listDecks,
@@ -388,6 +388,9 @@ function getDeckOr404(id) {
   const detail = deckDetail(db, id);
   if (!detail) throw new HttpError(404, "Deck not found");
   for (const c of detail.cards) c.prices = parseJsonField(c.prices, null);
+  // The deck guide shown on the deck page (Open / Download PDF); pending while Claude writes one.
+  const gm = guideMeta(db, id);
+  detail.guide = gm || guideJobs.has(id) ? { ...(gm ?? {}), pending: guideJobs.has(id) } : null;
   // Missing or stale combos: fetch in the background (the UI re-reads once after a few seconds).
   if (detail.combos?.needs_fetch && detail.spellbook_request) spellbook.ensure(detail.spellbook_request);
   // Tokens & extras whose card/token rows are missing: same pattern.
