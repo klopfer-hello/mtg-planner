@@ -11,33 +11,16 @@ import os from "node:os";
 import path from "node:path";
 import { openIndex, refreshIndex, indexStatus } from "../lib/cardindex.js";
 import {
-  FP_BYTES, Matcher, areaResample, buildFingerprints, checkJpegSize, cropRows, decodeJpeg, encodeJpeg, fingerprintKey, hasCjpeg, hasDjpeg,
+  FP_BYTES, Matcher, areaResample, buildFingerprints, checkJpegSize, cropRows, decodeJpeg, encodeJpeg, fingerprintKey,
   hashCard, hashQuery, jpegSize, parsePnm, rotate180, score, uprightJpegs,
 } from "../lib/fingerprint.js";
+// synth(): seeded procedural "card": shaded background with coloured rectangles
+// and ellipses (gradients keep dHash bits from depending on noise in flat areas).
+import { synth } from "./helpers/images.js";
+import { hasBinary } from "../lib/ocr.js";
 
-// Seeded procedural "card": shaded background with coloured rectangles and
-// ellipses (gradients keep dHash bits from depending on noise in flat areas).
-function synth(seed, w = 146, h = 204) {
-  let s = seed * 9301 + 49297;
-  const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-  const data = new Uint8Array(w * h * 3);
-  const bg = [rnd() * 255, rnd() * 255, rnd() * 255];
-  const shapes = Array.from({ length: 14 }, () => ({
-    x0: rnd() * w, y0: rnd() * h, rx: 8 + rnd() * w / 3, ry: 8 + rnd() * h / 3, c: [rnd() * 255, rnd() * 255, rnd() * 255], e: rnd() < 0.5,
-  }));
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let c = bg;
-      for (const sh of shapes) {
-        const dx = (x - sh.x0) / sh.rx, dy = (y - sh.y0) / sh.ry;
-        if (sh.e ? dx * dx + dy * dy < 1 : Math.abs(dx) < 1 && Math.abs(dy) < 1) c = sh.c;
-      }
-      const shade = 60 * (x / w) - 50 * (y / h);
-      data.set(c.map((v) => Math.max(0, Math.min(255, Math.round(v * 0.7 + shade + 40)))), (y * w + x) * 3);
-    }
-  }
-  return { width: w, height: h, channels: 3, data };
-}
+const HAS_DJPEG = await hasBinary("djpeg");
+const HAS_CJPEG = await hasBinary("cjpeg");
 
 // A "phone capture": upscale to w×h with a small shift, brightness change and noise.
 function capture(src, { w = 1000, h = 1400, shift = 0.01, gain = 1.08, noise = 12, seed = 1 } = {}) {
@@ -324,9 +307,9 @@ describe("JPEG size guard", () => {
   });
 });
 
-describe("djpeg", { skip: !hasDjpeg() && "djpeg not installed" }, () => {
+describe("djpeg", { skip: !HAS_DJPEG && "djpeg not installed" }, () => {
   test("uprightJpegs: an upside-down card JPEG comes back upright, plus its top band as the strip", async (t) => {
-    if (!hasCjpeg()) return t.skip("cjpeg not installed");
+    if (!HAS_CJPEG) return t.skip("cjpeg not installed");
     const upright = capture(synth(6), { w: 300, h: 420, noise: 0, shift: 0 });
     const jpg = await encodeJpeg(rotate180(upright), { quality: 95 });
     assert.deepEqual(jpg.subarray(0, 2), Buffer.from([0xff, 0xd8]));
@@ -345,7 +328,7 @@ describe("djpeg", { skip: !hasDjpeg() && "djpeg not installed" }, () => {
   });
 
   test("decodeJpeg round-trips a cjpeg-encoded image", async (t) => {
-    if (spawnSync("cjpeg", ["-version"], { stdio: "ignore" }).error) return t.skip("cjpeg not installed");
+    if (!HAS_CJPEG) return t.skip("cjpeg not installed");
     const img = synth(4, 64, 88);
     const ppm = Buffer.concat([Buffer.from(`P6\n${img.width} ${img.height}\n255\n`), Buffer.from(img.data)]);
     const jpg = spawnSync("cjpeg", ["-quality", "95"], { input: ppm }).stdout;
