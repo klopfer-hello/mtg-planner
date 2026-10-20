@@ -192,6 +192,19 @@ describe("allocation", () => {
     // Running it again moves nothing more.
     const again = deckToBinder(ctx.db, A);
     assert.deepEqual([again.moved_copies, again.moved.length], [0, 0]);
+    assert.deepEqual(again.removed, [], "nothing to take out while the box matches the deck");
+    // The deck shrinks: Counterspell leaves the deck, Forest drops from 5 to 3. Putting it into the box again
+    // takes those copies out (to Unsorted) instead of only adding; also when only some cards are picked (keys).
+    ctx.db.prepare("DELETE FROM deck_cards WHERE deck_id = ? AND name = 'Counterspell'").run(A);
+    ctx.db.prepare("UPDATE deck_cards SET quantity = 3 WHERE deck_id = ? AND name = 'Forest'").run(A);
+    const unsortedBefore = listBinders(ctx.db).unsorted.copies;
+    const shrunk = deckToBinder(ctx.db, A, { keys: [] });
+    assert.deepEqual(shrunk.removed, [{ name: "Counterspell", quantity: 1 }, { name: "Forest", quantity: 2 }]);
+    assert.equal(shrunk.removed_copies, 3);
+    const after = Object.fromEntries(listBinders(ctx.db).binders.map((x) => [x.name, x.copies]));
+    assert.equal(after["Deck box: A"], 3, "the box holds exactly what the deck needs");
+    assert.equal(listBinders(ctx.db).unsorted.copies, unsortedBefore + 3);
+    assert.deepEqual(deckToBinder(ctx.db, A).removed, [], "repeating takes nothing more out");
     // A custom binder name works; unknown decks 404.
     const named = deckToBinder(ctx.db, C, { binder: "Idea pile" });
     assert.equal(named.binder, "Idea pile");

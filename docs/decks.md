@@ -286,6 +286,11 @@ deck still needs and, across all built decks, what to buy with a € total (see
 - Unsorted copies are taken first, then plain binders. Never copies out of
   a locked binder (any other deck's, or nobody's) or another built deck's binder.
 - The box is remembered, also when the deck or the binder is renamed.
+- After you change the deck, putting it into the box again also **takes out** what
+  the deck no longer needs: cards that left the deck and copies beyond a lowered
+  count go to **Unsorted**, and the result lists them under "Take out of the box",
+  so the real box matches. This also happens when the build list puts only the
+  ticked cards in.
 - A ManaBox deck's own binder already counts as boxed.
 
 ## Build list

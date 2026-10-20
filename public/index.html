@@ -3539,6 +3539,15 @@ function DeckBoxSheet({ deck, pickedOnly = false, onClose, onDone }) {
               </ul>
             </Collapsible>
           )}
+          {asList(result?.removed).length > 0 && (
+            <div className="notice warn" role="status"><span aria-hidden="true">↩</span><div className="grow">
+              <b>Take out of the box: {plural(result.removed_copies ?? asList(result.removed).reduce((a, m) => a + m.quantity, 0), "copy", "copies")}</b>
+              <span className="small"> (no longer in the deck, now in {UNSORTED})</span>
+              <ul className="delta-list" style={{ marginTop: 4 }}>
+                {asList(result.removed).map((m, i) => <li key={i}>{m.quantity}× {m.name}</li>)}
+              </ul>
+            </div></div>
+          )}
           {missing.length > 0 ? (
             <div className="notice warn"><span aria-hidden="true">✗</span><div className="grow">
               <b>Still missing {plural(missing.length, "card")}:</b>
