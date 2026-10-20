@@ -19,12 +19,9 @@ import { captureLog } from "../lib/scancapture.js";
 import { getScan } from "../lib/scanrow.js";
 import { ID, SCRYFALL_CARDS, seedCards, tempDb } from "./fixtures.js";
 import { startServer } from "./helpers/server.js";
+import { asPrinting, fakeJpeg } from "./helpers/scan.js";
 
 const fx = (id) => SCRYFALL_CARDS.find((c) => c.id === id);
-const asPrinting = (c) => ({
-  id: c.id, oracle_id: c.oracle_id, name: c.name, lang: c.lang, set_code: c.set, set_name: c.set_name,
-  collector_number: c.collector_number, rarity: c.rarity, finishes: ["nonfoil", "foil"], faces: [],
-});
 const BOLT = asPrinting(fx(ID.lightning));
 const SOL = asPrinting(fx(ID.sol));
 const result = (printing, o = {}) => ({
@@ -245,11 +242,7 @@ describe("ProbeRunner", () => {
 
 let srv, call, indexFile, scanDir;
 
-// A JPEG header the size check accepts (SOF0 64x64); its data is garbage, so identify() fails cleanly.
-function fakeJpeg() {
-  const sof = Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x40, 0x00, 0x40, 0x03, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
-  return Buffer.concat([Buffer.from([0xff, 0xd8]), sof, Buffer.alloc(200, 0x55), Buffer.from([0xff, 0xd9])]).toString("base64");
-}
+// fakeJpeg(): a JPEG header the size check accepts (SOF0 64x64); its data is garbage, so identify() fails cleanly.
 // Claude calls the server started (the vision cap's timestamps, persisted in the index meta).
 function visionCalls() {
   const db = new DatabaseSync(indexFile, { readOnly: true });
@@ -292,7 +285,7 @@ describe("POST /api/scan mode probe", () => {
   after(() => srv?.stop());
 
   test("bad mode / probe_session are 400", async () => {
-    const card = fakeJpeg();
+    const card = fakeJpeg().toString("base64");
     assert.equal((await call("POST", "/api/scan", { card, mode: "peek" })).status, 400);
     for (const probe_session of ["a b", "x".repeat(41), 5, "ä"]) {
       const r = await call("POST", "/api/scan", { card, mode: "probe", probe_session });
@@ -304,7 +297,7 @@ describe("POST /api/scan mode probe", () => {
 
   test("an unreadable photo: outcome unidentified, nothing staged, no files, no Claude call", async () => {
     const r = await call("POST", "/api/scan", {
-      card: fakeJpeg(), strip: fakeJpeg(), mode: "probe", probe_session: "sess-1", allowClaude: true, capture: { kind: "probe", d: 0.2 },
+      card: fakeJpeg().toString("base64"), strip: fakeJpeg().toString("base64"), mode: "probe", probe_session: "sess-1", allowClaude: true, capture: { kind: "probe", d: 0.2 },
     });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.probe, true);
@@ -319,11 +312,11 @@ describe("POST /api/scan mode probe", () => {
   });
 
   test("control: the same photo as a normal scan asks Claude (so the probe's 0 means something)", async () => {
-    const r = await call("POST", "/api/scan", { card: fakeJpeg(), allowClaude: true });
+    const r = await call("POST", "/api/scan", { card: fakeJpeg().toString("base64"), allowClaude: true });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.probe, undefined);
     assert.equal(visionCalls(), 1);
-    const p = await call("POST", "/api/scan", { card: fakeJpeg(), mode: "probe" });
+    const p = await call("POST", "/api/scan", { card: fakeJpeg().toString("base64"), mode: "probe" });
     assert.equal(p.body.outcome, "unidentified");
     assert.equal(visionCalls(), 1);
   });

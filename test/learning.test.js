@@ -17,12 +17,9 @@ import { DEFAULT_THRESHOLDS } from "../lib/scanner.js";
 import { LEARNING_METRICS, blockersOf, evidenceOf, learningReport, relaxOf } from "../lib/learning.js";
 import { ID, SCRYFALL_CARDS, seedCards, stubScryfall, tempDb } from "./fixtures.js";
 import { startServer } from "./helpers/server.js";
+import { asPrinting } from "./helpers/scan.js";
 
 const fx = (id) => SCRYFALL_CARDS.find((c) => c.id === id);
-const asPrinting = (c, extra = {}) => ({
-  id: c.id, oracle_id: c.oracle_id, name: c.name, printed_name: null, lang: c.lang, set_code: c.set, set_name: c.set_name,
-  collector_number: c.collector_number, rarity: c.rarity, finishes: ["nonfoil", "foil"], faces: [], ...extra,
-});
 const BOLT = asPrinting(fx(ID.lightning));
 const SOL = asPrinting(fx(ID.sol));
 const SERRA = asPrinting(fx(ID.serra), { finishes: ["nonfoil"] });
