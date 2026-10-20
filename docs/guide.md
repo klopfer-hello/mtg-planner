@@ -280,6 +280,15 @@ To switch:
 **You should now see:** "Built" selected. Cards other built decks also use get
 **⇄** or **⚠**.
 
+### Change a deck's cards
+
+- **Add a card:** open the deck, tap **Add card**, search the name, pick the
+  printing. Choose the board and the copies, then tap **Add to deck**.
+- **From a card's details:** tap **Add to deck** and pick the deck.
+- **Remove or move several:** tap **Select**, tick the cards, then
+  **Remove** or **Move…**. Tap **Done** to leave.
+- **Changed your mind?** **History** has every earlier version.
+
 ### What each card row shows
 
 | Mark | Meaning |

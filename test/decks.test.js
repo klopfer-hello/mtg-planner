@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DeckError, bracketVerdict, canPair, deckComboRequest, deckDetail, deckPower, deckToText, draftDeck, eurForFinish, eurOfPrinting, exportDeck, findDeck,
-  DECK_NOTES_MAX, listDecks, normalizeFormat, parseDecklist, powerLines, saveDeck, saveDeckRows, scoreText, setCommander, setDeckNotes, updateDeckCard,
+  DECK_NOTES_MAX, addDeckCard, bulkDeckCards, listDecks, normalizeFormat, parseDecklist, powerLines, saveDeck, saveDeckRows, scoreText, setCommander, setDeckNotes, updateDeckCard,
 } from "../lib/decks.js";
 import { listDeckVersions } from "../lib/deckhistory.js";
 import { CEDH_HINT } from "../lib/power.js";
@@ -676,5 +676,73 @@ describe("setDeckNotes", () => {
     assert.throws(() => setDeckNotes(ctx.db, id, "x".repeat(DECK_NOTES_MAX + 1)), (e) => e instanceof DeckError && e.status === 400);
     assert.throws(() => setDeckNotes(ctx.db, 9999, "x"), (e) => e instanceof DeckError && e.status === 404);
     assert.throws(() => setDeckNotes(ctx.db, id, 42), (e) => e instanceof DeckError && e.status === 400);
+  });
+});
+
+describe("addDeckCard / bulkDeckCards", () => {
+  let ctx;
+  let stub;
+  beforeEach(() => {
+    ctx = tempDb();
+    stub = stubScryfall();
+  });
+  afterEach(() => { stub.restore(); ctx.cleanup(); });
+  const rowsOf = (id) => ctx.db.prepare("SELECT board, name, quantity FROM deck_cards WHERE deck_id = ? ORDER BY board, name").all(id).map((r) => ({ ...r }));
+  const versionCount = (id) => listDeckVersions(ctx.db, id).versions.length;
+
+  test("adds by Scryfall id (fetched when not cached) and by name; merges an existing row; one version each", async () => {
+    const id = saveDeckRows(ctx.db, { name: "D", rows: [] });
+    const v0 = versionCount(id);
+    const a = await addDeckCard(ctx.db, id, { scryfall_id: ID.sol });
+    assert.deepEqual([a.name, a.board, a.added], ["Sol Ring", "main", 1]);
+    assert.equal(stub.calls.length, 1, "the card row was fetched");
+    await addDeckCard(ctx.db, id, { scryfall_id: ID.sol, quantity: 2 });
+    assert.equal(stub.calls.length, 1, "cached card: no second fetch");
+    await addDeckCard(ctx.db, id, { name: "lightning bolt", board: "side" });
+    assert.deepEqual(rowsOf(id), [
+      { board: "main", name: "Sol Ring", quantity: 3 },
+      { board: "side", name: "Lightning Bolt", quantity: 1 },
+    ]);
+    assert.equal(versionCount(id), v0 + 3);
+  });
+
+  test("add refuses bad input and unknown cards", async () => {
+    const id = saveDeckRows(ctx.db, { name: "D", rows: [] });
+    const status = (p) => p.then(() => null, (e) => (e instanceof DeckError ? e.status : e));
+    assert.equal(await status(addDeckCard(ctx.db, 9999, { name: "Sol Ring" })), 404);
+    assert.equal(await status(addDeckCard(ctx.db, id, { name: "Sol Ring", board: "nope" })), 400);
+    assert.equal(await status(addDeckCard(ctx.db, id, { name: "Sol Ring", quantity: 0 })), 400);
+    assert.equal(await status(addDeckCard(ctx.db, id, { scryfall_id: "not-an-id" })), 400);
+    assert.equal(await status(addDeckCard(ctx.db, id, {})), 400);
+    assert.equal(await status(addDeckCard(ctx.db, id, { name: "No Such Card Anywhere" })), 404);
+    assert.equal(await status(addDeckCard(ctx.db, id, { scryfall_id: "00000000-0000-0000-0000-000000000000" })), 404);
+    assert.deepEqual(rowsOf(id), []);
+  });
+
+  test("bulk remove and move: one version, duplicates ignored, a missing row changes nothing", () => {
+    seedCards(ctx.db);
+    const id = saveDeckRows(ctx.db, { name: "D", rows: [
+      { board: "main", name: "Sol Ring", scryfall_id: ID.sol, quantity: 1 },
+      { board: "main", name: "Lightning Bolt", scryfall_id: ID.lightning, quantity: 4 },
+      { board: "main", name: "Counterspell", scryfall_id: ID.counterspell, quantity: 2 },
+      { board: "side", name: "Lightning Bolt", scryfall_id: ID.lightning, quantity: 1 },
+    ] });
+    const v0 = versionCount(id);
+    assert.throws(() => bulkDeckCards(ctx.db, id, { action: "remove", items: [{ name: "Sol Ring", board: "main" }, { name: "Serra Angel", board: "main" }] }),
+      (e) => e instanceof DeckError && e.status === 404);
+    assert.equal(rowsOf(id).length, 4, "rolled back");
+    const moved = bulkDeckCards(ctx.db, id, { action: "move", to_board: "side", items: [{ name: "lightning bolt", board: "main" }] });
+    assert.deepEqual([moved.rows, moved.copies], [1, 4]);
+    const removed = bulkDeckCards(ctx.db, id, { action: "remove", items: [
+      { name: "Sol Ring", board: "main" }, { name: "Sol Ring", board: "main" }, { name: "Counterspell", board: "main" },
+    ] });
+    assert.deepEqual([removed.rows, removed.copies], [2, 3]);
+    assert.deepEqual(rowsOf(id), [{ board: "side", name: "Lightning Bolt", quantity: 5 }]);
+    assert.equal(versionCount(id), v0 + 2);
+    for (const bad of [{ action: "burn", items: [{ name: "x", board: "main" }] }, { action: "remove", items: [] },
+      { action: "move", items: [{ name: "Lightning Bolt", board: "side" }] }, { action: "remove", items: [{ name: "", board: "main" }] }]) {
+      assert.throws(() => bulkDeckCards(ctx.db, id, bad), (e) => e instanceof DeckError && e.status === 400);
+    }
+    assert.throws(() => bulkDeckCards(ctx.db, 9999, { action: "remove", items: [{ name: "x", board: "main" }] }), (e) => e.status === 404);
   });
 });

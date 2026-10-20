@@ -230,6 +230,11 @@ label.btn:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; 
 .segmented button + button { border-left: 1px solid var(--border); }
 .segmented button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .segmented svg { width: 18px; height: 18px; }
+.segmented.wrap { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.segmented.wrap button { justify-content: center; }
+.segmented.wrap button + button { border-left: 0; }
+.segmented.wrap button:nth-child(even) { border-left: 1px solid var(--border); }
+.segmented.wrap button:nth-child(n+3) { border-top: 1px solid var(--border); }
 /* Market tab: three sub-views share the row (icons drop on narrow phones). */
 .segmented.market-views { display: flex; width: 100%; max-width: 520px; }
 .market-views button { flex: 1 1 0; min-width: 0; justify-content: center; padding: 0 8px; white-space: nowrap; }
@@ -918,6 +923,7 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
   background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-lg);
 }
 @media (min-width: 768px) { .commit-bar { bottom: 12px; } }
+.commit-bar > .grow { min-width: 0; }
 
 .pick-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
 @media (min-width: 640px) { .pick-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); } }
@@ -982,8 +988,8 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 }
 .sel-mark svg { width: 18px; height: 18px; }
 .tile[aria-pressed="true"] .img { box-shadow: 0 0 0 3px var(--accent), var(--shadow); }
-.tile[aria-pressed="true"] .sel-mark, .list-row[aria-pressed="true"] .sel-mark { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.list-row .sel-mark { position: static; width: 28px; height: 28px; background: var(--surface); border-color: var(--border); color: var(--accent-ink); }
+.tile[aria-pressed="true"] .sel-mark, .list-row[aria-pressed="true"] .sel-mark, .deck-row[aria-pressed="true"] .sel-mark { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.deck-row .sel-mark, .list-row .sel-mark { position: static; width: 28px; height: 28px; background: var(--surface); border-color: var(--border); color: var(--accent-ink); }
 .list-row[aria-pressed="true"] { background: var(--accent-soft); }
 .move-btn { min-height: 40px; padding: 0 10px; }
 .row-acts { display: grid; gap: 4px; }
@@ -1747,6 +1753,8 @@ const priceOf = (prices, k) => prices?.[k] ?? (k.startsWith("eur") ? prices?.[`$
 function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged, onWishChanged }) {
   const [wishing, setWishing] = useState(false); // WishSheet open
   const [wished, setWished] = useState(null); // confirmation text
+  const [deckAdding, setDeckAdding] = useState(false); // AddToDeckSheet open
+  const [deckAdded, setDeckAdded] = useState(null); // confirmation text
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [attempt, setAttempt] = useState(0);
@@ -1823,7 +1831,9 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged, onWishChang
               </div>
               <div className="row">
                 <button type="button" className="btn sm" onClick={() => { setWished(null); setWishing(true); }}><Icon.heart /> Wishlist</button>
+                <button type="button" className="btn sm" onClick={() => { setDeckAdded(null); setDeckAdding(true); }}><Icon.plus /> Add to deck</button>
                 {wished && <span className="small" role="status" style={{ color: "var(--ok)" }}>♥ {wished}</span>}
+                {deckAdded && <span className="small" role="status" style={{ color: "var(--ok)" }}>✓ {deckAdded}</span>}
               </div>
             </section>
 
@@ -1927,6 +1937,11 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged, onWishChang
         <WishSheet card={{ scryfall_id: card.scryfall_id, oracle_id: card.oracle_id, name: card.name, set_code: card.set_code, collector_number: card.collector_number }}
           onClose={() => setWishing(false)}
           onDone={(res) => { setWishing(false); setWished(res?.merged ? `On your wishlist: ${res.item.quantity} wanted` : "Added to your wishlist"); onWishChanged?.(); }} />
+      )}
+      {deckAdding && card && (
+        <AddToDeckSheet card={{ scryfall_id: card.scryfall_id, name: card.name, set_code: card.set_code, collector_number: card.collector_number }}
+          onClose={() => setDeckAdding(false)}
+          onDone={(res, deck) => { setDeckAdding(false); setDeckAdded(`Added to ${deck.name}`); onChanged?.(); }} />
       )}
       {masterDialog}
       {toastEl}
@@ -2891,7 +2906,7 @@ function deckCounts(deck) {
   };
 }
 
-function DeckCardRow({ card, onOpenCard, onActions }) {
+function DeckCardRow({ card, onOpenCard, onActions, selecting = false, selected = false, onToggle }) {
   const [peek, setPeek] = useState(false);
   const elsewhere = asList(card.used_elsewhere).filter((u) => u && (u.name || typeof u === "string"));
   const free = card.available_for_this;
@@ -2945,11 +2960,15 @@ function DeckCardRow({ card, onOpenCard, onActions }) {
   return (
     <>
       <div className="deck-line">
-      <button type="button" className="deck-row" disabled={unresolved} aria-expanded={unresolved ? undefined : peek}
-        onClick={() => setPeek((p) => !p)} title={unresolved ? "Not found on Scryfall" : undefined}>
-        <span className="q">{card.quantity}</span>
+      <button type="button" className="deck-row" disabled={unresolved && !selecting}
+        aria-expanded={unresolved || selecting ? undefined : peek} aria-pressed={selecting ? selected : undefined}
+        aria-label={selecting ? `Select ${card.quantity}× ${card.name}` : undefined}
+        onClick={() => (selecting ? onToggle?.() : setPeek((p) => !p))} title={unresolved && !selecting ? "Not found on Scryfall" : undefined}>
+        {selecting
+          ? <span className="sel-mark" aria-hidden="true">{selected && <Icon.check />}</span>
+          : <span className="q">{card.quantity}</span>}
         <span className="nm">
-          <b>{card.name}</b>
+          <b>{selecting ? `${card.quantity}× ` : ""}{card.name}</b>
           <ManaCost cost={card.mana_cost} />
           {unresolved && <span className="badge warn">unresolved</span>}
           {!useLine && hasFree && free < (card.owned ?? 0) && <span className="free">{freeText}</span>}
@@ -2960,11 +2979,11 @@ function DeckCardRow({ card, onOpenCard, onActions }) {
         </span>
         {useLine}
       </button>
-      {onActions && (
+      {onActions && !selecting && (
         <button type="button" className="btn ghost icon row-more" aria-label={`Actions for ${card.name}`} title="Board, quantity, commander" onClick={() => onActions(card)}><Icon.more /></button>
       )}
       </div>
-      {peek && !unresolved && (
+      {peek && !unresolved && !selecting && (
         <div className="peek">
           {card.image_small ? <img src={card.image_small} alt={card.name} loading="lazy" /> : <span />}
           <div className="stack small" style={{ gap: 6, alignContent: "start" }}>
@@ -4314,6 +4333,12 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
   const [powerOpen, setPowerOpen] = useState(false);
   const [buildOpen, setBuildOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [adding, setAdding] = useState(null); // null | "pick" | {card}
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState(() => new Set()); // `${board}|${name}`
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [toast, setToast] = useState(null);
 
   const load = useCallback(() => {
     setError(null);
@@ -4418,6 +4443,46 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
     }
   };
 
+  // Free editing (0.9.0): Add card (picker → AddToDeckSheet) and Select → Remove / Move to.
+  const rowKey = (c) => `${c.board}|${c.name}`;
+  const stopSelecting = () => { setSelecting(false); setSelected(new Set()); setMoveOpen(false); };
+  const toggleSelected = (c) => setSelected((cur) => {
+    const next = new Set(cur);
+    if (next.has(rowKey(c))) next.delete(rowKey(c)); else next.add(rowKey(c));
+    return next;
+  });
+  const showToast = (text) => { setToast(text); setTimeout(() => setToast((t) => (t === text ? null : t)), 4000); };
+  const runBulk = async (action, toBoard = null) => {
+    const rows = (deck?.cards || []).filter((c) => selected.has(rowKey(c)));
+    if (!rows.length) return;
+    const copies = rows.reduce((a, c) => a + c.quantity, 0);
+    if (action === "remove" && !window.confirm(`Remove ${plural(rows.length, "card")} (${plural(copies, "copy", "copies")}) from "${deck.name}"? History keeps the old list.`)) return;
+    setBulkBusy(true);
+    setActionError(null);
+    try {
+      const res = await api(`/api/decks/${id}/cards/bulk`, { method: "POST", json: {
+        action, to_board: toBoard, items: rows.map((c) => ({ name: c.name, board: c.board })) } });
+      if (res && Array.isArray(res.cards)) setDeck(res); else load();
+      stopSelecting();
+      showToast(action === "remove"
+        ? `Removed ${plural(res?.change?.rows ?? rows.length, "card")}.`
+        : `Moved ${plural(res?.change?.rows ?? rows.length, "card")} to ${BOARD_LABEL[toBoard]}.`);
+      onChanged();
+    } catch (err) {
+      setActionError(err.message);
+      setMoveOpen(false);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+  const afterAdd = (res) => {
+    setAdding(null);
+    if (res && Array.isArray(res.cards)) setDeck(res); else load();
+    const c = res?.change;
+    if (c) showToast(`Added ${c.added}× ${c.name} to ${BOARD_LABEL[c.board] || c.board}.`);
+    onChanged();
+  };
+
   // Card edits (board moves, quantity, commander). The answer is the updated
   // deck when the server sends one; otherwise the deck is reloaded.
   const runCardAction = async (path, method, json, kind) => {
@@ -4458,6 +4523,8 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
 
   const exportHref = `/api/decks/${id}/export`;
   const counts = deckCounts(deck);
+  const visibleKeys = grouped.flatMap((b) => b.cards.map(rowKey));
+  const allVisibleSelected = visibleKeys.length > 0 && visibleKeys.every((k) => selected.has(k));
 
   return (
     <div className="stack-lg">
@@ -4557,6 +4624,11 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
             <DeckExtras deck={deck} />
             <div className="row">
               <button type="button" className="btn primary" onClick={() => onAsk(deck)}><Icon.sparkle /> Ask the planner</button>
+              <button type="button" className="btn" onClick={() => setAdding("pick")}><Icon.plus /> Add card</button>
+              {deck.cards.length > 0 && (
+                <button type="button" className={`btn${selecting ? " primary" : ""}`} aria-pressed={selecting}
+                  onClick={() => (selecting ? stopSelecting() : setSelecting(true))}><Icon.check /> {selecting ? "Done" : "Select"}</button>
+              )}
               {deck.cards.length > 0 && <button type="button" className="btn" onClick={() => setBuildOpen(true)}><Icon.checklist /> Build list</button>}
               {deck.status === "built" && <button type="button" className="btn" onClick={() => setDeckBox(true)}><Icon.box /> Put into deck box</button>}
               <button type="button" className="btn" onClick={() => setHistoryOpen(true)}><Icon.history /> History</button>
@@ -4586,12 +4658,30 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
                 {b.byType.map((g) => (
                   <div key={g.type} className="type-group">
                     <h4>{g.type} ({g.cards.reduce((a, c) => a + c.quantity, 0)})</h4>
-                    {g.cards.map((c) => <DeckCardRow key={`${c.board}|${c.name}`} card={c} onOpenCard={onOpenCard} onActions={openActions} />)}
+                    {g.cards.map((c) => <DeckCardRow key={`${c.board}|${c.name}`} card={c} onOpenCard={onOpenCard} onActions={openActions}
+                      selecting={selecting} selected={selected.has(rowKey(c))} onToggle={() => toggleSelected(c)} />)}
                   </div>
                 ))}
               </div>
             </section>
           ))}
+          {selecting && (
+            <div className="commit-bar" role="region" aria-label="Selection">
+              <span className="grow small">{selected.size ? `${selected.size} selected` : "Tap cards to select"}</span>
+              <button type="button" className="btn ghost" onClick={() => setSelected(allVisibleSelected ? new Set() : new Set(visibleKeys))}>
+                {allVisibleSelected ? "None" : "All"}</button>
+              <button type="button" className="btn danger" disabled={!selected.size || bulkBusy} onClick={() => runBulk("remove")} aria-label="Remove the selected cards from the deck">
+                <Icon.trash /><span className="sel-del-label"> Remove</span></button>
+              <button type="button" className="btn primary" disabled={!selected.size || bulkBusy} onClick={() => setMoveOpen(true)} aria-label="Move the selected cards to another board">Move…</button>
+            </div>
+          )}
+          {toast && <div className="toast" role="status">{toast}</div>}
+          {moveOpen && <DeckMoveSheet count={selected.size} busy={bulkBusy} onClose={() => setMoveOpen(false)} onPick={(b) => runBulk("move", b)} />}
+          {adding === "pick" && (
+            <PrintingPicker title={`Add to ${deck.name}`} startInSearch onClose={() => setAdding(null)}
+              onPick={(p) => setAdding({ card: { scryfall_id: p.id, name: p.en_name || p.name, set_code: p.set, collector_number: p.cn } })} />
+          )}
+          {adding?.card && <AddToDeckSheet card={adding.card} deck={deck} onClose={() => setAdding(null)} onDone={afterAdd} />}
           {actionTarget && (
             <CardActionsSheet deck={deck} card={actionTarget} busy={cardBusy} error={cardError}
               onRun={runCardAction} onOpenCard={(cid) => { setActionCard(null); onOpenCard(cid); }}
@@ -9490,6 +9580,94 @@ function ValueOverview({ dataVersion, onOpenCard }) {
  * Add or edit a wishlist item. `card` = {scryfall_id?, oracle_id?, name, set_code?, collector_number?} for a new
  * item (no scryfall_id = any printing only), `item` = an existing item (GET /api/wishlist row).
  */
+const ADD_BOARDS = ["main", "side", "maybe", "commander"];
+
+/**
+ * Add a card to a deck: board + copies. With `deck` the deck is fixed (deck page → Add card), else a deck
+ * picker (card sheet → Add to deck; newest first, last choice remembered in mtg.addToDeck.last).
+ * POST /api/decks/:id/cards; onDone(res) gets the deck detail + change.
+ */
+function AddToDeckSheet({ card, deck: fixedDeck = null, onClose, onDone }) {
+  const [decks, setDecks] = useState(fixedDeck ? [fixedDeck] : null);
+  const [deckId, setDeckId] = useState(fixedDeck?.id ?? null);
+  const [board, setBoard] = useState("main");
+  const [qty, setQty] = useState(1);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    if (fixedDeck) return undefined;
+    let live = true;
+    api("/api/decks").then((d) => {
+      if (!live) return;
+      const list = asList(d).slice().sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+      setDecks(list);
+      const last = Number(store.get("mtg.addToDeck.last", 0));
+      setDeckId(list.some((x) => x.id === last) ? last : list[0]?.id ?? null);
+    }).catch((e) => { if (live) setError(`Could not load decks: ${e.message}`); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const target = decks?.find((d) => d.id === deckId) ?? null;
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy || !target) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await api(`/api/decks/${target.id}/cards`, { method: "POST", json: card.scryfall_id
+        ? { scryfall_id: card.scryfall_id, board, quantity: qty } : { name: card.name, board, quantity: qty } });
+      if (!fixedDeck) store.set("mtg.addToDeck.last", target.id);
+      onDone?.(res, target);
+    } catch (err) { setError(err.message); setBusy(false); }
+  };
+  const printing = card.set_code ? ` (${String(card.set_code).toUpperCase()} #${card.collector_number})` : "";
+  return (
+    <Sheet title={`Add ${card.name}`} onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
+        {!fixedDeck && (
+          <div className="field">
+            <label htmlFor="add-deck">Deck</label>
+            {decks == null && !error ? <span className="muted small">Loading decks…</span>
+              : decks?.length ? (
+                <select id="add-deck" className="select" value={deckId ?? ""} onChange={(e) => setDeckId(Number(e.target.value))}>
+                  {decks.map((d) => <option key={d.id} value={d.id}>{d.name}{d.status === "built" ? " (built)" : ""}</option>)}
+                </select>
+              ) : <span className="muted small">No decks yet. Create one in the Decks tab first.</span>}
+          </div>
+        )}
+        {target?.source === "manabox" && (
+          <div className="notice warn small">This deck comes from ManaBox: the next ManaBox import rebuilds it and drops cards added here.</div>
+        )}
+        <div className="field">
+          <span className="label" id="add-board">Board</span>
+          <div className="segmented wrap" role="group" aria-labelledby="add-board">
+            {ADD_BOARDS.map((b) => <button key={b} type="button" aria-pressed={board === b} onClick={() => setBoard(b)}>{BOARD_LABEL[b]}</button>)}
+          </div>
+        </div>
+        <QtyStepper label="Copies" value={qty} max={99} onChange={setQty} />
+        <span className="small muted">Printing: {card.scryfall_id ? `this one${printing}` : "one you own, else a current one"}.</span>
+        <ErrorNotice error={error} onDismiss={() => setError(null)} />
+        <div className="row">
+          <button type="submit" className="btn primary" disabled={busy || !target}><Icon.plus /> {busy ? "Adding…" : fixedDeck ? "Add to deck" : `Add to ${target ? target.name : "deck"}`}</button>
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+        </div>
+      </form>
+    </Sheet>
+  );
+}
+
+/** Move the selected deck rows to another board (deck page Select → Move to…). */
+function DeckMoveSheet({ count, onPick, onClose, busy }) {
+  return (
+    <Sheet title={`Move ${plural(count, "card")} to…`} onClose={onClose}>
+      <div className="stack">
+        {ADD_BOARDS.map((b) => (
+          <button key={b} type="button" className="btn" disabled={busy} onClick={() => onPick(b)} style={{ justifyContent: "flex-start" }}>{BOARD_LABEL[b]}</button>
+        ))}
+      </div>
+    </Sheet>
+  );
+}
+
 function WishSheet({ card = null, item = null, onClose, onDone }) {
   const editing = Boolean(item);
   const exactLabel = item ? `${(item.set_code || "").toUpperCase()} #${item.collector_number}` : card?.set_code ? `${String(card.set_code).toUpperCase()} #${card.collector_number}` : null;

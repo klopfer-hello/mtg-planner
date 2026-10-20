@@ -26,6 +26,14 @@ score) work.
   [collection.md](collection.md#importing-from-manabox)).
 - Add scanned cards straight to a deck (see
   [scanner.md](scanner.md#scan-list--binder-or-deck)).
+- **Add card** on a deck: search a card, pick the printing, choose the board
+  (main, side, maybe, commander) and the copies. From any card's details,
+  **Add to deck** does the same for a deck you pick.
+- **Select** on a deck: tick cards (or **All**), then **Remove** them or
+  **Move…** them to another board. One step = one version in **History**, so
+  you can go back.
+- One card at a time: the **⋯** next to a card changes copies, board or
+  commander, or removes it.
 
 Decks can be exported as a text list you can import elsewhere.
 
@@ -312,6 +320,8 @@ same-origin request.
 | --- | --- |
 | `GET /api/decks/:id` | the deck; adds `cover: {scryfall_id, name, image_small, image_normal, image_art, source}` (`source` is `commander` or `top`; null without a card image; the rows of `GET /api/decks` carry it too) and `accessories: {status, tokens: [{key, name, type_line, pt, colors, oracle_text, image_small, scryfall_ids, source, from: [{name, quantity, side?}], estimate, estimate_note, side_only?, owned: {quantity, binders: [{binder, quantity}]}}], markers: [{key, label, kind, note?, sizes?, from, side_only?}], maybe_skipped, unknown}`; `status` is `ok`, `pending` (token data is being fetched: read again after a few seconds) or `unavailable` (card text only); locked binders: `box {binder, via}` (the box this deck owns), per card `in_locked` (= `in_boxes`) `[{binder, deck_id, deck_name, quantity}]` (locked binders of other decks or nobody holding it) and `in_use_locked` (= `in_use_box`, the part of `in_use` lying there), `in_use_locked_count` (= `in_use_box_count`; the list rows carry it too), and `shopping.in_use[]` items add `boxes` and `in_box` |
 | `POST /api/decks/evaluate` | also returns `accessories` for the draft |
+| `POST /api/decks/:id/cards {scryfall_id \| name, board?, quantity?}` | add copies of a card (board `main` by default, 1-999 copies) to a board, merged into a row of the same name; by `scryfall_id` that printing, by `name` an owned printing first, else Scryfall's; returns the deck plus `change: {name, board, scryfall_id, added}`; 404 deck or card not found, 400 bad board/quantity/id |
+| `POST /api/decks/:id/cards/bulk {items: [{name, board}], action, to_board?}` | `action` `remove` or `move` (with `to_board`) for 1-500 rows in one step and one history version; returns the deck plus `change: {action, rows, copies, to_board}`; a row that isn't there → 404 and nothing changes |
 | `GET /api/decks/:id/build` | the build list: `{deck_id, name, status, box_binder, total, picked, complete, movable_picked, groups: [{key, kind, title, binder?, quantity, picked, lines: [{key, source, name, local_name?, quantity, picked, oracle_id, scryfall_id, image_small, mana_cost, cmc, colors, commander, binder?, decks?, price_eur?}]}]}` (`local_name` = the printed name in `CARD_NAME_LANG` when the card index has one); `kind` is `binder`, `other`, `basics`, `buy`, `box` or `tokens` (token lines with `token`, `need`; marker lines with `marker`; not counted in `total`/`picked`) |
 | `PUT /api/decks/:id/build/picks {key, source, quantity}` | tick (`quantity` = the line's copies) or untick (`0`) one line; returns the list; 404 when the line is gone |
 | `DELETE /api/decks/:id/build/picks` | untick everything; returns the list |

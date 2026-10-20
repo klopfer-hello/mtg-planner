@@ -18,7 +18,7 @@ import { accessoriesForRows, createAccessoryFetcher, ensureAccessoryData } from 
 import { syncEnglishPrices } from "./lib/prices.js";
 import {
   DECK_STATUSES, DeckError, bracketVerdict, buyListText, cardUsage, deckComboRequest, deckDetail, deckPower, draftDeck, eurForFinish, exportDeck, listDecks,
-  normalizeFormat, parseDecklist, saveDeck, setCommander, shoppingList, updateDeckCard,
+  addDeckCard, bulkDeckCards, normalizeFormat, parseDecklist, saveDeck, setCommander, shoppingList, updateDeckCard,
 } from "./lib/decks.js";
 import {
   SpellbookError, backoffUntil, createSpellbookScheduler, pruneSpellbookCache, seedSpellbookSettings, setSpellbookSettings, spellbookHealth, spellbookOptedOut,
@@ -676,6 +676,30 @@ async function patchDeckCard(req, id) {
   const change = deckCall(() => updateDeckCard(db, id, {
     name: optString(body.name, "name", 300), board: body.board, to_board: body.to_board ?? null, quantity: body.quantity ?? null,
   }));
+  scheduleSpellbook(id);
+  return { ...getDeckOr404(id), change };
+}
+
+/** POST /api/decks/:id/cards {scryfall_id | name, board?, quantity?} -> deck detail + change (added). */
+async function postDeckCard(req, id) {
+  const body = await readJson(req);
+  let change;
+  try {
+    change = await addDeckCard(db, id, {
+      scryfall_id: body.scryfall_id ?? null, name: optString(body.name, "name", 300) || null,
+      board: body.board ?? "main", quantity: body.quantity ?? 1,
+    });
+  } catch (err) {
+    throw err instanceof DeckError ? new HttpError(err.status, err.message) : err;
+  }
+  scheduleSpellbook(id);
+  return { ...getDeckOr404(id), change };
+}
+
+/** POST /api/decks/:id/cards/bulk {items[{name, board}], action remove|move, to_board?} -> deck detail + change. */
+async function postDeckCardsBulk(req, id) {
+  const body = await readJson(req);
+  const change = deckCall(() => bulkDeckCards(db, id, { items: body.items, action: body.action, to_board: body.to_board ?? null }));
   scheduleSpellbook(id);
   return { ...getDeckOr404(id), change };
 }
@@ -1794,8 +1818,10 @@ async function handleApi(req, res, url) {
   if ((m = /^\/api\/decks\/(\d+)\/(build(?:\/picks)?|history(?:\/\d+(?:\/restore)?)?)$/.exec(pathname))) {
     return sendJson(res, 200, await deckBuildHistoryApi(req, method, Number(m[1]), m[2]));
   }
-  if ((m = /^\/api\/decks\/(\d+)\/(cards|commander|to-binder|status-preview|combos)$/.exec(pathname))) {
+  if ((m = /^\/api\/decks\/(\d+)\/(cards|cards\/bulk|commander|to-binder|status-preview|combos)$/.exec(pathname))) {
     const id = Number(m[1]);
+    if (m[2] === "cards/bulk" && method === "POST") return sendJson(res, 200, await postDeckCardsBulk(req, id));
+    if (m[2] === "cards" && method === "POST") return sendJson(res, 200, await postDeckCard(req, id));
     if (m[2] === "combos" && method === "POST") return sendJson(res, 202, postDeckCombos(id));
     if (m[2] === "status-preview" && method === "GET") return sendJson(res, 200, statusPreview(id, query.get("status") || "built"));
     if (m[2] === "cards" && method === "PATCH") return sendJson(res, 200, await patchDeckCard(req, id));
