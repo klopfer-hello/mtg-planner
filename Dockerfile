@@ -77,6 +77,7 @@ WORKDIR /app
 COPY package.json server.js mcp-collection.js LICENSE THIRD_PARTY_NOTICES.md ./
 COPY lib ./lib
 COPY server ./server
+COPY mcp ./mcp
 COPY public ./public
 COPY --chmod=755 scripts/entrypoint.sh /usr/local/bin/mtg-planner-entrypoint
 
