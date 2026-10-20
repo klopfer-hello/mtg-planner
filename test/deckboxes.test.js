@@ -95,17 +95,17 @@ describe("locked binders (deck boxes are locked by default)", () => {
     const idea = deck("Plan", "idea", [row("Sol Ring", ID.sol, 1), row("Lightning Bolt", ID.lightning, 2), row("Counterspell", ID.counterspell, 1)]);
     const d = deckDetail(ctx.db, idea, { power: false });
     const sol = pick(d, "Sol Ring");
-    assert.deepEqual([sol.owned, sol.available_for_this, sol.in_use, sol.in_use_box, sol.to_buy, sol.conflict], [1, 0, 1, 1, 0, false]);
-    assert.deepEqual(sol.in_boxes, [{ binder: PRECON, deck_id: null, deck_name: null, quantity: 1 }]);
+    assert.deepEqual([sol.owned, sol.available_for_this, sol.in_use, sol.in_use_locked, sol.to_buy, sol.conflict], [1, 0, 1, 1, 0, false]);
+    assert.deepEqual(sol.in_locked, [{ binder: PRECON, deck_id: null, deck_name: null, quantity: 1 }]);
     const bolt = pick(d, "Lightning Bolt");
     assert.deepEqual([bolt.available_for_this, bolt.in_use, bolt.to_buy], [1, 1, 0], "the Unsorted copy is free");
-    assert.deepEqual([d.in_use_count, d.in_use_box_count, d.to_buy_count, d.conflict_count], [2, 2, 1, 0]);
+    assert.deepEqual([d.in_use_count, d.in_use_locked_count, d.to_buy_count, d.conflict_count], [2, 2, 1, 0]);
     assert.deepEqual(d.shopping.in_use.find((x) => x.name === "Sol Ring").boxes, [{ binder: PRECON, deck_id: null, deck_name: null }]);
-    assert.deepEqual([sol.in_locked, sol.in_use_locked, d.in_use_locked_count], [sol.in_boxes, 1, 2], "lock aliases");
+    assert.deepEqual([sol.in_boxes, sol.in_use_box, d.in_use_box_count], [undefined, undefined, undefined], "no old aliases");
     assert.match(deckToText(d), /IN USE 1 in locked binder Commander Deck: Rin and Seri \(can be moved\)/);
     assert.match(deckToText(d), /In locked binders: 2 cards/);
     const listed = listDecks(ctx.db).find((x) => x.id === idea);
-    assert.deepEqual([listed.in_use_box_count, listed.in_use_locked_count], [2, 2]);
+    assert.equal(listed.in_use_locked_count, 2);
     const u = cardUsage(ctx.db, { oracle_id: "o-solring", name: "Sol Ring" });
     assert.deepEqual([u.owned, u.built_demand, u.boxed, u.available], [1, 0, 1, 0]);
   });
@@ -122,7 +122,7 @@ describe("locked binders (deck boxes are locked by default)", () => {
     assert.match(deckToText(mine), /Deck box: Odds Box/);
     const theirs = pick(deckDetail(ctx.db, other, { power: false }), "Sol Ring");
     assert.deepEqual([theirs.available_for_this, theirs.in_use], [0, 1]);
-    assert.deepEqual(theirs.in_boxes, [{ binder: "Odds Box", deck_id: owner, deck_name: "Odds", quantity: 1 }]);
+    assert.deepEqual(theirs.in_locked, [{ binder: "Odds Box", deck_id: owner, deck_name: "Odds", quantity: 1 }]);
   });
 
   test("a built deck's own box and its claim reserve the same copies once", () => {
@@ -132,11 +132,11 @@ describe("locked binders (deck boxes are locked by default)", () => {
     const c = deck("C", "idea", [row("Lightning Bolt", ID.lightning, 3), row("Sol Ring", ID.sol, 3)]);
     const d = deckDetail(ctx.db, c, { power: false });
     const bolt = pick(d, "Lightning Bolt");
-    assert.deepEqual([bolt.available_for_this, bolt.in_use, bolt.in_use_box, bolt.in_boxes.length], [1, 2, 0, 0], "claim 2 ≥ box 1");
+    assert.deepEqual([bolt.available_for_this, bolt.in_use, bolt.in_use_locked, bolt.in_locked.length], [1, 2, 0, 0], "claim 2 ≥ box 1");
     // Box holds 3 Sol Rings, B claims 1: all 3 are reserved (1 by the claim, 2 by the box).
     const sol = pick(d, "Sol Ring");
-    assert.deepEqual([sol.available_for_this, sol.in_use, sol.in_use_box], [0, 3, 2]);
-    assert.deepEqual(sol.in_boxes, [{ binder: "Deck box: B", deck_id: b, deck_name: "B", quantity: 2 }]);
+    assert.deepEqual([sol.available_for_this, sol.in_use, sol.in_use_locked], [0, 3, 2]);
+    assert.deepEqual(sol.in_locked, [{ binder: "Deck box: B", deck_id: b, deck_name: "B", quantity: 2 }]);
     // B itself: its box is free for it.
     const own = deckDetail(ctx.db, b, { power: false });
     assert.deepEqual([pick(own, "Lightning Bolt").available_for_this, pick(own, "Sol Ring").available_for_this], [3, 3]);
@@ -163,7 +163,7 @@ describe("locked binders (deck boxes are locked by default)", () => {
     d = deckDetail(ctx.db, idea, { power: false });
     assert.deepEqual([pick(d, "Sol Ring").in_use, pick(d, "Lightning Bolt").in_use], [0, 1]);
     const b = listBinders(ctx.db).binders;
-    assert.deepEqual(b.map((x) => [x.name, x.locked, x.reserved, x.locked_set]), [[PRECON, false, false, false], ["Stuff", true, true, false]]);
+    assert.deepEqual(b.map((x) => [x.name, x.locked, x.locked_set]), [[PRECON, false, false], ["Stuff", true, false]]);
   });
 
   test("the user's lock wins over the type, both ways; null goes back to auto", () => {
@@ -218,7 +218,7 @@ describe("locked binders (deck boxes are locked by default)", () => {
     seed([[ID.forest, 5, PRECON]]);
     const idea = deck("Plan", "idea", [row("Forest", ID.forest, 5)]);
     const f = pick(deckDetail(ctx.db, idea, { power: false }), "Forest");
-    assert.deepEqual([f.in_use, f.to_buy, f.in_boxes], [0, 0, []]);
+    assert.deepEqual([f.in_use, f.to_buy, f.in_locked], [0, 0, []]);
   });
 });
 
@@ -325,7 +325,7 @@ describe("linking a box to a deck", () => {
     deck("Mono Blue Tempo", "idea", [row("Lightning Bolt", ID.lightning, 1)]);
     const list = () => listBinders(ctx.db).binders;
     const sl = list().find((x) => x.name.startsWith("Secret"));
-    assert.deepEqual([sl.reserved, sl.box_deck, sl.deck_suggest?.id], [true, null, odds]);
+    assert.deepEqual([sl.locked, sl.box_deck, sl.deck_suggest?.id], [true, null, odds]);
     assert.equal(list().find((x) => x.name.startsWith("Foundation")).deck_suggest, null);
     assert.equal(ctx.db.prepare("SELECT box_binder FROM decks WHERE id = ?").get(odds).box_binder, null, "not linked on its own");
     // Unlinked, the built deck sees its own precon box as in use (that's what the link fixes).

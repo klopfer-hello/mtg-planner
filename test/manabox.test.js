@@ -178,7 +178,7 @@ describe("importManaBoxCsv", () => {
     assert.equal(decks[0].source, "manabox");
     assert.equal(decks[0].card_count, 2);
     const detail = deckDetail(ctx.db, decks[0].id);
-    assert.equal(detail.missing_count, 0);
+    assert.equal(detail.to_buy_count, 0);
     assert.equal(detail.cards.find((c) => c.name === "Counterspell").owned, 2, "ownership spans printings and binders");
 
     // Re-syncing updates the same deck instead of creating a duplicate.

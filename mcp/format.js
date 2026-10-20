@@ -43,7 +43,7 @@ export const boxText = (boxes) => boxes.map((b) => `in locked binder ${b.binder}
 /** One line of list_decks / collection_overview. */
 export const deckLine = (k) =>
   `#${k.id} ${k.name}${k.format ? ` [${k.format}]` : ""} — ${k.status ?? "idea"}, ${k.card_count} cards, value €${(k.value_eur ?? 0).toFixed(2)}` +
-  `${k.missing_count ? `, to buy ${k.missing_count} (€${(k.missing_cost_eur ?? 0).toFixed(2)})` : ""}` +
+  `${k.to_buy_count ? `, to buy ${k.to_buy_count} (€${(k.to_buy_eur ?? 0).toFixed(2)})` : ""}` +
   `${k.in_use_count ? (k.status === "built"
     ? `, ${k.in_use_count} shared with other built decks (buy extra to play both)`
     : `, ${k.in_use_count} in other built decks (can be moved)`) : ""}` +

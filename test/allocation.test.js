@@ -87,23 +87,23 @@ describe("allocation", () => {
     const a = deckDetail(ctx.db, A);
     assert.equal(a.status, "built");
     const sol = pick(a, "Sol Ring");
-    assert.deepEqual([sol.owned, sol.available_for_this, sol.missing, sol.to_buy, sol.in_use, sol.conflict], [1, 0, 0, 0, 1, true],
+    assert.deepEqual([sol.owned, sol.available_for_this, sol.to_buy, sol.in_use, sol.conflict], [1, 0, 0, 1, true],
       "owned but contested: in use (conflict), not to buy");
     assert.deepEqual(sol.used_elsewhere, [{ deck_id: B, name: "B", status: "built", quantity: 1 }]);
     const counter = pick(a, "Counterspell");
-    assert.deepEqual([counter.owned, counter.available_for_this, counter.missing, counter.conflict], [2, 1, 0, false], "2 owned, 2 claimed: fine");
+    assert.deepEqual([counter.owned, counter.available_for_this, counter.to_buy, counter.conflict], [2, 1, 0, false], "2 owned, 2 claimed: fine");
     const forest = pick(a, "Forest");
-    assert.deepEqual([forest.basic, forest.missing, forest.conflict], [true, 0, false], "basics never conflict or go missing");
+    assert.deepEqual([forest.basic, forest.to_buy, forest.conflict], [true, 0, false], "basics never conflict or go missing");
     const atraxa = pick(a, "Atraxa, Praetors' Voice", "commander");
-    assert.deepEqual([atraxa.owned, atraxa.missing, atraxa.to_buy, atraxa.in_use, atraxa.conflict], [0, 1, 1, 0, false],
+    assert.deepEqual([atraxa.owned, atraxa.to_buy, atraxa.in_use, atraxa.conflict], [0, 1, 0, false],
       "short but no other deck involved: to buy, not a conflict");
-    assert.equal(pick(a, "Serra Angel", "maybe").missing, 0, "2 owned, nobody claims them");
+    assert.equal(pick(a, "Serra Angel", "maybe").to_buy, 0, "2 owned, nobody claims them");
     assert.equal(a.conflict_count, 1);
     assert.deepEqual(a.conflicts.map((c) => [c.name, c.owned, c.demand, c.decks.map((d) => d.name)]), [["Sol Ring", 1, 2, ["A", "B"]]]);
-    assert.deepEqual([a.missing_count, a.to_buy_count, a.in_use_count, a.in_use_eur], [1, 1, 1, 1.5]);
+    assert.deepEqual([a.to_buy_count, a.in_use_count, a.in_use_eur], [1, 1, 1.5]);
     assert.deepEqual(a.shopping.items.map((i) => [i.name, i.need, i.price_eur, i.cost_eur]), [["Atraxa, Praetors' Voice", 1, 20, 20]]);
     assert.equal(a.shopping.total_eur, 20);
-    assert.equal(a.shopping.total_eur, a.missing_cost_eur);
+    assert.equal(a.shopping.total_eur, a.to_buy_eur);
     assert.deepEqual(a.shopping.in_use, [{ name: "Sol Ring", oracle_id: "o-solring", quantity: 1, decks: [{ id: B, name: "B" }], boxes: [], in_box: 0, conflict: true, price_eur: 1.5, cost_eur: 1.5 }]);
     assert.equal(a.shopping.in_use_eur, 1.5);
     const text = deckToText(a);
@@ -117,33 +117,33 @@ describe("allocation", () => {
   test("idea deck claims nothing; owned copies claimed by built decks are in use, not to buy", () => {
     const c = deckDetail(ctx.db, C);
     assert.equal(c.status, "idea");
-    const st = (name) => { const x = pick(c, name); return [x.owned, x.available_for_this, x.to_buy, x.in_use, x.missing]; };
-    assert.deepEqual(st("Sol Ring"), [1, -1, 0, 1, 0]);
-    assert.deepEqual(st("Counterspell"), [2, 0, 0, 2, 0]);
-    assert.deepEqual(st("Lightning Bolt"), [1, 0, 0, 1, 0], "the only Bolt sits in built deck B");
+    const st = (name) => { const x = pick(c, name); return [x.owned, x.available_for_this, x.to_buy, x.in_use]; };
+    assert.deepEqual(st("Sol Ring"), [1, -1, 0, 1]);
+    assert.deepEqual(st("Counterspell"), [2, 0, 0, 2]);
+    assert.deepEqual(st("Lightning Bolt"), [1, 0, 0, 1], "the only Bolt sits in built deck B");
     assert.deepEqual(pick(c, "Lightning Bolt").used_elsewhere.map((d) => d.name), ["B"]);
     assert.equal(c.conflict_count, 0, "an idea deck never conflicts");
-    assert.deepEqual([c.missing_count, c.to_buy_count, c.in_use_count, c.missing_cost_eur, c.in_use_eur], [0, 0, 4, 0, 5.5]);
+    assert.deepEqual([c.to_buy_count, c.in_use_count, c.to_buy_eur, c.in_use_eur], [0, 4, 0, 5.5]);
     assert.deepEqual(c.shopping.items, []);
     assert.deepEqual(c.shopping.in_use.map((i) => [i.name, i.quantity, i.decks.map((d) => d.name), i.conflict, i.cost_eur]), [
       ["Counterspell", 2, ["A", "B"], false, 2], ["Lightning Bolt", 1, ["B"], false, 2], ["Sol Ring", 1, ["A", "B"], false, 1.5],
     ]);
     // Ideas don't take copies away from anyone.
-    assert.equal(pick(deckDetail(ctx.db, B), "Lightning Bolt").missing, 0);
+    assert.equal(pick(deckDetail(ctx.db, B), "Lightning Bolt").to_buy, 0);
   });
 
   test("listDecks, shoppingList, cardUsage; status changes move the claims", () => {
     const list = Object.fromEntries(listDecks(ctx.db).map((d) =>
-      [d.name, [d.status, d.conflict_count, d.missing_count, d.to_buy_count, d.in_use_count, d.missing_cost_eur, d.in_use_eur]]));
-    assert.deepEqual(list, { A: ["built", 1, 1, 1, 1, 20, 1.5], B: ["built", 1, 0, 0, 1, 0, 1.5], C: ["idea", 0, 0, 0, 4, 0, 5.5] });
+      [d.name, [d.status, d.conflict_count, d.to_buy_count, d.in_use_count, d.to_buy_eur, d.in_use_eur]]));
+    assert.deepEqual(list, { A: ["built", 1, 1, 1, 20, 1.5], B: ["built", 1, 0, 1, 0, 1.5], C: ["idea", 0, 0, 4, 0, 5.5] });
     const shop = shoppingList(ctx.db);
     assert.deepEqual(shop.built.items.map((i) => [i.name, i.short, i.price_eur, i.decks.map((d) => d.name)]), [
       ["Atraxa, Praetors' Voice", 1, 20, ["A"]], ["Sol Ring", 1, 1.5, ["A", "B"]],
     ], "basics never on the list");
     assert.equal(shop.built.total_eur, 21.5);
     assert.deepEqual(shop.built.items.find((i) => i.name === "Sol Ring").short, 1, "the global list still buys contested copies");
-    assert.deepEqual(shop.per_deck.map((d) => [d.name, d.status, d.missing_count, d.to_buy_count, d.in_use_count, d.missing_eur, d.in_use_eur]), [
-      ["A", "built", 1, 1, 1, 20, 1.5], ["B", "built", 0, 0, 1, 0, 1.5], ["C", "idea", 0, 0, 4, 0, 5.5],
+    assert.deepEqual(shop.per_deck.map((d) => [d.name, d.status, d.to_buy_count, d.in_use_count, d.to_buy_eur, d.in_use_eur]), [
+      ["A", "built", 1, 1, 20, 1.5], ["B", "built", 0, 1, 0, 1.5], ["C", "idea", 0, 4, 0, 5.5],
     ]);
     const usage = cardUsage(ctx.db, { oracle_id: "o-solring", name: "Sol Ring" });
     assert.deepEqual([usage.owned, usage.built_demand, usage.available], [1, 2, -1]);
@@ -241,19 +241,19 @@ describe("to buy vs in use (idea deck sharing cards with a built deck)", () => {
       row("Lightning Bolt", ID.lightning, 2), row("Counterspell", ID.counterspell, 1), row("Forest", ID.forest, 5),
       row("Serra Angel", ID.serra, 1, "maybe")]);
   });
-  const split = (d, name, board = "main") => { const c = pick(d, name, board); return [c.to_buy, c.in_use, c.missing, c.conflict]; };
+  const split = (d, name, board = "main") => { const c = pick(d, name, board); return [c.to_buy, c.in_use, c.conflict]; };
 
   test("owned once and claimed by a built deck: in use, not to buy; partial; unowned; basics; maybe", () => {
     const o = deckDetail(ctx.db, O);
-    assert.deepEqual(split(o, "Sol Ring"), [0, 1, 0, false], "own 1, in Turtle: in use");
+    assert.deepEqual(split(o, "Sol Ring"), [0, 1, false], "own 1, in Turtle: in use");
     assert.deepEqual(pick(o, "Sol Ring").used_elsewhere.map((d) => [d.deck_id, d.name]), [[T, "Turtle"]]);
-    assert.deepEqual(split(o, "Lightning Bolt"), [1, 1, 1, false], "need 2, own 1 in use: 1 to buy + 1 in use");
-    assert.deepEqual(split(o, "Atraxa, Praetors' Voice", "commander"), [1, 0, 1, false], "unowned: to buy");
-    assert.deepEqual(split(o, "Counterspell"), [0, 0, 0, false], "free copy: covered");
-    assert.deepEqual([...split(o, "Forest"), pick(o, "Forest").basic], [0, 0, 0, false, true], "basics never to buy or in use");
-    assert.deepEqual(split(o, "Serra Angel", "maybe"), [0, 1, 0, false], "maybe rows are marked but not counted");
-    assert.deepEqual([o.missing_count, o.to_buy_count, o.in_use_count], [2, 2, 2]);
-    assert.deepEqual([o.missing_cost_eur, o.in_use_eur, o.value.to_buy_eur, o.value.in_use_eur], [22, 3.5, 22, 3.5]);
+    assert.deepEqual(split(o, "Lightning Bolt"), [1, 1, false], "need 2, own 1 in use: 1 to buy + 1 in use");
+    assert.deepEqual(split(o, "Atraxa, Praetors' Voice", "commander"), [1, 0, false], "unowned: to buy");
+    assert.deepEqual(split(o, "Counterspell"), [0, 0, false], "free copy: covered");
+    assert.deepEqual([...split(o, "Forest"), pick(o, "Forest").basic], [0, 0, false, true], "basics never to buy or in use");
+    assert.deepEqual(split(o, "Serra Angel", "maybe"), [0, 1, false], "maybe rows are marked but not counted");
+    assert.deepEqual([o.to_buy_count, o.in_use_count], [2, 2]);
+    assert.deepEqual([o.to_buy_eur, o.in_use_eur, o.value.to_buy_eur, o.value.in_use_eur], [22, 3.5, 22, 3.5]);
     assert.equal(o.value.total_eur, Math.round((o.value.owned_eur + o.value.to_buy_eur) * 100) / 100);
     assert.deepEqual(o.shopping.items.map((i) => [i.name, i.need, i.cost_eur]), [["Atraxa, Praetors' Voice", 1, 20], ["Lightning Bolt", 1, 2]]);
     assert.equal(o.shopping.total_eur, 22);
@@ -270,26 +270,26 @@ describe("to buy vs in use (idea deck sharing cards with a built deck)", () => {
     assert.match(text, /1x Sol Ring .*\| IN USE 1 in other deck\(s\): Turtle \(can be moved\), owned 1, free 0 \|/);
     assert.match(text, /Owned but in other built decks \(move them over instead of buying\): 1x Lightning Bolt \(in Turtle\), 1x Sol Ring \(in Turtle\)/);
 
-    const rows = Object.fromEntries(listDecks(ctx.db).map((d) => [d.name, [d.missing_count, d.to_buy_count, d.in_use_count, d.missing_cost_eur, d.in_use_eur]]));
-    assert.deepEqual(rows, { Odds: [2, 2, 2, 22, 3.5], Turtle: [0, 0, 0, 0, 0] });
+    const rows = Object.fromEntries(listDecks(ctx.db).map((d) => [d.name, [d.to_buy_count, d.in_use_count, d.to_buy_eur, d.in_use_eur]]));
+    assert.deepEqual(rows, { Odds: [2, 2, 22, 3.5], Turtle: [0, 0, 0, 0] });
     const shop = shoppingList(ctx.db);
     assert.deepEqual(shop.built.items, [], "the idea deck adds nothing to the built shopping list");
-    assert.deepEqual(shop.per_deck.map((d) => [d.name, d.to_buy_count, d.in_use_count, d.missing_count, d.missing_eur, d.in_use_eur]), [
-      ["Turtle", 0, 0, 0, 0, 0], ["Odds", 2, 2, 2, 22, 3.5],
+    assert.deepEqual(shop.per_deck.map((d) => [d.name, d.to_buy_count, d.in_use_count, d.to_buy_eur, d.in_use_eur]), [
+      ["Turtle", 0, 0, 0, 0], ["Odds", 2, 2, 22, 3.5],
     ]);
   });
 
   test("set to built: in-use cards become conflicts, to buy unchanged, global list buys the contested copies", () => {
     setDeckStatus(ctx.db, O, "built");
     const o = deckDetail(ctx.db, O);
-    assert.deepEqual(split(o, "Sol Ring"), [0, 1, 0, true]);
-    assert.deepEqual(split(o, "Lightning Bolt"), [1, 1, 1, true]);
-    assert.deepEqual(split(o, "Serra Angel", "maybe"), [0, 1, 0, false], "maybe never claims nor conflicts");
+    assert.deepEqual(split(o, "Sol Ring"), [0, 1, true]);
+    assert.deepEqual(split(o, "Lightning Bolt"), [1, 1, true]);
+    assert.deepEqual(split(o, "Serra Angel", "maybe"), [0, 1, false], "maybe never claims nor conflicts");
     assert.deepEqual([o.to_buy_count, o.in_use_count, o.conflict_count], [2, 2, 2]);
     assert.ok(o.shopping.in_use.every((i) => i.conflict));
     const t = deckDetail(ctx.db, T);
-    assert.deepEqual(split(t, "Sol Ring"), [0, 1, 0, true], "the other built deck sees the same conflict");
-    assert.deepEqual(split(t, "Serra Angel"), [0, 0, 0, false]);
+    assert.deepEqual(split(t, "Sol Ring"), [0, 1, true], "the other built deck sees the same conflict");
+    assert.deepEqual(split(t, "Serra Angel"), [0, 0, false]);
     assert.deepEqual([t.to_buy_count, t.in_use_count, t.conflict_count], [0, 2, 2]);
     assert.deepEqual(shoppingList(ctx.db).built.items.map((i) => [i.name, i.short, i.cost_eur]), [
       ["Atraxa, Praetors' Voice", 1, 20], ["Lightning Bolt", 2, 4], ["Sol Ring", 1, 1.5],
@@ -304,7 +304,7 @@ describe("to buy vs in use (idea deck sharing cards with a built deck)", () => {
     deck("Other", "built", [row("Atraxa, Praetors' Voice", ID.atraxa, 1, "commander")]);
     setDeckStatus(ctx.db, O, "built");
     const o = deckDetail(ctx.db, O);
-    assert.deepEqual(split(o, "Atraxa, Praetors' Voice", "commander"), [1, 0, 1, true]);
+    assert.deepEqual(split(o, "Atraxa, Praetors' Voice", "commander"), [1, 0, true]);
     assert.match(deckToText(o), /Atraxa, Praetors' Voice .*TO BUY 1, owned 0, CONFLICT \(also in Other\)/);
   });
 });

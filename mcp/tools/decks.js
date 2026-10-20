@@ -199,7 +199,7 @@ function shoppingListTool() {
   if (perDeck.length) {
     lines.push("", "Per deck (to buy = not owned at all; in other decks = owned, claimed by another built deck, can be moved):");
     for (const k of perDeck) {
-      lines.push(`  #${k.id} ${k.name} [${k.status}]: ${k.to_buy_count} to buy, ${eur(k.missing_eur)}` +
+      lines.push(`  #${k.id} ${k.name} [${k.status}]: ${k.to_buy_count} to buy, ${eur(k.to_buy_eur)}` +
         `${k.in_use_count ? (k.status === "built"
           ? `; ${k.in_use_count} shared with other built decks (in the built shortage above)`
           : `; ${k.in_use_count} in other decks (buying instead ${eur(k.in_use_eur)})`) : ""}`);
