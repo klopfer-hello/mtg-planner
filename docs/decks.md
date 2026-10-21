@@ -60,7 +60,7 @@ Decks can be exported as a text list you can import elsewhere.
 
 The deck page is compact. **Chips** under the name open pop-ups: cards and value,
 bracket, power score, **Stats**, the deck box, **Tokens & extras** and the **Guide**
-(with a PDF download next to it). **Icon buttons** below: ✨ ask the planner, 📄 guide
+(with a PDF download next to it). **Icon buttons** below: ✨ the deck's planner chat, 📄 guide
 (a dot when one exists), ☑ build list, 🕘 history, ✏ edit, and **⋯** for put into deck
 box, export and delete. Above the cards: filter (only cards to buy), select and ＋ add.
 Hold the pointer on an icon (or long-press) to see its name.

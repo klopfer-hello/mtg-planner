@@ -41,6 +41,12 @@ kept short for a phone screen: the answer first, a few bullets, and a deck
 summary instead of the full list (ask for details when you want them).
 Conversations keep going across restarts (`--resume`).
 
+Each deck has **its own chat**: ✨ on a deck page opens it (made on first use,
+titled *Deck: name*) with everything said before, and sends nothing by itself.
+When that chat starts a new Claude session, the first message carries the
+deck's current list, notes and prices (what `get_deck` shows). Deleting the deck
+keeps the chat as a normal one.
+
 **Deck guides** (Decks → a deck → **Guide**) use Claude too, but not the chat:
 one request without any tools gets the deck's facts and list and answers with
 the strategy parts as JSON (`CLAUDE_GUIDE_MODEL`, default `sonnet`; budget

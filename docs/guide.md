@@ -393,6 +393,7 @@ Good to know:
   tells you the change first. Undo it in **Settings → Collection → Recent changes**.
 - Claude can **never delete** cards.
 - Old chats: tap **☰ Chats**. **＋ New chat** starts a fresh one.
+- Each deck has its own chat: ✨ on the deck page opens it again, with its history.
 
 > **If it doesn't work**
 >

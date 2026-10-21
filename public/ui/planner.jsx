@@ -11,6 +11,13 @@ const SUGGESTIONS = [
   "Find me all blue counterspells I own",
   "Build a deck only from free cards, without breaking my built decks",
 ];
+// A new deck chat: Claude already gets the deck with the first message.
+const DECK_SUGGESTIONS = [
+  "Give me a short analysis: mana curve, card types, key synergies, weak spots",
+  "Which of the missing cards matter most?",
+  "Suggest improvements, preferring cards I already own",
+  "How do I play this deck?",
+];
 
 function toolIcon(name = "") {
   if (/search|find|check_owned|alternatives|staples|synerg/.test(name)) return "🔍";
@@ -105,6 +112,7 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
   const [chatId, setChatId] = useState(() => store.get("mtg.chat", null));
   const chatIdRef = useRef(chatId);
   const [messages, setMessages] = useState([]);
+  const [chatDeck, setChatDeck] = useState(null); // {id, name, format, status} of a deck chat
   const [chatLoading, setChatLoading] = useState(false);
   const [serverBusy, setServerBusy] = useState(false);
   const [stream, setStream] = useState(null); // {text, tools} while this tab streams an answer
@@ -133,6 +141,7 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
       const d = await api(`/api/chats/${id}`);
       if (chatIdRef.current !== id) return;
       setMessages(d.messages);
+      setChatDeck(d.chat.deck);
       setServerBusy(d.busy);
     } catch (e) {
       if (chatIdRef.current !== id) return;
@@ -151,6 +160,7 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
     setChatId(id);
     store.set("mtg.chat", id);
     setMessages([]);
+    setChatDeck(null);
     setStream(null);
     setServerBusy(false);
     setError(null);
@@ -182,22 +192,20 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
     wasBusy.current = serverBusy;
   }, [serverBusy, loadChats, onChanged]);
 
-  async function send(textArg, targetId) {
-    const fromInput = textArg == null;
-    const text = (fromInput ? input : textArg).trim();
-    // An explicit target chat (deck prompt) was just created, so a stale busy flag doesn't apply.
-    if (!text || sending.current || streamCtl.current || (serverBusy && targetId == null)) return;
+  async function send() {
+    const text = input.trim();
+    if (!text || sending.current || streamCtl.current || serverBusy) return;
     sending.current = true;
     try {
-      await sendTurn(text, fromInput, targetId);
+      await sendTurn(text);
     } finally {
       sending.current = false;
     }
   }
 
-  async function sendTurn(text, fromInput, targetId) {
+  async function sendTurn(text) {
     setError(null);
-    let id = targetId ?? chatIdRef.current;
+    let id = chatIdRef.current;
     if (!id) {
       try {
         const chat = await api("/api/chats", { method: "POST", json: {} });
@@ -214,7 +222,7 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
     const tmpId = `tmp-${Date.now()}`;
     setMessages((m) => [...m, { id: tmpId, role: "user", content: text, tools: [], created_at: null }]);
     setStream({ text: "", tools: [] });
-    if (fromInput) setInput("");
+    setInput("");
     atBottom.current = true;
 
     const undo = (message, status) => {
@@ -262,19 +270,18 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
     loadChats();
   }
 
-  // "Ask the planner about this deck": start a fresh chat and send the prompt.
+  // "Ask the planner about this deck": open the deck's chat (made on first use) with its history.
+  // Nothing is sent; the server gives Claude the deck with the first message of a session.
   useEffect(() => {
     if (!request) return;
     onRequestHandled();
     (async () => {
-      if (streamCtl.current) { setError({ message: "Wait for the current answer to finish first." }); setInput(request.prompt); return; }
       try {
-        const chat = await api("/api/chats", { method: "POST", json: { title: request.title } });
-        setChats((cs) => [chat, ...(cs || [])]);
-        selectChat(chat.id, { load: false });
-        send(request.prompt, chat.id);
+        const chat = await api(`/api/decks/${request.deckId}/chat`, { method: "POST", json: {} });
+        setChats((cs) => (cs || []).some((c) => c.id === chat.id) ? cs.map((c) => (c.id === chat.id ? chat : c)) : [chat, ...(cs || [])]);
+        if (chatIdRef.current !== chat.id) selectChat(chat.id);
       } catch (e) {
-        setError({ message: `Could not create a chat: ${e.message}` });
+        setError({ message: `Could not open the deck's chat: ${e.message}` });
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -404,6 +411,7 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
   const chat = chats?.find((c) => c.id === chatId);
   const notConfigured = health && !health.claude_configured;
 
+  const suggest = (s) => { setInput(s); setTimeout(() => { const el = inputRef.current; if (el) { el.focus(); el.setSelectionRange(s.length, s.length); } }, 0); };
   const newChat = () => { selectChat(null); window.scrollTo(0, 0); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0); };
   const sidebar = (
     <>
@@ -454,16 +462,25 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
               <p style={{ margin: 0, maxWidth: 520 }}>Claude can search your collection, look cards up on Scryfall, check rules and prices, and save decks you'll find in the Decks tab.</p>
             </div>
             <div className="suggestions">
-              {SUGGESTIONS.map((s) => (
-                <button key={s} type="button" className="suggestion" onClick={() => { setInput(s); setTimeout(() => { const el = inputRef.current; if (el) { el.focus(); el.setSelectionRange(s.length, s.length); } }, 0); }}>{s}</button>
-              ))}
+              {SUGGESTIONS.map((s) => <button key={s} type="button" className="suggestion" onClick={() => suggest(s)}>{s}</button>)}
             </div>
           </div>
         )}
 
-        {chatId && !chatLoading && messages.length === 0 && !stream && !serverBusy && (
-          <p className="muted">No messages yet — say hello.</p>
-        )}
+        {chatId && !chatLoading && messages.length === 0 && !stream && !serverBusy && (chatDeck ? (
+          <div className="stack">
+            <div className="empty" style={{ paddingBottom: 8 }}>
+              <h3>{chatDeck.name}</h3>
+              <p style={{ margin: 0, maxWidth: 520 }}>
+                {[chatDeck.format, chatDeck.status === "built" ? "built" : "idea"].filter(Boolean).join(" · ")}. Claude gets this
+                deck's current list, notes and prices with your first message. <a href={`#decks/${chatDeck.id}`}>Open the deck</a>
+              </p>
+            </div>
+            <div className="suggestions">
+              {DECK_SUGGESTIONS.map((s) => <button key={s} type="button" className="suggestion" onClick={() => suggest(s)}>{s}</button>)}
+            </div>
+          </div>
+        ) : <p className="muted">No messages yet — say hello.</p>)}
 
         <div className="messages" aria-live="off">
           {messages.map((m) => <Message key={m.id} msg={m} />)}

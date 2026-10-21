@@ -1,11 +1,15 @@
 // Planner chats: list/create/read/delete, and one Claude turn per message
 // streamed as Server-Sent Events (start, text, tool, done, error). A turn is
 // not tied to the HTTP response: it finishes and is stored even if the
-// browser goes away.
+// browser goes away. A deck chat (chats.deck_id, one per deck) is reopened by
+// "Ask the planner" on that deck; a turn that starts a new CLI session gets the
+// deck's current state (as get_deck shows it) in front of the message.
 
 import crypto from "node:crypto";
 
 import { claudeConfigured, MAX_CONCURRENT, runTurn } from "../../lib/claude.js";
+import { deckDetail } from "../../lib/decks.js";
+import { deckToText } from "../../lib/decktext.js";
 import { HttpError, optString, parseJsonField, readJson, sendEmpty, sendJson } from "../http.js";
 
 const MAX_MESSAGE_CHARS = 20000;
@@ -19,9 +23,15 @@ export function chatRoutes(router, app) {
   const { runs } = app;
 
   function getChatOr404(id) {
-    const chat = app.db.prepare("SELECT id, title, session_id, created_at, updated_at FROM chats WHERE id = ?").get(id);
+    const chat = app.db.prepare("SELECT id, title, deck_id, session_id, created_at, updated_at FROM chats WHERE id = ?").get(id);
     if (!chat) throw new HttpError(404, "Chat not found");
     return chat;
+  }
+
+  /** A deck chat's deck as Claude's get_deck shows it ("" once the deck is gone). */
+  function deckContext(deckId) {
+    const detail = deckDetail(app.db, deckId);
+    return detail ? `(This chat is about the user's deck #${deckId}. Its current state; call get_deck again after changes:)\n${deckToText(detail)}` : "";
   }
 
   /** The last few messages before `beforeId`, for a turn that resumes a CLI session. */
@@ -52,7 +62,7 @@ export function chatRoutes(router, app) {
       const db = app.db;
       const isFirst = !db.prepare("SELECT 1 FROM messages WHERE chat_id = ? AND role = 'user' LIMIT 1").get(chatId);
       userMsgId = Number(db.prepare("INSERT INTO messages (chat_id, role, content) VALUES (?, 'user', ?)").run(chatId, text).lastInsertRowid);
-      const title = isFirst ? text.replace(/\s+/g, " ").slice(0, 60) : chat.title;
+      const title = isFirst && !chat.deck_id ? text.replace(/\s+/g, " ").slice(0, 60) : chat.title;
       db.prepare("UPDATE chats SET title = ?, updated_at = datetime('now') WHERE id = ?").run(title, chatId);
     } catch (err) {
       runs.delete(chatId);
@@ -76,10 +86,14 @@ export function chatRoutes(router, app) {
 
     let result;
     try {
+      // Only a new session needs the deck: a resumed one has it (and get_deck) already. If the stored
+      // session is gone, runTurn starts over with the recap, so the deck goes there too.
+      const deck = chat.deck_id ? deckContext(chat.deck_id) : "";
+      const recap = chat.session_id ? recapOf(chatId, userMsgId) : "";
       result = await runTurn({
-        prompt: text,
+        prompt: deck && !chat.session_id ? `${deck}\n\n(Message:)\n${text}` : text,
         sessionId: chat.session_id,
-        recap: chat.session_id ? recapOf(chatId, userMsgId) : "",
+        recap: deck && recap ? `${deck}\n\n${recap}` : recap,
         onEvent: send,
         signal: controller.signal,
       });
@@ -118,18 +132,34 @@ export function chatRoutes(router, app) {
   }
 
   router.get("/api/chats", () =>
-    app.db.prepare("SELECT id, title, created_at, updated_at FROM chats ORDER BY updated_at DESC, created_at DESC, rowid DESC").all());
+    app.db.prepare("SELECT id, title, deck_id, created_at, updated_at FROM chats ORDER BY updated_at DESC, created_at DESC, rowid DESC").all());
   router.post("/api/chats", async ({ req, res }) => {
     const body = await readJson(req);
     const title = optString(body.title, "title", 200) || "New chat";
     const id = crypto.randomUUID();
     app.db.prepare("INSERT INTO chats (id, title) VALUES (?, ?)").run(id, title);
-    sendJson(res, 201, app.db.prepare("SELECT id, title, created_at, updated_at FROM chats WHERE id = ?").get(id));
+    sendJson(res, 201, app.db.prepare("SELECT id, title, deck_id, created_at, updated_at FROM chats WHERE id = ?").get(id));
+  });
+  // The deck's chat: the existing one (200, title follows a renamed deck) or a new empty one (201).
+  router.post("/api/decks/:id(\\d+)/chat", ({ res, params }) => {
+    const db = app.db;
+    const deck = db.prepare("SELECT id, name FROM decks WHERE id = ?").get(Number(params.id));
+    if (!deck) throw new HttpError(404, "Deck not found");
+    const title = `Deck: ${deck.name}`.slice(0, 60);
+    const row = () => db.prepare("SELECT id, title, deck_id, created_at, updated_at FROM chats WHERE deck_id = ?").get(deck.id);
+    const found = row();
+    if (found) {
+      if (found.title !== title) db.prepare("UPDATE chats SET title = ? WHERE id = ?").run(title, found.id);
+      return { ...found, title };
+    }
+    db.prepare("INSERT INTO chats (id, title, deck_id) VALUES (?, ?, ?)").run(crypto.randomUUID(), title, deck.id);
+    sendJson(res, 201, row());
   });
   router.post(`/api/chats/${UUID}/messages`, ({ req, res, params }) => postMessage(req, res, params.id.toLowerCase()));
   router.get(`/api/chats/${UUID}`, ({ params }) => {
     const id = params.id.toLowerCase();
     const { session_id: _s, ...chat } = getChatOr404(id);
+    chat.deck = chat.deck_id ? app.db.prepare("SELECT id, name, format, status FROM decks WHERE id = ?").get(chat.deck_id) ?? null : null;
     const messages = app.db.prepare("SELECT * FROM messages WHERE chat_id = ? ORDER BY id").all(id).map(messageRow);
     return { chat, messages, busy: runs.has(id) };
   });

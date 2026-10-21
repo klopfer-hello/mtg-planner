@@ -113,7 +113,7 @@ describe("migrations v10-v14", () => {
     ctx.db.exec(`DROP TABLE deck_build_picks; DROP TABLE deck_versions; DROP TABLE wishlist; DROP TABLE value_history; DROP TABLE value_history_binders; DROP TABLE card_history;
       ALTER TABLE binders DROP COLUMN type; ALTER TABLE binders DROP COLUMN cover_scryfall_id; PRAGMA user_version = 9`);
     ctx.db.close();
-    assert.equal(SCHEMA_VERSION, 18);
+    assert.equal(SCHEMA_VERSION, 19);
     for (let i = 0; i < 2; i++) {
       const db = openDb(ctx.file);
       assert.equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
@@ -130,6 +130,27 @@ describe("migrations v10-v14", () => {
     const db = openDb(ctx.file);
     assert.equal(db.prepare("SELECT type FROM binders WHERE name = 'Box'").get().type, "trade", "kept on re-run");
     db.close(); // every connection is closed: the temp dir can be removed (also on Windows)
+  });
+});
+
+describe("migration v19", () => {
+  test("v18 -> v19: chats keep their rows with deck_id NULL; one chat per deck; idempotent re-run", () => {
+    ctx.db.prepare("INSERT INTO decks (name) VALUES ('D')").run();
+    ctx.db.exec(`DROP INDEX chats_deck; ALTER TABLE chats DROP COLUMN deck_id; PRAGMA user_version = 18;
+      INSERT INTO chats (id, title) VALUES ('c1', 'Old chat')`);
+    ctx.db.close();
+    for (let i = 0; i < 2; i++) {
+      const db = openDb(ctx.file);
+      assert.deepEqual({ ...db.prepare("SELECT title, deck_id FROM chats WHERE id = 'c1'").get() }, { title: "Old chat", deck_id: null });
+      db.exec("PRAGMA user_version = 18"); // re-run v19 on a migrated DB
+      db.close();
+    }
+    const db = openDb(ctx.file);
+    db.prepare("INSERT INTO chats (id, title, deck_id) VALUES ('c2', 'Deck: D', 1)").run();
+    assert.throws(() => db.prepare("INSERT INTO chats (id, title, deck_id) VALUES ('c3', 'Deck: D', 1)").run(), /UNIQUE/);
+    db.prepare("DELETE FROM decks WHERE id = 1").run();
+    assert.equal(db.prepare("SELECT deck_id FROM chats WHERE id = 'c2'").get().deck_id, null, "a deleted deck leaves a plain chat");
+    db.close();
   });
 });
 

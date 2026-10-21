@@ -107,11 +107,9 @@ function App() {
     window.scrollTo(0, 0);
   }, [switchTab]);
 
+  // Opens the deck's own planner chat (with its history); nothing is sent until the user asks.
   const askAboutDeck = useCallback((d) => {
-    const prompt = `Let's work on my deck #${d.id} "${d.name}"${d.format ? ` (${d.format})` : ""}. `
-      + `Load it with get_deck and give me a short analysis: mana curve, card-type balance, key synergies, weak spots, `
-      + `and which of the missing cards matter most (read the deck notes too). Suggest improvements, preferring cards I already own.`;
-    setPlannerRequest({ prompt, title: `Deck: ${d.name}`.slice(0, 60), nonce: Date.now() });
+    setPlannerRequest({ deckId: d.id, nonce: Date.now() });
     switchTab("planner");
   }, [switchTab]);
 
