@@ -147,6 +147,8 @@ DEPLOY_HOST=user@host DEPLOY_DIR=/path/to/compose/dir scripts/deploy.sh
 scripts/deploy.sh --image mtg-planner:<tag>   # switch back to an image still on the target
 # defaults for DEPLOY_HOST/DEPLOY_DIR can live in scripts/deploy.local.env (gitignored);
 # a dirty tree is refused unless --allow-dirty (version gets a .dirty suffix)
+scripts/prod-check.sh  # read-only: /healthz version, a few page/API answers, recent log errors on the target
+scripts/release.sh     # tags the deployed build (target must run HEAD), waits for CI, removes older releases
 
 # tests (node:test, offline: Scryfall and the Claude CLI are stubbed; OCR and
 # djpeg tests skip when tesseract/djpeg/cjpeg are not installed)
