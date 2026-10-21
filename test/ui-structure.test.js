@@ -96,9 +96,12 @@ describe("public/index.html", () => {
       for (let j = 0; j < lines.length; j++) {
         const line = lines[j];
         const init = /^(?:const|let)\s+[\w${},\s:]+=\s*(.*)$/.exec(line);
-        if (!init) continue;
-        if (/^(?:\(?[\w$,\s{}=[\]]*\)?\s*=>|async\s|function\b|class\b)/.test(init[1])) continue; // runs later
-        for (const ref of init[1].match(/[A-Za-z_$][\w$]*/g) ?? []) {
+        // Bare statements at column 0 run at load too: `if (x) Later.y()`, `register(Later)`, `ReactDOM.createRoot(…)`.
+        const bare = init ? null : /^((?:if\s*\(|[A-Za-z_$][\w$.]*\s*\().*)$/.exec(line);
+        if (!init && !bare) continue;
+        const code = init ? init[1] : bare[1];
+        if (init && /^(?:\(?[\w$,\s{}=[\]]*\)?\s*=>|async\s|function\b|class\b)/.test(code)) continue; // runs later
+        for (const ref of code.match(/[A-Za-z_$][\w$]*/g) ?? []) {
           const at = owner.get(ref);
           assert.ok(at == null || at <= i, `${s.file}:${j + 1} uses ${ref} from the later script ${scripts[at]?.file}`);
         }

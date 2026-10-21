@@ -321,7 +321,7 @@ function CommitSheet({ ids, onClose, onDone }) {
             {binders?.map((b) => (
               <label key={b.name} className="radio-card">
                 <input type="radio" name="binder" checked={binder === b.name} onChange={() => setBinder(b.name)} />
-                <span className="grow"><b>{b.name}</b><br /><span className="small muted">{plural(b.copies ?? b.cards ?? 0, "copy", "copies")}{b.sources ? ` · ${[].concat(b.sources).join(", ")}` : ""}</span></span>
+                <span className="grow"><b>{b.name}</b><br /><span className="small muted">{plural(b.copies, "copy", "copies")}{b.sources ? ` · ${[].concat(b.sources).join(", ")}` : ""}</span></span>
               </label>
             ))}
             <label className="radio-card">

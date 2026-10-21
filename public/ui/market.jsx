@@ -163,7 +163,7 @@ function ValueOverview({ dataVersion, onOpenCard }) {
                     <span className="q">{m.held}×</span>
                     <span className="main">
                       <span className="nm"><b>{m.name}</b>{m.finish !== "normal" && <span className="badge accent">✦ {m.finish}</span>}</span>
-                      <span className="sub">{(m.set_code || "").toUpperCase()} #{m.collector_number} · {fmtEur(m.from_eur)} → {fmtEur(m.to_eur)}</span>
+                      <span className="sub">{setNumberOf(m)} · {fmtEur(m.from_eur)} → {fmtEur(m.to_eur)}</span>
                     </span>
                     <span className="end">
                       <b className={signClass(m.change_total_eur)}>{fmtSigned(m.change_total_eur)}</b>
@@ -188,7 +188,7 @@ function ValueOverview({ dataVersion, onOpenCard }) {
                   <span className="q">{i + 1}</span>
                   <span className="main">
                     <span className="nm"><b>{t.name}</b>{t.finish !== "normal" && <span className="badge accent">✦ {t.finish}</span>}</span>
-                    <span className="sub">{(t.set_code || "").toUpperCase()} #{t.collector_number} · {asList(t.binders).map((b) => `${b.binder || UNSORTED}${t.binders.length > 1 ? ` ${b.quantity}×` : ""}`).join(", ")}</span>
+                    <span className="sub">{setNumberOf(t)} · {asList(t.binders).map((b) => `${b.binder || UNSORTED}${t.binders.length > 1 ? ` ${b.quantity}×` : ""}`).join(", ")}</span>
                   </span>
                   <span className="end">
                     <b>{fmtEur(t.price_eur)}</b>
@@ -255,7 +255,7 @@ function AddToDeckSheet({ card, deck: fixedDeck = null, onClose, onDone }) {
       onDone?.(res, target);
     } catch (err) { setError(err.message); setBusy(false); }
   };
-  const printing = card.set_code ? ` (${String(card.set_code).toUpperCase()} #${card.collector_number})` : "";
+  const printing = card.set_code ? ` (${setNumberOf(card)})` : "";
   return (
     <Sheet title={`Add ${card.name}`} onClose={onClose}>
       <form className="stack" onSubmit={submit}>
@@ -306,7 +306,7 @@ function DeckMoveSheet({ count, onPick, onClose, busy }) {
 
 function WishSheet({ card = null, item = null, onClose, onDone }) {
   const editing = Boolean(item);
-  const exactLabel = item ? `${(item.set_code || "").toUpperCase()} #${item.collector_number}` : card?.set_code ? `${String(card.set_code).toUpperCase()} #${card.collector_number}` : null;
+  const exactLabel = item ? `${setNumberOf(item)}` : card?.set_code ? `${setNumberOf(card)}` : null;
   const canExact = editing || Boolean(card?.scryfall_id);
   const [any, setAny] = useState(item ? item.any_printing : true);
   const [qty, setQty] = useState(item?.quantity ?? card?.quantity ?? 1);
@@ -377,7 +377,7 @@ function WishSheet({ card = null, item = null, onClose, onDone }) {
 }
 
 function WishRow({ it, onEdit, onRemove, selecting = false, selected = false, onToggle = null }) {
-  const printing = it.any_printing ? "any printing" : `${(it.set_code || "").toUpperCase()} #${it.collector_number}`;
+  const printing = it.any_printing ? "any printing" : `${setNumberOf(it)}`;
   const bits = [printing, it.finish ? (it.finish === "normal" ? "non-foil" : it.finish) : null, `own ${it.owned}`,
     it.max_price_eur != null ? `max ${fmtEur(it.max_price_eur)}` : null].filter(Boolean);
   return (

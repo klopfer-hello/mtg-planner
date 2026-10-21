@@ -219,6 +219,15 @@ describe("identify: modern collector line", () => {
     assert.equal(ja.r.store.id, "neo-301-en", "no German printing -> English");
   });
 
+  test("a failing storage lookup keeps the identified scan (detected printing stored)", async () => {
+    const index = makeIndex();
+    index.storagePrinting = async () => { throw new Error("matcher restarting"); };
+    const { r } = await run({ line: modernLine(), title: "Shivan Devastator", settings: { storageLang: "fr" }, index });
+    assert.equal(r.status, "auto");
+    assert.equal(r.store.id, "dmu-107-en");
+    assert.ok(r.features.errors.includes("storage: matcher restarting"));
+  });
+
   test("exact line, unreadable title, fingerprint confirms -> auto (ocr+fingerprint)", async () => {
     const matcher = makeMatcher({ scores: { "dmu-107-en": 0.12 }, top: [{ printing_id: "dmu-107-en", oracle_id: "o-shivan-devastator", name: "Shivan Devastator", score: 0.12 }], gap: 0.2 });
     const { r } = await run({ line: modernLine(), title: "", matcher });

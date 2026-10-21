@@ -465,19 +465,15 @@ function sideCov(L, a, b) {
   return c / Math.max(1e-6, hi - lo);
 }
 
-function sideCoverage(L, a, b) {
-  // fraction of the side a->b (inner 8..92%) covered by line L's intervals
+function sideOvershoot(L, a, b) {
+  // line L's support well beyond the corners of the side a->b (a long straight background edge),
+  // as a fraction of the side's length; the coverage itself is sideCov
   const ta = L.dx * a[0] + L.dy * a[1], tb = L.dx * b[0] + L.dy * b[1];
-  let lo = Math.min(ta, tb), hi = Math.max(ta, tb);
-  const len = hi - lo;
-  lo += 0.08 * len; hi -= 0.08 * len;
-  let c = 0;
-  for (const v of L.iv) { const x0 = Math.max(lo, v[0]), x1 = Math.min(hi, v[1]); if (x1 > x0) c += x1 - x0; }
-  // overshoot: line support well beyond the corners (a long straight background edge)
+  const len = Math.max(ta, tb) - Math.min(ta, tb);
   let over = 0;
   const olo = Math.min(ta, tb) - 0.15 * len, ohi = Math.max(ta, tb) + 0.15 * len;
   for (const v of L.iv) { if (v[0] < olo) over += Math.min(olo, v[1]) - v[0]; if (v[1] > ohi) over += v[1] - Math.max(ohi, v[0]); }
-  return { cov: c / Math.max(1e-6, hi - lo), over: over / len };
+  return over / len;
 }
 
 function hypotheses(lines, w, h, P) {
@@ -503,7 +499,7 @@ function hypotheses(lines, w, h, P) {
     return key;
   };
   const overOf = (key, L, o1, o2) => {
-    if (ovC[key] < 0) ovC[key] = sideCoverage(L, X[L.id * n + o1.id], X[L.id * n + o2.id]).over;
+    if (ovC[key] < 0) ovC[key] = sideOvershoot(L, X[L.id * n + o1.id], X[L.id * n + o2.id]);
     return ovC[key];
   };
   const pairs = [];
@@ -1235,10 +1231,8 @@ function frameAnchor(img, q, P, pr) {
     const pA = mid(bA)[0] * dn[0] + mid(bA)[1] * dn[1], pB = mid(bB)[0] * dn[0] + mid(bB)[1] * dn[1];
     if (pB > pA) tlIdx = (tlIdx + 2) & 3;
   }
-  const bottomSide = (tlIdx + 2) & 3; // side index in F/q (side i runs F[i] -> F[i+1])
   const bw = [0, 0, 0, 0]; // border per q side: card-local top/right/bottom/left
   for (let j = 0; j < 4; j++) bw[(tlIdx + j) & 3] = BM[j];
-  void bottomSide;
   // card sides as outward offsets (mm) from q's sides; then a narrow search for the (faint) real edge
   const oc = [bw[0] - top, right + bw[1] - uMM, bot + bw[2] - vMM, bw[3] - left];
   const snapped = [0, 0, 0, 0];

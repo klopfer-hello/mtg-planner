@@ -13,7 +13,7 @@ function ScanRow({ s, status, selected, onSelect, onPatch, onDelete, onIncrement
   const thumb = scanThumb(s);
   const ld = (s.lang_detected || "").toUpperCase(), ls = (s.store_lang || "").toUpperCase();
   return (
-    <div className={`scan-row st-${status}`} aria-selected={selected}>
+    <div className={`scan-row st-${status}${selected ? " selected" : ""}`}>
       <label className="sel"><input type="checkbox" checked={selected} onChange={(e) => onSelect(e.target.checked)} aria-label={`Select ${s.name || "scan"}`} /></label>
       <button type="button" className="thb" onClick={onPick} aria-label={`Change printing of ${s.name || "scan"}`}>
         {thumb ? <img className="th" src={thumb} alt="" loading="lazy" decoding="async" /> : <span className="th" />}
@@ -24,7 +24,7 @@ function ScanRow({ s, status, selected, onSelect, onPatch, onDelete, onIncrement
           <span className={`badge st-chip ${status}`}>{status === "auto" && s.match_status === "confirmed" ? "✓ confirmed" : STATUS_LABEL[status] || status}</span>
         </div>
         <div className="sub">
-          {s.set_code && <span>{String(s.set_code).toUpperCase()} #{s.collector_number}</span>}
+          {s.set_code && <span>{setNumberOf(s)}</span>}
           {ld && ls && ld !== ls
             ? <span className="badge" title="Detected language → stored language">{`${ld}→${ls}`}</span>
             : <LangTag lang={ls || ld} />}
@@ -33,14 +33,14 @@ function ScanRow({ s, status, selected, onSelect, onPatch, onDelete, onIncrement
         </div>
       </div>
       <div className="ctrls">
-        <Stepper label="Quantity" value={qty} onChange={(n) => (n > qty ? onIncrement() : onPatch({ quantity: n }))} />
+        <Stepper label={`Quantity of ${s.name || "scan"}`} value={qty} onChange={(n) => (n > qty ? onIncrement() : onPatch({ quantity: n }))} />
         <button type="button" className={`btn sm finish-btn ${finish}${finishGuessed(s) ? " finish-q" : ""}`} disabled={fins.length < 2}
           title={fins.length < 2 ? `Only printed ${FINISH_LABEL[finish] || finish}` : `${finishGuessed(s) ? "Not read from the card (session setting). " : ""}Switch to ${FINISH_LABEL[nextFinish]}`}
           onClick={() => onPatch({ finish: nextFinish })}>{finish !== "nonfoil" && "✦ "}{FINISH_LABEL[finish] || finish}{finishGuessed(s) ? "?" : ""}</button>
-        <select className="select" aria-label="Condition" value={s.condition || "near_mint"} onChange={(e) => onPatch({ condition: e.target.value })}>
+        <select className="select" aria-label={`Condition of ${s.name || "scan"}`} value={s.condition || "near_mint"} onChange={(e) => onPatch({ condition: e.target.value })}>
           {CONDITIONS.map(([k, , short]) => <option key={k} value={k}>{short}</option>)}
         </select>
-        <select className="select" aria-label="Store as language" value={s.store_lang || "en"} onChange={(e) => onPatch({ store_lang: e.target.value })}>
+        <select className="select" aria-label={`Store ${s.name || "scan"} as language`} value={s.store_lang || "en"} onChange={(e) => onPatch({ store_lang: e.target.value })}>
           {SCAN_LANGS.map(([k]) => <option key={k} value={k}>{k.toUpperCase()}</option>)}
         </select>
         {status === "suggest" && <button type="button" className="btn sm" onClick={onConfirm}><Icon.check /> Confirm</button>}
@@ -64,6 +64,7 @@ const newProbeSession = () => `p-${Date.now().toString(36)}-${Math.random().toSt
 function ScanTab({ active, health, onCommitted }) {
   const [lib, setLib] = useState(null);
   const [libError, setLibError] = useState(null);
+  const [libTry, retryLib] = useReducer((x) => x + 1, 0);
   const [settings, setSettings] = useState(() => ({ ...SCAN_DEFAULTS, ...(store.get("mtg.scan.settings", {}) || {}) }));
   // One-time notice for users whose saved setting is the old default "Store as English".
   const [langNotice, setLangNotice] = useState(() => (store.get("mtg.scan.settings", {}) || {}).storageLang === "en" && !store.get("mtg.scan.langNoticeSeen", false));
@@ -120,6 +121,7 @@ function ScanTab({ active, health, onCommitted }) {
         try { soundsRef.current = m.createScanSounds ? m.createScanSounds() : null; } catch { soundsRef.current = null; }
         setCapMod(c);
         setLib(m);
+        setLibError(null);
       })
       .catch((e) => { if (alive) setLibError(`Could not load the scanner: ${e.message}`); });
     // The auto-ask module is optional: without it the scanner works as before (shutter only).
@@ -130,7 +132,7 @@ function ScanTab({ active, health, onCommitted }) {
       })
       .catch(() => {});
     return () => { alive = false; };
-  }, [active, lib]);
+  }, [active, lib, libTry]);
 
   const pushItem = useCallback((item) => {
     const q = queueRef.current;
@@ -627,7 +629,7 @@ function ScanTab({ active, health, onCommitted }) {
   return (
     <div className="scan">
       <div className="scan-main">
-        {libError && <ErrorNotice error={libError} />}
+        {libError && <ErrorNotice error={libError} onRetry={() => { setLibError(null); retryLib(); }} />}
         {scanner && scanner.index_ready === false && (
           <div className="notice warn" role="status"><span aria-hidden="true">⏳</span><div className="grow">The card index is still being built. Scanning works once it's ready (see Settings → Scanner &amp; data).</div></div>
         )}

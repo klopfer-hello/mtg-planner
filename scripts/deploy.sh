@@ -151,12 +151,28 @@ if [[ "$resolved" != "$image" ]]; then
   exit 1
 fi
 
-if ! docker compose up -d "$service"; then
-  echo "docker compose up failed; .env points at ${image}" >&2
-  echo "roll back with: scripts/deploy.sh --image ${previous:-<previous tag>}" >&2
+# A switch that fails goes back to the previous image on its own: .env is restored and that
+# container started again (an older image runs fine on a newer schema: migrations only add).
+# Without a previous image (first deploy) there is nothing to go back to.
+rollback() {
+  echo "$1" >&2
+  if [[ -z "$previous" || "$previous" == "$image" ]]; then
+    echo "no previous image to roll back to; .env points at ${image}" >&2
+    rm -f .env.deploy-prev
+    exit 1
+  fi
+  restore_env
+  if docker compose up -d "$service"; then
+    echo "ROLLED BACK to ${previous}: check it with scripts/prod-check.sh" >&2
+  else
+    echo "rollback to ${previous} failed too: run scripts/deploy.sh --image ${previous}" >&2
+  fi
   exit 1
+}
+
+if ! docker compose up -d "$service"; then
+  rollback "docker compose up failed for ${image}"
 fi
-rm -f .env.deploy-prev
 
 echo "==> Waiting up to ${timeout}s for ${container} to become healthy"
 status=missing
@@ -170,19 +186,20 @@ while (( SECONDS < deadline )); do
 done
 running=$(docker inspect -f '{{.Config.Image}}' "$container" 2>/dev/null || true)
 if [[ "$running" != "$image" ]]; then
-  echo "container runs '${running}', expected ${image}" >&2
-  exit 1
+  rollback "container runs '${running}', expected ${image}"
 fi
 if [[ "$status" != healthy ]]; then
   docker logs --tail 50 "$container" >&2 || true
   if [[ "$status" == starting ]]; then
+    # A first start installs the Claude CLI and can take long: no automatic rollback while it may still come up.
+    rm -f .env.deploy-prev
     echo "still starting after ${timeout}s: check docker logs and /healthz again before rolling back" >&2
-  else
-    echo "container is ${status}" >&2
+    echo "roll back with: scripts/deploy.sh --image ${previous:-<previous tag>}" >&2
+    exit 1
   fi
-  echo "roll back with: scripts/deploy.sh --image ${previous:-<previous tag>}" >&2
-  exit 1
+  rollback "container is ${status}"
 fi
+rm -f .env.deploy-prev
 docker exec "$container" node -e "fetch('http://127.0.0.1:8080/healthz').then(r => r.json()).then(h => console.log('==> /healthz', h.version, 'ok=' + h.ok))"
 echo "previous image: ${previous:-none} (rollback: scripts/deploy.sh --image ${previous:-<tag>})"
 

@@ -119,11 +119,10 @@ open the same main database file, which runs in WAL mode with a busy timeout.
   to binders and decks).
 - `lib/debugsessions.js`: the store for recorded scan sessions.
 - `mcp-collection.js`: hand-rolled MCP stdio server (JSON-RPC 2.0); the
-  tools live in `mcp/tools/*.js`, shared state and text helpers in `mcp/`. Tools: `collection_overview`, `search_collection`, `check_owned`, `get_card`,
-  `list_decks`, `get_deck`, `shopping_list`, `list_binders`, `save_deck` and
-  `edit_copies` (read-only apart from `save_deck` and `edit_copies`, no
-  delete; binder names, each row's source, ManaBox, scan or app, and owned
-  vs. free copies are visible to Claude).
+  tools live in `mcp/tools/*.js`, shared state and text helpers in `mcp/`. The
+  tool list, which of them write and what they cannot do (no delete, no
+  backups) is in [claude.md](claude.md#what-the-planner-does);
+  `test/mcp-collection.test.js` pins it.
 - `public/`: the single-page web app, with no build step: `index.html` loads
   `app.css` and the React components in `public/ui/*.jsx` (one file per area,
   compiled in the browser by Babel standalone, run in order in one shared

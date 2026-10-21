@@ -434,17 +434,22 @@ export async function grabStill(video, track, corners, { preferPhoto = true, tim
   const vw = video.videoWidth, vh = video.videoHeight;
   let drift = null, reject = null;
   if (preferPhoto && track && typeof globalThis.ImageCapture === "function" && typeof createImageBitmap === "function") {
+    // The full-resolution bitmap is closed on every path that does not return it (also when the re-detect throws).
+    let bmp = null;
     try {
       const ic = new globalThis.ImageCapture(track);
       const blob = await withTimeout(ic.takePhoto(), timeoutMs);
-      const bmp = await createImageBitmap(blob);
+      bmp = await createImageBitmap(blob);
       const info = {};
       const q = mapToPhoto(bmp, vw, vh, corners, { detOpts, info });
       drift = Number.isFinite(info.drift) ? Math.round(info.drift * 1e4) / 1e4 : null;
-      if (q) return { source: bmp, w: bmp.width, h: bmp.height, corners: q, kind: "photo", drift, reject: null };
+      if (q) {
+        const photo = bmp;
+        bmp = null;
+        return { source: photo, w: photo.width, h: photo.height, corners: q, kind: "photo", drift, reject: null };
+      }
       reject = info.reason || "unknown";
-      bmp.close?.();
-    } catch { reject = reject || "error"; /* fall back to the video frame */ }
+    } catch { reject = reject || "error"; /* fall back to the video frame */ } finally { bmp?.close?.(); }
   }
   return { source: video, w: vw, h: vh, corners, kind: "video", drift, reject };
 }

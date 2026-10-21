@@ -126,7 +126,7 @@ export function seedCollection(db, rows) {
 export function stubScryfall(pool = SCRYFALL_CARDS) {
   const original = globalThis.fetch;
   const calls = [];
-  setThrottle({ minMs: 0, limitedMs: 0 });
+  setThrottle({ minMs: 0, limitedMs: 0, retryMs: 0, lockoutMs: 0 });
   const lc = (s) => String(s ?? "").toLowerCase();
   const match = (ident) => pool.find((c) => {
     if (ident.id) return c.id === ident.id;

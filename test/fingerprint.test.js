@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { openIndex, refreshIndex, indexStatus } from "../lib/cardindex.js";
 import {
-  FP_BYTES, Matcher, areaResample, buildFingerprints, checkJpegSize, cropRows, decodeJpeg, encodeJpeg, fingerprintKey,
+  FP_BYTES, Matcher, areaResample, buildFingerprints, checkJpegSize, cropRows, decodeJpeg, encodeJpeg, fetchImage, fingerprintKey,
   hashCard, hashQuery, jpegSize, parsePnm, rotate180, score, uprightJpegs,
 } from "../lib/fingerprint.js";
 // synth(): seeded procedural "card": shaded background with coloured rectangles
@@ -39,6 +39,12 @@ function capture(src, { w = 1000, h = 1400, shift = 0.01, gain = 1.08, noise = 1
   }
   return { width: w, height: h, channels: 3, data };
 }
+
+describe("fetchImage", () => {
+  test("a redirect chain longer than 5 hops is refused (no network: refused before any request)", async () => {
+    await assert.rejects(fetchImage("https://cards.scryfall.io/x.jpg", { hops: 6 }), /too many redirects/);
+  });
+});
 
 describe("pixels", () => {
   test("parsePnm reads P5/P6 headers with comments", () => {
@@ -194,6 +200,7 @@ describe("buildFingerprints + Matcher", () => {
     assert.equal(keyOf(7), keyOf(2), "placeholder fr copy maps to the en fingerprint");
     assert.notEqual(keyOf(8), keyOf(1), "showcase frame is its own group");
     assert.ok(keyOf(9, 1) && keyOf(9, 1) !== keyOf(9, 0), "DFC faces hashed separately");
+    assert.equal(idx.prepare("SELECT 1 FROM sqlite_master WHERE name = 'printing_fp_new'").get(), undefined, "the staging map was swapped in and dropped");
 
     fetched.length = 0;
     const again = await buildFingerprints(idx, opts({ sets: [], fetchImage: async () => { throw new Error("must not fetch"); } }));

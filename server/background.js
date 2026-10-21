@@ -18,7 +18,7 @@ import { schedulerConfig } from "../lib/scheduler.js";
 
 const CARD_FACTS_RETRY_MS = 60_000;
 
-/** `app` gives db, importBusy, restoring, shuttingDown, exclusiveUnlessRestoring() and scanner.indexPrices(). */
+/** `app` gives db, importBusy, restoring, shuttingDown, exclusive() (503 while restoring) and scanner.indexPrices(). */
 export function createBackground(app) {
   const busy = () => app.importBusy || app.restoring;
   const later = (timer, fn, delay) => {
@@ -73,7 +73,7 @@ export function createBackground(app) {
     try {
       const db = app.db;
       if (!cardFactsPending(db).length && !tokenFactsPending(db).length && getAppMeta(db, CARD_FACTS_META)) return;
-      const r = await backfillCardFacts(() => app.db, { runChunk: app.exclusiveUnlessRestoring });
+      const r = await backfillCardFacts(() => app.db, { runChunk: app.exclusive });
       if (r.refreshed || r.skipped) console.log(`[cards] card facts (v9/v15): ${r.refreshed} refreshed (incl. tokens), ${r.skipped} skipped`);
     } catch (err) {
       console.warn(`[cards] card facts: ${err.message}; retrying in ${CARD_FACTS_RETRY_MS / 1000} s`);

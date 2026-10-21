@@ -68,6 +68,15 @@ describe("edit / delete / undo API", () => {
     assert.equal((await call("GET", `/api/collection/edits/${r.body.edit_id}/undo`)).status, 405);
   });
 
+  test("POST /api/collection/delete dry_run counts copies and EUR value, deletes nothing", async () => {
+    // Bolt: 2 scan copies at €2.00 each; Counterspell (mh2): 1 copy at €1.00.
+    const items = [{ oracle_id: "o-bolt" }, { oracle_id: "o-counter" }];
+    const r = await call("POST", "/api/collection/delete", { items, dry_run: true });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body, { dry_run: true, copies: 3, manabox_copies: 0, unpriced_copies: 0, value_eur: 5 });
+    assert.equal((await owned(ID.lightning)).length, 1, "nothing deleted");
+  });
+
   test("POST /api/collection/delete: confirm, manabox_rows, undo conflict after a move", async () => {
     // Back to a ManaBox master for this test (the previous one flipped it).
     assert.equal((await call("PATCH", "/api/settings", { collection_master: "manabox" })).status, 200);

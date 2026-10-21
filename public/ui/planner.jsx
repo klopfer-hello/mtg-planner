@@ -379,7 +379,7 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
     if (!drawer) return;
     const prevFocus = document.activeElement;
     const focusables = () => drawerRef.current
-      ? [...drawerRef.current.querySelectorAll('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      ? [...drawerRef.current.querySelectorAll(FOCUSABLE)]
       : [];
     focusables()[0]?.focus();
     const onKey = (e) => {

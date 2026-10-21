@@ -7,6 +7,7 @@ import { cardHistory, financeHistory, financeMovers, financeSummary, financeTop 
 import {
   addWishlistItem, deleteWishlistItem, deleteWishlistItems, getWishlistItem, listWishlist, updateWishlistItem, wishlistText,
 } from "../../lib/wishlist.js";
+import { throwImportError } from "../errors.js";
 import { HttpError, readJson, sendEmpty, sendJson, sendTextFile } from "../http.js";
 
 export function marketRoutes(router, app) {
@@ -18,7 +19,7 @@ export function marketRoutes(router, app) {
   router.post("/api/wishlist", async ({ req, res }) => {
     const body = await readJson(req);
     if (body.source !== undefined && body.source !== "app") throw new HttpError(400, 'source must be "app"');
-    const out = await addWishlistItem(app.db, body, { source: "app" });
+    const out = await addWishlistItem(app.db, body, { source: "app" }).catch(throwImportError);
     background.scheduleSnapshot();
     sendJson(res, out.merged ? 200 : 201, out);
   });

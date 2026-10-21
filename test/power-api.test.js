@@ -59,7 +59,7 @@ before(async () => {
 
   srv = await startServer({
     name: "power-api",
-    env: { SPELLBOOK_URL: stubUrl, SPELLBOOK_ENABLED: "", APP_VERSION: "0.0.0-test" },
+    env: { SPELLBOOK_URL: stubUrl, SPELLBOOK_ENABLED: "", APP_VERSION: "0.0.0-test", SPELLBOOK_DELAY_MS: "200" },
     seed: (dbFile) => {
       const db = openDb(dbFile);
       seedCards(db);
@@ -133,7 +133,7 @@ describe("deck power API", () => {
     assert.deepEqual(d.power, { commander: false, bracket: null, score: null, legality: null });
     assert.equal(d.combos, null);
     assert.equal((await call("POST", `/api/decks/${modernId}/combos`)).status, 400);
-    await new Promise((res) => setTimeout(res, 3500)); // past the write debounce
+    await new Promise((res) => setTimeout(res, 1200)); // 6x the write debounce (SPELLBOOK_DELAY_MS 200)
     assert.equal(calls.length, before);
   });
 

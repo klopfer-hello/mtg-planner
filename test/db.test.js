@@ -71,6 +71,40 @@ describe("normalizeCard (v9 facts)", () => {
   });
 });
 
+describe("migration v1 from a v0 database", () => {
+  test("collection gets source (rebuilt with the new UNIQUE), rows kept as manabox, scans created, all later steps run", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "mtg-db-v0-"));
+    try {
+      const file = path.join(dir, "v0.db");
+      let db = openDb(file);
+      db.prepare("INSERT INTO cards (scryfall_id, name, fetched_at) VALUES ('c1', 'Sol Ring', 'x')").run();
+      // The original v0 shape: no source column, no scans table, user_version 0.
+      db.exec(`
+        DROP TABLE collection;
+        CREATE TABLE collection (
+          id INTEGER PRIMARY KEY, scryfall_id TEXT NOT NULL REFERENCES cards(scryfall_id),
+          finish TEXT NOT NULL DEFAULT 'normal', language TEXT NOT NULL DEFAULT 'en', condition TEXT NOT NULL DEFAULT 'near_mint',
+          binder TEXT NOT NULL DEFAULT '', quantity INTEGER NOT NULL, purchase_price REAL, purchase_currency TEXT,
+          UNIQUE (scryfall_id, finish, language, condition, binder));
+        INSERT INTO collection (id, scryfall_id, binder, quantity) VALUES (7, 'c1', 'Box', 3);
+        DROP TABLE scans;
+        PRAGMA user_version = 0;
+      `);
+      db.close();
+      db = openDb(file);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
+      assert.deepEqual({ ...db.prepare("SELECT id, binder, quantity, source FROM collection").get() }, { id: 7, binder: "Box", quantity: 3, source: "manabox" });
+      // The same printing may now exist once per source.
+      db.prepare("INSERT INTO collection (scryfall_id, binder, quantity, source) VALUES ('c1', 'Box', 1, 'scan')").run();
+      assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'scans'").get());
+      assert.equal(db.prepare("SELECT origin FROM binders WHERE name = 'Box'").get().origin, "manabox", "v4 backfilled the binder");
+      db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("migrations v10-v14", () => {
   test("v9 -> v14: deck history/build picks, wishlist, value history and binder type/cover; rows kept, idempotent re-run", () => {
     seedCollection(ctx.db, [[ID.sol, 2, { binder: "Box" }], [ID.lightning, 1]]);

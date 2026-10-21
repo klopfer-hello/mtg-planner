@@ -1,7 +1,11 @@
 "use strict";
 
 function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, onOpenCard, onOpenDeck, onAsk, onChanged, onCollectionChanged = onChanged, onWishChanged }) {
-  const [deck, setDeck] = useState(null);
+  const [deck, setDeckState] = useState(null);
+  // Reloads (dataVersion, guide/combo polls) race with card actions that set the deck from their answer:
+  // every set bumps the sequence, and a GET answers only if nothing newer was set since it started.
+  const deckSeq = useRef(0);
+  const setDeck = useCallback((v) => { deckSeq.current++; setDeckState(v); }, []);
   const [error, setError] = useState(null);
   const [actionError, setActionError] = useState(null);
   const [notice, setNotice] = useState(initialNotice);
@@ -32,7 +36,9 @@ function DeckDetail({ id, dataVersion, initialNotice, onBack, onMissing = null, 
 
   const load = useCallback(() => {
     setError(null);
-    api(`/api/decks/${id}`).then(setDeck).catch((e) => {
+    const my = ++deckSeq.current;
+    api(`/api/decks/${id}`).then((d) => { if (my === deckSeq.current) setDeckState(d); }).catch((e) => {
+      if (my !== deckSeq.current) return;
       // A link to a deleted deck (#decks/<id>) lands on the deck list.
       if (e.status === 404 && onMissing) onMissing();
       else setError(e.status === 404 ? "This deck no longer exists." : e.message);

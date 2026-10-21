@@ -22,7 +22,7 @@ describe("compileQuery", () => {
 
   test("or groups compile to one parenthesised WHERE clause with bound params in order", () => {
     const { where, having } = compileQuery("c:r (t:instant or t:sorcery)");
-    assert.match(where.sql, / AND \(\(c\.type_line LIKE \?\) OR \(c\.type_line LIKE \?\)\)$/);
+    assert.match(where.sql, / AND \(\(c\.type_line LIKE \? ESCAPE '\\'\) OR \(c\.type_line LIKE \? ESCAPE '\\'\)\)$/);
     assert.deepEqual(where.params, ["%instant%", "%sorcery%"]);
     assert.equal(having.sql, "1");
     const neg = compileQuery("-(s:lea or s:leb)");
@@ -35,7 +35,7 @@ describe("compileQuery", () => {
 
   test("negation wraps the clause in NOT", () => {
     const { where } = compileQuery("-t:creature");
-    assert.equal(where.sql, "NOT (c.type_line LIKE ?)");
+    assert.equal(where.sql, "NOT (c.type_line LIKE ? ESCAPE '\\')");
     assert.deepEqual(where.params, ["%creature%"]);
   });
 
@@ -76,6 +76,29 @@ describe("compileQuery", () => {
     assert.throws(() => compileQuery("eur>cheap"), /Not a number/);
     assert.throws(() => compileQuery("c:gold"), /Unknown color: gold/);
     assert.throws(() => compileQuery("id:purple"), /Unknown color/);
+  });
+
+  test("cardPrice is EUR only: a USD-only card is unpriced", () => {
+    assert.equal(cardPrice({ prices: { usd: "50.00", usd_foil: "80" } }), null);
+    assert.deepEqual(cardPrice({ prices: { eur_foil: "3", usd: "50" } }), { value: 3, currency: "€" });
+    assert.deepEqual(cardPrice({ prices: { eur_en: "1.5", usd: "50" } }), { value: 1.5, currency: "€", en: true });
+  });
+
+  test("a key without a value or an unclosed quote is an error, not a name search", () => {
+    assert.throws(() => compileQuery("t:"), /"t:" needs a value/);
+    assert.throws(() => compileQuery("t: goblin"), /"t:" needs a value/);
+    assert.throws(() => compileQuery("(cmc>= )"), /"cmc>=" needs a value/);
+    assert.throws(() => compileQuery('t:"goblin'), /Unclosed quote/);
+    assert.throws(() => compileQuery('"sol ring'), /Unclosed quote/);
+    assert.deepEqual(compileQuery('t:"goblin warrior"').where.params, ["%goblin warrior%"]);
+  });
+
+  test("LIKE wildcards in search values are literal", () => {
+    const params = (q) => { const { where, having } = compileQuery(q); return [...where.params, ...having.params]; };
+    assert.match(compileQuery("_").where.sql, /LIKE \? ESCAPE '\\'/);
+    assert.deepEqual(params("_"), ["%\\_%"]);
+    assert.deepEqual(params("o:100%"), ["%100\\%%"]);
+    assert.deepEqual(params('b:"Set_1"'), ["%Set\\_1%"]);
   });
 
   test("user values are bound as parameters, never inlined", () => {
@@ -208,13 +231,17 @@ describe("searchCollection", () => {
     assert.equal(page.total, 7);
     assert.equal(page.rows.length, 2);
     assert.deepEqual(page.rows.map((r) => r.name), names("").slice(2, 4));
+    // Inherited object keys are not sorts: they fall back to name like any unknown sort.
+    for (const sort of ["constructor", "__proto__", "toString"]) {
+      assert.deepEqual(searchCollection(ctx.db, { sort }).rows.map((r) => r.name), names(""), sort);
+    }
   });
 
   test("card rows show and sort by their most valuable owned printing/finish", () => {
     const rows = searchCollection(ctx.db, { sort: "price" }).rows;
     assert.deepEqual(rows.map((r) => r.name), [
       "Atraxa, Praetors' Voice", "Lightning Bolt", "Counterspell", "Sol Ring",
-      "Delver of Secrets // Insectile Aberration", "Azorius Charm", "Serra Angel",
+      "Delver of Secrets // Insectile Aberration", "Serra Angel", "Azorius Charm",
     ]);
     const bolt = rows.find((r) => r.name === "Lightning Bolt");
     assert.equal(bolt.finish, "foil");
@@ -222,7 +249,7 @@ describe("searchCollection", () => {
     const counter = rows.find((r) => r.name === "Counterspell");
     assert.equal(counter.set_code, "7ed", "the €3 printing, not the €1 one");
     assert.equal(cardPrice(counter, counter.finish).value, 3);
-    assert.equal(rows.find((r) => r.name === "Azorius Charm").price_value, 0.3, "etched copy falls back to the usd price");
+    assert.equal(rows.find((r) => r.name === "Azorius Charm").price_value, 0, "a USD-only card is unpriced (EUR only)");
   });
 
   test("sort=set applies the direction to the set too", () => {
@@ -309,8 +336,9 @@ describe("cardPrice / formatPrice", () => {
     assert.deepEqual(cardPrice(card), { value: 2, currency: "€" });
     assert.deepEqual(cardPrice(card, "foil"), { value: 5, currency: "€" });
     assert.deepEqual(cardPrice(card, "etched"), { value: 2, currency: "€" }, "falls back to the plain EUR price");
-    assert.deepEqual(cardPrice({ prices: { usd: "0.30" } }), { value: 0.3, currency: "$" });
-    assert.deepEqual(cardPrice({ prices: { usd_etched: "4.23" } }), { value: 4.23, currency: "$" }, "etched-only printing");
+    assert.equal(cardPrice({ prices: { usd: "0.30" } }), null, "EUR only");
+    assert.equal(cardPrice({ prices: { usd_etched: "4.23" } }), null, "EUR only");
+    assert.deepEqual(cardPrice({ prices: { eur_etched: "4.23" } }), { value: 4.23, currency: "€" }, "etched-only printing");
     assert.deepEqual(cardPrice({ prices: { eur_foil: "1.10", usd: null } }), { value: 1.1, currency: "€" }, "foil-only printing");
     assert.equal(cardPrice({ prices: "{}" }), null);
     assert.equal(cardPrice({ prices: null }), null);

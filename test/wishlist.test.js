@@ -79,6 +79,10 @@ describe("addWishlistItem", () => {
     await rejects(addWishlistItem(ctx.db, { name: "Sol Ring", language: "german!" }), 400, /language/);
     await rejects(addWishlistItem(ctx.db, { name: "Sol Ring", priority: 7 }), 400, /priority/);
     await rejects(addWishlistItem(ctx.db, { scryfall_id: "nope" }), 400, /Scryfall id/);
+    await rejects(addWishlistItem(ctx.db, { scryfall_id: "-".repeat(36) }), 400, /Scryfall id/);
+    // The same language codes as copy edits accept (db.js LANG_RE), e.g. ManaBox's pt_br.
+    const { item } = await addWishlistItem(ctx.db, { name: "Sol Ring", language: "pt_br" });
+    assert.equal(item.language, "pt_br");
   });
 });
 

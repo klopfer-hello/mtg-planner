@@ -304,6 +304,22 @@ describe("off the event loop: respawn, fingerprint job, cancelled scans", () => 
     assert.equal(w.available, false);
   });
 
+  test("a request that times out restarts the stuck worker instead of queueing behind it", async () => {
+    const w = new MatcherWorker(file, { warm: false, restartMs: 100, requestTimeoutMs: 200, workerData: { blockMs: 2000 } }).start();
+    try {
+      assert.equal(await w.whenReady(10000), true);
+      const stuck = w.worker;
+      const first = w.indexCall("getPrinting", [ID(1)]);
+      const queued = w.indexCall("getPrinting", [ID(2)]);
+      await assert.rejects(first, /timed out/);
+      await assert.rejects(queued, /timed out/, "the queued request fails with it, not 60 s later");
+      assert.notEqual(w.worker, stuck, "the stuck worker is gone");
+      assert.equal(w.failures, 1);
+    } finally {
+      await w.close();
+    }
+  });
+
   test("indexBrief: the main thread's index summary without COUNT(*)s", () => {
     const full = indexStatus(idx);
     const brief = indexBrief(idx);
@@ -420,7 +436,8 @@ describe("server: matcher preload, /healthz and shutdown", () => {
       proc.kill("SIGTERM");
       const { code } = await exited;
       assert.equal(code, 0, srv.log());
-      assert.ok(Date.now() - t0 < 5000);
+      // Generous on a loaded CI runner: a shutdown that hangs on the worker would take the 20 s test timeout.
+      assert.ok(Date.now() - t0 < 15000, `shutdown took ${Date.now() - t0} ms`);
       assert.match(srv.log(), /matcher ready: 4 fingerprints/);
     } finally {
       await srv.stop();

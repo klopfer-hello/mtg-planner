@@ -121,7 +121,7 @@ describe("decks", () => {
     assert.equal(card("main", "Mystery Card").to_buy, 2);
     assert.equal(card("main", "Mystery Card").price, null);
     assert.equal(card("maybe", "Serra Angel").to_buy, 3);
-    assert.deepEqual(card("main", "Azorius Charm").price, { value: 0.3, currency: "$" });
+    assert.equal(card("main", "Azorius Charm").price, null, "a USD-only card is unpriced (EUR only)");
 
     // Missing (maybeboard excluded): Atraxa 1 + Azorius 1 + Mystery 2 + side Bolt 1 = 5
     assert.equal(d.to_buy_count, 5);
@@ -216,6 +216,8 @@ describe("decks", () => {
     assert.equal(findDeck(ctx.db, "superfr").id, a);
     assert.equal(findDeck(ctx.db, "nope"), undefined);
     assert.equal(findDeck(ctx.db, ""), null);
+    // LIKE wildcards in a reference are literal: "%", "_" and "Mono_Red" match no deck.
+    for (const ref of ["%", "_", "Mono_Red", "50% Goblins"]) assert.equal(findDeck(ctx.db, ref), undefined, ref);
   });
 
   test("deckDetail of an unknown deck is null", () => {
@@ -244,6 +246,16 @@ describe("decks", () => {
       assert.equal(byName["Not A Real Card"].scryfall_id, null);
       assert.equal(stub.calls.length, 1);
       assert.ok(!stub.calls[0].some((i) => /counterspell/i.test(i.name ?? "")));
+    });
+
+    test("set-only lines of one name keep their own printings", async () => {
+      const items = [
+        { name: "Counterspell", set: "7ed", quantity: 1, board: "main" },
+        { name: "Counterspell", set: "mh2", quantity: 1, board: "side" },
+      ];
+      const { id } = await saveDeck(ctx.db, { name: "Two printings", source: "claude", items });
+      const ids = Object.fromEntries(deckDetail(ctx.db, id).cards.map((c) => [c.board, c.scryfall_id]));
+      assert.deepEqual(ids, { main: ID.counterspell7ed, side: ID.counterspell });
     });
 
     test("updating an existing deck by id replaces its cards", async () => {
@@ -379,6 +391,17 @@ describe("deck editing", () => {
     const s = setCommander(ctx.db, id, { name: "Thrasios", replace: "Raised by Giants" });
     assert.deepEqual(s.replaced, ["Raised by Giants", "Wilson"], "Thrasios cannot pair with Wilson either");
     assert.throws(() => setCommander(ctx.db, id, { name: "Tymna", replace: "Nobody" }), (e) => e.status === 404);
+  });
+
+  test("replace is honoured when the named card already leads the deck; edh/cedh pair like commander", () => {
+    const id = deck("cEDH", [["main", "Thrasios", "p1"], ["main", "Tymna", "p2"]]);
+    setCommander(ctx.db, id, { name: "Thrasios" });
+    assert.deepEqual(setCommander(ctx.db, id, { name: "Tymna" }).commanders, ["Thrasios", "Tymna"], "cedh is a Commander format");
+    const r = setCommander(ctx.db, id, { name: "Thrasios", replace: "Tymna" });
+    assert.deepEqual([r.commanders, r.replaced], [["Thrasios"], ["Tymna"]]);
+    assert.deepEqual(boards(id), { "commander:Thrasios": 1, "main:Tymna": 1 });
+    assert.deepEqual(setCommander(ctx.db, id, { name: "Thrasios", replace: "Thrasios" }).replaced, [], "itself: no change");
+    assert.throws(() => setCommander(ctx.db, id, { name: "Thrasios", replace: "Nobody" }), (e) => e.status === 404);
   });
 
   test("outside format commander a second partner replaces the first", () => {
@@ -644,6 +667,18 @@ describe("deck power", () => {
     const chooser = { name: "A", type_line: "Legendary Creature", oracle_text: "Choose a Background" };
     assert.equal(canPair(chooser, bg), true);
     assert.equal(canPair(chooser, chooser), false);
+  });
+
+  test("canPair: Friends forever (text or keyword) and the Doctor's companion", () => {
+    const friend = (name, o = {}) => ({ name, type_line: "Legendary Creature — Human", oracle_text: "", ...o });
+    assert.equal(canPair(friend("A", { oracle_text: "Friends forever" }), friend("B", { oracle_text: "Friends forever" })), true);
+    assert.equal(canPair(friend("A", { keywords: '["Friends forever"]' }), friend("B", { keywords: ["Friends forever"] })), true, "keyword only");
+    assert.equal(canPair(friend("A", { oracle_text: "Friends forever" }), friend("B")), false, "both need it");
+    const doctor = friend("The Tenth Doctor", { type_line: "Legendary Creature — Time Lord Doctor" });
+    const companion = friend("Rose Tyler", { keywords: ["Doctor's companion"] });
+    assert.equal(canPair(companion, doctor), true);
+    assert.equal(canPair(doctor, companion), true, "either order");
+    assert.equal(canPair(companion, friend("Not a Doctor")), false);
   });
 });
 

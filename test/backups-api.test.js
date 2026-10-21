@@ -6,6 +6,7 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import http from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
@@ -205,6 +206,22 @@ describe("backup API", () => {
     assert.equal(r.status, 200, JSON.stringify(r.body));
     const names = (await call("GET", "/api/backups")).body.backups.map((b) => b.name);
     assert.ok(names.includes(oldest), "the restored backup is still listed");
+  });
+
+  test("a restore waits for requests still being answered (409), then runs", async () => {
+    const name = (await call("GET", "/api/backups")).body.backups.find((b) => b.kind === "manual").name;
+    // A POST whose body is still arriving: its handler is running and may use the current DB after the await.
+    const req = http.request(`${base}/api/binders`, { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": "100" } });
+    req.on("error", () => {});
+    req.write('{"name":');
+    await wait(150);
+    let r = await call("POST", `/api/backups/${name}/restore`, { confirm: true });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.match(r.body.error, /another request is still being answered/);
+    req.destroy();
+    const deadline = Date.now() + 5000;
+    do { await wait(100); r = await call("POST", `/api/backups/${name}/restore`, { confirm: true }); } while (r.status === 409 && Date.now() < deadline);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
   });
 
   test("DELETE removes a backup (204), then 404", async () => {

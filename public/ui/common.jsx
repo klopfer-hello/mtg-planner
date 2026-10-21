@@ -53,9 +53,9 @@ function LangTag({ lang, title }) {
   if (!l || l === "en") return null;
   return <span className="lang-tag" title={title || `Printed in ${LANG_NAME[l] || l.toUpperCase()}`}>{l.toUpperCase()}</span>;
 }
-/** Distinct languages of a collection row: `languages` ("en,it" or an array) or `language`. */
+/** Distinct non-English languages of a GET /api/collection row (`languages`, "en,it"). */
 const rowLangs = (r) => {
-  const v = r?.languages ?? r?.language ?? "";
+  const v = r?.languages ?? "";
   return [...new Set((Array.isArray(v) ? v : String(v).split(",")).map((x) => String(x).trim().toLowerCase()).filter((x) => x && x !== "en"))];
 };
 
@@ -95,13 +95,19 @@ function useEditToast(onUndone, { portal = false } = {}) {
   return [setT, portal && el ? ReactDOM.createPortal(el, document.body) : el];
 }
 
+/** Elements a focus trap cycles through (Sheet, the planner's chat drawer); disabled controls can't take focus. */
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 /**
  * Modal sheet: bottom sheet on phones, centered dialog on desktop.
  * Handles Escape, focus trap, focus restore and background scroll lock.
  */
 function Sheet({ title, onClose, children, actions, pinned }) {
   const ref = useRef(null);
-  const titleId = useMemo(() => `sheet-${Math.random().toString(36).slice(2)}`, []);
+  const titleId = `sheet${useId()}`;
+  // The key handler is registered once: it calls the latest onClose (a guarded close, e.g. "not while busy").
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     const prevFocus = document.activeElement;
     const prevOverflow = document.body.style.overflow;
@@ -112,10 +118,10 @@ function Sheet({ title, onClose, children, actions, pinned }) {
         // Sheets stack (the card sheet opens above the build list): only the top one closes.
         const overlays = document.querySelectorAll(".overlay");
         if (ref.current && overlays[overlays.length - 1] !== ref.current.parentElement) return;
-        e.stopPropagation(); onClose();
+        e.stopPropagation(); closeRef.current();
       }
       if (e.key === "Tab" && ref.current) {
-        const f = ref.current.querySelectorAll('a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        const f = ref.current.querySelectorAll(FOCUSABLE);
         if (!f.length) return;
         const first = f[0], last = f[f.length - 1];
         if (e.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) { e.preventDefault(); last.focus(); }

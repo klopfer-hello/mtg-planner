@@ -177,7 +177,7 @@ function RestoreConfirmSheet({ target, current, busy, onConfirm, onCancel }) {
 }
 
 /** Import tab: manual backups of the app data (create, download, delete) and restore from a stored or uploaded one. */
-function BackupPanel({ dataVersion, onRestored }) {
+function BackupPanel({ dataVersion, onRestored, onBusy }) {
   const { data: list, error: listError, reload: load } = useApi("/api/backups", [dataVersion],
     { map: (d) => d.backups, error: (e) => `Could not load backups: ${e.message}` });
   const [creating, setCreating] = useState(false);
@@ -225,6 +225,8 @@ function BackupPanel({ dataVersion, onRestored }) {
     }
   };
   const busy = creating || restoring;
+  // The sheet holding this panel stays open while a request runs: closing it would drop the answer (and its error).
+  useEffect(() => { onBusy?.(busy); }, [busy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section className="card stack" aria-labelledby="backup-title" aria-busy={busy}>
@@ -492,6 +494,7 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
   const [section, setSection] = useState(null);
   const openSection = (id) => setSection(id);
   const closeSection = useCallback(() => setSection(null), []);
+  const [backupBusy, setBackupBusy] = useState(false); // a backup/restore request runs: the Backups sheet stays open
   return (
     <div className="stack-lg" style={{ maxWidth: 760 }}>
       <div className="page-title"><h1>Settings</h1></div>
@@ -644,9 +647,9 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
         </Sheet>
       )}
       {section === "backups" && (
-        <Sheet title="Backups" onClose={closeSection}>
+        <Sheet title="Backups" onClose={() => { if (!backupBusy) closeSection(); }}>
           <div className="stack settings-sheet">
-      <BackupPanel dataVersion={dataVersion} onRestored={onRestored} />
+      <BackupPanel dataVersion={dataVersion} onRestored={onRestored} onBusy={setBackupBusy} />
           </div>
         </Sheet>
       )}

@@ -13,7 +13,7 @@ import { gzipSync } from "node:zlib";
 import { SCHEMA_VERSION, openDb } from "../lib/db.js";
 import {
   BACKUP_NAME_RE, BackupError, PRE_RESTORE_KEEP, backupConfig, backupPath, createBackup, dbCounts, deleteBackup, gunzipToFile, listBackups, pruneBackups,
-  swapDatabase, validateBackupDb,
+  restoreLimit, swapDatabase, validateBackupDb,
 } from "../lib/backups.js";
 import { ID, seedCards, seedCollection } from "./fixtures.js";
 
@@ -177,6 +177,11 @@ describe("validateBackupDb", () => {
     assert.ok(!existsSync(out), "no partial file left");
     // Unpack bomb guard.
     await assert.rejects(gunzipToFile(gzipSync(Buffer.alloc(5000)), out, { maxBytes: 1000 }), expectBackupError(400, /more than/));
+    // A restore's limit: 4× the live DB, at least 512 MB.
+    const MB = 1024 ** 2;
+    assert.equal(restoreLimit(path.join(dir, "missing.db")), 512 * MB);
+    writeFileSync(path.join(dir, "big.db"), Buffer.alloc(1)); // tiny live DB: the floor
+    assert.equal(restoreLimit(path.join(dir, "big.db")), 512 * MB);
     // Not SQLite.
     await gunzipToFile(gzipSync(Buffer.from("x".repeat(500))), out);
     assert.throws(() => validateBackupDb(out, { schemaVersion: SCHEMA_VERSION }), expectBackupError(400, /not an mtg-planner database/));

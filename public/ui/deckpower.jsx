@@ -23,11 +23,11 @@ const BRACKET_LABEL = { 1: "Exhibition", 2: "Core", 3: "Upgraded", 4: "Optimized
 function deckPowerOf(deck) {
   const p = deck?.power || {};
   const bracket = p.bracket ?? null;
-  return { bracket, score: p.score ?? null, legality: p.legality ?? bracket?.legality ?? null, combos: deck?.combos ?? null };
+  return { bracket, score: p.score ?? null, legality: p.legality ?? null, combos: deck?.combos ?? null };
 }
 const declaredBelow = (b) => Boolean(b?.reasons?.some((r) => r.rule === "declared_below"));
-const comboItems = (c) => asList(c?.items).length ? c.items : asList(c?.result?.combos);
-const comboUnresolved = (c) => asList(c?.unresolved).length ? c.unresolved : asList(c?.result?.unresolved);
+const comboItems = (c) => asList(c?.items);
+const comboUnresolved = (c) => asList(c?.unresolved);
 
 /** Header badges: "B3 Upgraded", "6.5/10" and a "Not legal" badge; tapping any opens the PowerSheet. */
 function PowerBadges({ deck, onOpen }) {
@@ -56,16 +56,13 @@ function PowerBadges({ deck, onOpen }) {
   );
 }
 
-/** "B3 · 6.5" for the deck list (commander decks only). Accepts numbers or objects. */
+/** "B3 · 6.5" for the deck list (commander decks only): a GET /api/decks row (numbers + *_partial flags). */
 function PowerListBadge({ d }) {
-  const bObj = d.bracket && typeof d.bracket === "object" ? d.bracket : null;
-  const b = bObj ? bObj.value : d.bracket;
-  const sObj = d.score && typeof d.score === "object" ? d.score : null;
-  const s = sObj ? sObj.value : d.score;
+  const b = d.bracket, s = d.score;
   if (b == null && s == null) return null;
-  const declared = bObj ? bObj.declared != null : d.bracket_declared != null;
-  const bp = !declared && Boolean(bObj ? bObj.partial : d.bracket_partial);
-  const sp = Boolean(sObj ? sObj.partial : d.score_partial);
+  const declared = d.bracket_declared != null;
+  const bp = !declared && Boolean(d.bracket_partial);
+  const sp = Boolean(d.score_partial);
   const title = `${b != null ? `Bracket ${bp ? "≥" : ""}${b} ${BRACKET_LABEL[b] || ""}${declared ? " (set by you)" : ""}` : ""}${s != null ? ` · power score ${sp ? "≥ " : ""}${fmtScore(s)}/10` : ""}${bp || sp ? " · combos not checked yet" : ""}`;
   return (
     <span className={`badge ${b >= 4 ? "accent" : ""}`} title={title.replace(/^ · /, "")}>
@@ -417,9 +414,9 @@ function DeckStats({ deck, onClose }) {
   const s = deck?.stats;
   if (!s) return null;
   const commanders = asList(s.curve?.commander);
-  // deckStats keys are lowercase ("creature"); accept capitalised keys too.
+  // deckStats keys are lowercase ("creature").
   const t0 = s.types || {};
-  const types = Object.fromEntries(STAT_TYPES.map((t) => [t, Number(t0[t.toLowerCase()] ?? t0[t]) || 0]));
+  const types = Object.fromEntries(STAT_TYPES.map((t) => [t, Number(t0[t.toLowerCase()]) || 0]));
   const spells = types.Instant + types.Sorcery;
   const excl = s.excluded || {};
   return (

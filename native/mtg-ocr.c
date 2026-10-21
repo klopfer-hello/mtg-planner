@@ -122,7 +122,9 @@ int main(void) {
     if (lang_len > MAX_LANG || wl_len > MAX_WL || img_len > MAX_IMG || psm > 13) return 2;
     unsigned char *img = malloc(img_len ? img_len : 1);
     if (!img) return 3;
-    if (read_full(lang, lang_len) < 0 || read_full(wl, wl_len) < 0 || read_full(img, img_len) < 0) return 2;
+    /* Every part must arrive whole: 0 (EOF after the header) is a broken request too, never OCR on
+       uninitialised buffers. read_full returns 1 for a zero-length part. */
+    if (read_full(lang, lang_len) != 1 || read_full(wl, wl_len) != 1 || read_full(img, img_len) != 1) { free(img); return 2; }
     lang[lang_len] = 0;
     wl[wl_len] = 0;
 

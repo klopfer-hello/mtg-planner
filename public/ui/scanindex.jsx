@@ -127,7 +127,7 @@ function ScannerIndexPanel({ health }) {
     catch (e) { if (e.status === 404) setMissing(true); else setError(e.message); }
   }, []);
   useEffect(() => { load(); }, [load]);
-  const jobs = st ? [["Card index", st.refresh_job || st.index_job || st.metadata_job || st.job], ["Fingerprints", st.fingerprint_job]] : [];
+  const jobs = st ? [["Card index", st.refresh_job], ["Fingerprints", st.fingerprint_job]] : [];
   const running = jobs.some(([, j]) => j && (j.running || ["running", "queued"].includes(j.state || j.status)));
   useEffect(() => {
     if (!running) return;

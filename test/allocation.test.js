@@ -303,6 +303,34 @@ describe("to buy vs in use (idea deck sharing cards with a built deck)", () => {
   });
 });
 
+describe("put into deck box is all-or-nothing", () => {
+  test("a confirm_master refusal of the second move leaves the surplus taken out first in the box", () => {
+    seedCollection(ctx.db, [[ID.sol, 1, { binder: "Deck box: D", source: "scan" }], [ID.counterspell, 1, { binder: "", source: "manabox" }]]);
+    const D = deck("D", "built", [row("Counterspell", ID.counterspell, 1)]);
+    assert.throws(() => deckToBinder(ctx.db, D), (e) => e.status === 409 && e.extra.code === "confirm_master");
+    const where = ctx.db.prepare("SELECT binder FROM collection WHERE scryfall_id = ?");
+    assert.equal(where.get(ID.sol).binder, "Deck box: D", "the surplus Sol Ring was not moved out");
+    assert.equal(where.get(ID.counterspell).binder, "");
+    const ok = deckToBinder(ctx.db, D, { confirm_master: true });
+    assert.deepEqual([ok.removed_copies, ok.moved_copies], [1, 1]);
+  });
+});
+
+describe("an unresolved deck row claims under the oracle key of a known name", () => {
+  test("one owned copy, one resolved and one unresolved built claim: conflict, short 1", () => {
+    seedCollection(ctx.db, [[ID.sol, 1]]);
+    const A = deck("A", "built", [row("Sol Ring", null, 1)]); // saved while Scryfall was down
+    const B = deck("B", "built", [row("Sol Ring", ID.sol, 1)]);
+    const a = pick(deckDetail(ctx.db, A), "Sol Ring");
+    const b = pick(deckDetail(ctx.db, B), "Sol Ring");
+    assert.deepEqual([a.conflict, b.conflict], [true, true]);
+    assert.deepEqual(a.used_elsewhere.map((d) => d.deck_id), [B]);
+    assert.deepEqual(b.used_elsewhere.map((d) => d.deck_id), [A]);
+    assert.equal(cardUsage(ctx.db, { oracle_id: "o-solring", name: "Sol Ring" }).built_demand, 2);
+    assert.deepEqual(shoppingList(ctx.db).built.items.map((i) => [i.name, i.short]), [["Sol Ring", 1]]);
+  });
+});
+
 describe("in-use cost: one card in several boards with different printings", () => {
   test("header (value.in_use_eur) and in-use list agree, priced per row", () => {
     seedCollection(ctx.db, [[ID.counterspell, 3]]);

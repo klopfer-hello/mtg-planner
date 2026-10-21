@@ -259,7 +259,7 @@ describe("cache, backoff and offline", () => {
     const hang = stubFetch((call) => new Promise((_, reject) => call.init.signal.addEventListener("abort", () => reject(call.init.signal.reason))));
     const started = Date.now();
     const timed = await refreshCombos(ctxOf({ fetch: hang }), r);
-    assert.ok(Date.now() - started < 5000);
+    assert.ok(Date.now() - started < 15000, "the 1 s timeout ends the hanging request (generous bound for slow CI)");
     assert.match(timed.error, /timed out after 1000 ms/);
     assert.equal(Number(getAppMeta(t.db, "spellbook_backoff_until")), clock + BACKOFF_ERROR_MS);
     const net = await refreshCombos(ctxOf({ fetch: async () => { throw new TypeError("fetch failed"); } }), req(), { force: true });

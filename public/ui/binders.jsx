@@ -10,8 +10,8 @@ const sameName = (a, b) => a != null && b != null && String(a).toLowerCase() ===
 /** GET /api/binders → {binders, unsorted, master}; reloads with dataVersion. */
 const binderListOf = (d) => ({ binders: d.binders.filter((b) => b.name), unsorted: d.unsorted, master: d.collection_master });
 function useBinderList(dataVersion = 0) {
-  const { data, error, reload } = useApi("/api/binders", [dataVersion], { map: binderListOf });
-  return { data, error, reload };
+  const { data, error, reload, setData } = useApi("/api/binders", [dataVersion], { map: binderListOf });
+  return { data, error, reload, setData };
 }
 
 /**
@@ -626,7 +626,7 @@ function CoverPicker({ binder, current, busy, onPick }) {
         <div className="grid cover-grid">
           {rows.map((r) => (
             <button key={r.scryfall_id} type="button" className="tile" disabled={busy} aria-pressed={r.scryfall_id === current}
-              aria-label={`Use ${r.name} (${(r.set_code || "").toUpperCase()} #${r.collector_number}) as cover`} onClick={() => onPick(r.scryfall_id)}>
+              aria-label={`Use ${r.name} (${setNumberOf(r)}) as cover`} onClick={() => onPick(r.scryfall_id)}>
               <div className="img">{r.image_small ? <img src={r.image_small} alt="" loading="lazy" decoding="async" width="146" height="204" /> : <div className="ph">{r.name}</div>}</div>
               <div className="cap" aria-hidden="true"><span className="n">{r.name}</span><span className="p">{fmtPrice(r.price)}</span></div>
             </button>
@@ -641,7 +641,7 @@ function CoverPicker({ binder, current, busy, onPick }) {
 function BinderDeleteChoice({ binder, master, cards, busy, onCards, onDelete, onCancel }) {
   const mb = binder.by_source?.manabox?.copies ?? 0;
   const asksMaster = mb > 0 && master !== "app";
-  const group = useMemo(() => `del-cards-${Math.random().toString(36).slice(2)}`, []);
+  const group = `del-cards${useId()}`;
   return (
     <div className="stack" style={{ gap: 8 }}>
       <b>Delete “{binder.name}”?</b>
@@ -761,7 +761,7 @@ function ManageBindersSheet({ data, onClose, onChanged }) {
                 ) : (
                   <>
                     <span className="grow" style={{ minWidth: 0, overflowWrap: "anywhere" }}><b>{b.name}</b><br />
-                      <span className="muted small">{b.copies ? `${plural(b.copies, "copy", "copies")} · ${plural(b.unique_cards ?? b.cards ?? 0, "card")}` : "empty"}</span></span>
+                      <span className="muted small">{b.copies ? `${plural(b.copies, "copy", "copies")} · ${plural(b.unique_cards, "card")}` : "empty"}</span></span>
                     {(b.sources || []).map((s) => <SourceBadge key={s} source={s} />)}
                     <select className="select type-select" aria-label={`Type of ${b.name}`} value={b.type || "binder"} disabled={busy}
                       onChange={(e) => run(() => api(`/api/binders/${encodeURIComponent(b.name)}`, { method: "PATCH", json: { type: e.target.value } }))}>

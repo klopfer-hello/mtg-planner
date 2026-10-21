@@ -63,7 +63,7 @@ beforeEach(() => { ctx = tempDb(); });
 afterEach(() => ctx.cleanup());
 
 describe("price readers", () => {
-  test("eurOf / cardPrice: own EUR first, then the English twin's, before any USD; never USD for eurOf", () => {
+  test("eurOf / cardPrice: own EUR first, then the English twin's; never USD", () => {
     const p = { eur: null, eur_foil: null, usd: "9.00", eur_en: 1.5, eur_foil_en: 7.25, id_en: "p-0001" };
     assert.equal(eurOf(p, "eur"), 1.5);
     assert.equal(eurOf(p, "eur_foil"), 7.25);
@@ -72,7 +72,7 @@ describe("price readers", () => {
     assert.deepEqual(cardPrice({ prices: p }), { value: 1.5, currency: "€", en: true });
     assert.deepEqual(cardPrice({ prices: JSON.stringify(p) }, "foil"), { value: 7.25, currency: "€", en: true });
     assert.deepEqual(cardPrice({ prices: { eur: "2.00", eur_en: 1.5 } }), { value: 2, currency: "€" });
-    assert.deepEqual(cardPrice({ prices: { usd: "3" } }), { value: 3, currency: "$" });
+    assert.equal(cardPrice({ prices: { usd: "3" } }), null);
     // foil-only twin: no plain price anywhere, the foil one is used
     assert.deepEqual(cardPrice({ prices: { eur_foil_en: 4 } }), { value: 4, currency: "€", en: true });
     assert.equal(cardPrice({ prices: "not json" }), null);

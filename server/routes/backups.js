@@ -7,7 +7,7 @@ import crypto from "node:crypto";
 import { rmSync } from "node:fs";
 
 import {
-  backupConfig, backupPath, createBackup, dbCounts, deleteBackup, gunzipToFile, listBackups, swapDatabase, validateBackupDb,
+  backupConfig, backupPath, createBackup, dbCounts, deleteBackup, gunzipToFile, listBackups, restoreLimit, swapDatabase, validateBackupDb,
 } from "../../lib/backups.js";
 import { SCHEMA_VERSION, openDb, setAppMeta } from "../../lib/db.js";
 import { defaultImageDir } from "../../lib/scanrow.js";
@@ -27,6 +27,9 @@ export function backupRoutes(router, app) {
     if (app.importBusy) return "an import, price refresh or collection change is running";
     if (app.runs.size) return "the planner is answering a chat (its MCP server has the database open)";
     if (app.scanner.scanSlots.used) return "a scan is being identified";
+    if (app.guideJobs.size) return "Claude is writing a deck guide";
+    // The restore request itself is one of them; any other may still use the current DB after an await.
+    if (app.inflight > 1) return "another request is still being answered";
     return null;
   }
 
@@ -46,7 +49,7 @@ export function backupRoutes(router, app) {
     try {
       const source = name ? backupPath(BACKUP.dir, name) : upload;
       const stored = name ? listBackups(BACKUP.dir).find((b) => b.name === name) ?? null : null;
-      await gunzipToFile(source, tmp);
+      await gunzipToFile(source, tmp, { maxBytes: restoreLimit(app.dbFile) });
       const checked = validateBackupDb(tmp, { schemaVersion: SCHEMA_VERSION, imageDir: defaultImageDir() });
       const safety = await createBackup(app.db, { dir: BACKUP.dir, kind: "pre-restore", version: app.version, protect: name ? [name] : [] });
       const spellbookOff = spellbookOptedOut(app.db); // the user's opt-out survives the restore

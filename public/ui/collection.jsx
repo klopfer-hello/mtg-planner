@@ -91,7 +91,7 @@ function CardTile({ row, group, onOpen, selecting = false, selected = false, onT
         <span className="qty" aria-hidden="true">×{row.qty}</span>
       </div>
       <div className="cap" aria-hidden="true">
-        <span className="n">{group === "printing" ? `${(row.set_code || "").toUpperCase()} #${row.collector_number}` : row.name}</span>
+        <span className="n">{group === "printing" ? `${setNumberOf(row)}` : row.name}</span>
         <span className="p">{fmtPrice(row.price)}</span>
       </div>
     </button>
@@ -100,7 +100,7 @@ function CardTile({ row, group, onOpen, selecting = false, selected = false, onT
 
 function CardListRow({ row, group, onOpen, selecting = false, selected = false, onToggle }) {
   const where = group === "printing" || row.printing_count === 1
-    ? `${(row.set_code || "").toUpperCase()} #${row.collector_number}`
+    ? `${setNumberOf(row)}`
     : `${row.printing_count} printings`;
   return (
     <button type="button" className="list-row" onClick={() => (selecting ? onToggle() : onOpen(row.scryfall_id))} aria-pressed={selecting ? selected : undefined}>
@@ -269,13 +269,13 @@ function CollectionBrowser({ binder, entry, binderList, initialQ = null, dataVer
     return p;
   }, [dq, group, sort, dir, binder]);
 
-  const load = useCallback(async (offset) => {
+  const load = useCallback(async (offset, limit = PAGE_SIZE) => {
     const id = ++reqId.current;
     loadingRef.current = true;
     setLoading(true);
     setError(null);
     try {
-      const data = await api(`/api/collection?${baseParams({ limit: String(PAGE_SIZE), offset: String(offset) })}`);
+      const data = await api(`/api/collection?${baseParams({ limit: String(limit), offset: String(offset) })}`);
       if (id !== reqId.current) return;
       setTotal(data.total);
       setRows((prev) => (offset === 0 ? data.rows : [...prev, ...data.rows]));
@@ -289,9 +289,17 @@ function CollectionBrowser({ binder, entry, binderList, initialQ = null, dataVer
   }, [baseParams]);
 
   // Flat list: loads pages. Sectioned: the sections load themselves (SectionList).
+  // A new search starts at page 1; a collection change (dataVersion) reloads the pages already shown, so an
+  // edit deep in a scrolled list keeps the scroll position (the API serves at most 500 rows per call).
+  const shownRef = useRef(0);
+  shownRef.current = rows.length;
+  const lastLoad = useRef(null);
   useEffect(() => {
     if (sectionBy == null) return;
-    if (!sectioned) { load(0); return; }
+    const prev = lastLoad.current;
+    const sameSearch = prev != null && prev.load === load && prev.sectioned === sectioned && prev.sectionBy === sectionBy;
+    lastLoad.current = { load, sectioned, sectionBy };
+    if (!sectioned) { load(0, sameSearch ? Math.min(500, Math.max(PAGE_SIZE, shownRef.current)) : PAGE_SIZE); return; }
     reqId.current++;
     setRows([]); setTotal(null); setLoading(false); loadingRef.current = false;
   }, [load, dataVersion, sectionBy, sectioned]);
@@ -470,7 +478,19 @@ function CollectionBrowser({ binder, entry, binderList, initialQ = null, dataVer
       {sheet === "menu" && entry && binder && (
         <BinderMenuSheet entry={entry} list={binderList.data} onClose={() => setSheet(null)}
           onChanged={() => afterChange(null)}
-          onRenamed={(name) => { setSheet(null); afterChange(`Renamed to “${name}”`); onOpen({ view: "binder", binder: name }, { replace: true }); }}
+          onRenamed={(name) => {
+            setSheet(null);
+            // Until the reload answers, the loaded list knows the binder under both names, so neither the old
+            // nor the new route looks like a deleted binder (that fallback would jump to the overview). flushSync:
+            // the list must be updated before the route switches, React would otherwise render the route first.
+            const old = entry.name;
+            ReactDOM.flushSync(() => binderList.setData((d) => {
+              const cur = d?.binders.find((b) => sameName(b.name, old));
+              return cur && !d.binders.some((b) => sameName(b.name, name)) ? { ...d, binders: [...d.binders, { ...cur, name }] } : d;
+            }));
+            afterChange(`Renamed to “${name}”`);
+            onOpen({ view: "binder", binder: name }, { replace: true });
+          }}
           onDeleted={(text, editId) => { setSheet(null); afterChange(text, editId); onBack(); }} />
       )}
       {sheet === "move" && (
@@ -538,7 +558,7 @@ function SectionList({ by, params, dq, group, view, dataVersion, binderName, onO
 }
 
 function CollSection({ s, by, open, onToggle, params, group, view, dataVersion, onOpenCard, selecting, isSelected, onToggle2 }) {
-  const id = useMemo(() => `sec-${Math.random().toString(36).slice(2)}`, []);
+  const id = `sec${useId()}`;
   return (
     <section className={`coll-section${open ? " open" : ""}`}>
       <h3 className="coll-section-h">

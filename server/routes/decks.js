@@ -43,7 +43,7 @@ export function deckRoutes(router, app) {
   const { scanner } = app;
   // Deck guides (lib/deckguide.js): one generation per deck at a time, in the background (Claude takes
   // 30-90 s). The facts-only guide (no Claude token, or {facts_only: true}) is made at once.
-  const guideJobs = new Map(); // deck id -> {started_at}
+  const { guideJobs } = app; // deck id -> {started_at}; a restore waits while one runs
   const guideErrors = new Map(); // deck id -> {at, error} of the last failed Claude part
 
   const requireDeck = (id) => {
@@ -225,7 +225,7 @@ export function deckRoutes(router, app) {
     const change = await addDeckCard(app.db, id, {
       scryfall_id: body.scryfall_id ?? null, name: optString(body.name, "name", 300) || null,
       board: body.board ?? "main", quantity: body.quantity ?? 1,
-    });
+    }).catch(throwImportError);
     return changed(id, { change });
   });
   /** PATCH /api/decks/:id/cards {name, board, to_board?, quantity?} -> deck detail + change. */
@@ -296,12 +296,17 @@ export function deckRoutes(router, app) {
     const deck = db.prepare("SELECT * FROM decks WHERE id = ?").get(id);
     if (!deck) throw new HttpError(404, "Deck not found");
     const body = await readJson(req);
-    if (body.favorite !== undefined) {
-      if (typeof body.favorite !== "boolean") throw new HttpError(400, "favorite must be true or false");
+    if (body.favorite !== undefined && typeof body.favorite !== "boolean") throw new HttpError(400, "favorite must be true or false");
+    const setFavorite = () => {
+      if (body.favorite === undefined) return;
       db.prepare("UPDATE decks SET favorite = ? WHERE id = ?").run(body.favorite ? 1 : 0, id);
       deck.favorite = body.favorite ? 1 : 0;
-      if (Object.keys(body).every((k) => k === "favorite")) return { ...deck, favorite: Boolean(deck.favorite) };
+    };
+    if (body.favorite !== undefined && Object.keys(body).every((k) => k === "favorite")) {
+      setFavorite();
+      return { ...deck, favorite: Boolean(deck.favorite) };
     }
+    // Every field is validated before anything is written: a 400 leaves the deck unchanged.
     const name = body.name === undefined ? deck.name : optString(body.name, "name", 200);
     if (!name) throw new HttpError(400, "name must not be empty");
     const format = body.format === undefined ? deck.format : normalizeFormat(optString(body.format, "format", 50));
@@ -312,6 +317,7 @@ export function deckRoutes(router, app) {
     // Idea -> built: the cards this deck now shares with other built decks (they were "in use" while it was an idea).
     const before = status === "built" && deck.status !== "built" ? deckDetail(db, id) : null;
     transaction(db, () => {
+      setFavorite();
       db.prepare("UPDATE decks SET name = ?, format = ?, description = ?, status = ?, bracket_declared = ?, updated_at = datetime('now') WHERE id = ?")
         .run(name, format, description, status, bracket, id);
       recordDeckVersion(db, id, { actor: "app" });

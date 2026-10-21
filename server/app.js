@@ -30,20 +30,24 @@ export function createApp({ version }) {
     shuttingDown: false,
     /** chat id → AbortController of the running Claude turn. */
     runs: new Map(),
+    /** deck id → {started_at} of a deck guide being written in the background (server/routes/decks.js). */
+    guideJobs: new Map(),
     scheduler: null, // lib/scheduler.js, set by server.js
 
-    /** Imports, moves, edits and price refreshes run one at a time: they hit Scryfall and rewrite the collection. */
+    /**
+     * Imports, moves, edits and price refreshes run one at a time: they hit Scryfall and rewrite the collection.
+     * 503 while a restore swaps the DB (a request whose body was still arriving when the restore began lands
+     * here), 409 while another writer holds the lock.
+     */
     async exclusive(fn) {
+      if (app.restoring) throw new HttpError(503, "A backup is being restored; try again in a moment");
       if (app.importBusy) throw new HttpError(409, "Another import or price refresh is running");
       app.importBusy = true;
       try { return await fn(); } finally { app.importBusy = false; app.background.scheduleEnglishPrices(); }
     },
 
-    /** exclusive() for background writers: refused (503) while a restore swaps the DB. */
-    exclusiveUnlessRestoring(fn) {
-      if (app.restoring) throw new HttpError(503, "restore running");
-      return app.exclusive(fn);
-    },
+    /** API requests whose handler has not finished yet (async work may still hold app.db); a restore waits for 0. */
+    inflight: 0,
 
     /** True when chat turns + vision + guide runs fill the Claude concurrency limit. */
     claudeBusy: () => {
@@ -79,6 +83,8 @@ export function createApp({ version }) {
   app.spellbook = createSpellbookScheduler({
     db: () => app.db,
     restoring: () => app.restoring,
+    // Debounce after a deck write (default 3 s); tests set it short instead of sleeping past it.
+    ...(Number(process.env.SPELLBOOK_DELAY_MS) >= 0 && process.env.SPELLBOOK_DELAY_MS ? { delayMs: Number(process.env.SPELLBOOK_DELAY_MS) } : {}),
     version,
     log: console,
     requestFor: (conn, deckId) => deckComboRequest(conn, deckId),
@@ -90,7 +96,7 @@ export function createApp({ version }) {
   // in 5 s), never during a restore; off with the scheduler (SCHEDULER_ENABLED=false).
   app.tokenFetcher = createAccessoryFetcher({
     db: () => app.db,
-    write: app.exclusiveUnlessRestoring,
+    write: app.exclusive,
     enabled: () => !app.shuttingDown && schedulerConfig().enabled,
     log: console,
   });

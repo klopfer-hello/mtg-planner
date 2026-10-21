@@ -1,7 +1,8 @@
 // UI smoke test (developer tool, not part of `npm test`): opens a running mtg-planner in headless Chromium at
-// phone and desktop sizes, visits every tab and route and opens the main sheets (card, deck chips, settings
-// sections, scan settings), and fails on page errors, console errors, failed API requests or a horizontal page
-// scroll. It only reads: no button that saves, deletes or starts a job is pressed. Run it against test data.
+// phone and desktop sizes, visits every tab and route and opens the sheets and menus that only read (card sheet
+// and its copy sheets, binder menu, new/manage binders, deck chips, build list, history, guide, deck and card
+// menus, settings sections, scan settings, add by name), and fails on page errors, console errors, failed API
+// requests or a horizontal page scroll. It only reads: no button that saves, deletes or starts a job is pressed. Run it against test data.
 //
 // Playwright is not a dependency of the app; use the official image, e.g. with the app on the host's port 8080:
 //   docker run --rm --network host -v "$PWD":/w mcr.microsoft.com/playwright:v1.48.0-noble sh -c \
@@ -51,22 +52,48 @@ async function run([width, height]) {
     const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (over > 1) fail(`horizontal scroll (${over}px)`);
   };
+  const overlays = ".sheet, [role='menu']";
   const closeSheets = async () => {
-    for (let i = 0; i < 4 && (await page.locator(".sheet").count()); i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(250); }
+    for (let i = 0; i < 4 && (await page.locator(overlays).count()); i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(250); }
   };
-  /** Click each element of `selector` in turn (re-queried every time), let it open, check, close. */
-  const openEach = async (selector, label, max = 12) => {
+  /**
+   * Click each element of `selector` in turn (re-queried every time), let it open, check, close. `inside`
+   * (optional) runs while it is open (e.g. open the sheets of a card sheet). `need` = how many must exist:
+   * a renamed selector then fails instead of silently opening nothing.
+   */
+  const openEach = async (selector, label, max = 12, { inside = null, need = 0 } = {}) => {
     const n = Math.min(max, await page.locator(selector).count());
+    if (n < need) fail(`${label}: found ${n} of ${selector}, expected at least ${need}`);
     for (let i = 0; i < n; i++) {
       const el = page.locator(selector).nth(i);
       if (!(await el.isVisible().catch(() => false))) continue;
       const name = ((await el.getAttribute("aria-label")) || (await el.innerText().catch(() => "")) || `#${i}`).trim().split("\n")[0].slice(0, 40);
+      const outer = where;
       where = `${label} "${name}"`;
       await el.click({ timeout: 3000 }).catch((e) => fail(`click: ${e.message.split("\n")[0]}`));
       await settle(400);
       await noSideScroll();
+      if (inside) await inside();
       await closeSheets();
       opened++;
+      where = outer;
+    }
+  };
+  // Opening a sheet inside an open sheet: Escape closes only the inner (topmost) one.
+  const openInner = async (selector, label, max = 3) => {
+    const n = Math.min(max, await page.locator(selector).count());
+    for (let i = 0; i < n; i++) {
+      const el = page.locator(selector).nth(i);
+      if (!(await el.isVisible().catch(() => false))) continue;
+      const before = await page.locator(".sheet").count();
+      const outer = where;
+      where = `${outer} › ${label} #${i}`;
+      await el.click({ timeout: 3000 }).catch((e) => fail(`click: ${e.message.split("\n")[0]}`));
+      await settle(400);
+      await noSideScroll();
+      if ((await page.locator(".sheet").count()) > before) { await page.keyboard.press("Escape"); await page.waitForTimeout(250); }
+      opened++;
+      where = outer;
     }
   };
 
@@ -82,10 +109,28 @@ async function run([width, height]) {
     const text = await page.locator("#root").innerText().catch(() => "");
     if (!text.trim()) fail("empty page");
     await noSideScroll();
-    if (route === "#collection/all") await openEach(".tile", "card", 2);
-    if (/^#decks\/\d+$/.test(route)) await openEach(".deck-chips button", "deck chip");
+    // Every opener below only opens a sheet or menu; nothing that saves, deletes or starts a job is pressed.
+    if (route === "#collection") {
+      await openEach("button:has-text('New binder')", "new binder", 1, { need: 1 });
+      await openEach("button:has-text('Manage')", "manage binders", 1, { need: 1 });
+    }
+    if (route === "#collection/all") {
+      // The card sheet, and inside it the Move…/Edit…/Delete… sheets of its first copy row.
+      await openEach(".tile", "card", 2, { need: 1, inside: () => openInner(".sheet .row-acts button", "copy action", 3) });
+    }
+    if (route.startsWith("#collection/binder/")) await openEach("button[aria-label^='Options for ']", "binder menu", 1, { need: 1 });
+    if (/^#decks\/\d+$/.test(route)) {
+      await openEach(".deck-chips button", "deck chip");
+      for (const label of ["Build list", "History", "Deck guide", "Write a deck guide", "More deck actions"]) {
+        await openEach(`.icon-bar button[aria-label='${label}']`, "deck action", 1);
+      }
+      await openEach(".row-more", "card actions", 2);
+    }
     if (route === "#import") await openEach(".settings-row", "settings");
-    if (route === "#scan") await openEach("button[aria-label='Scan settings']", "scan settings", 1);
+    if (route === "#scan") {
+      await openEach("button[aria-label='Scan settings']", "scan settings", 1);
+      await openEach("button[aria-label='Add a card by name']", "add by name", 1, { need: 1 });
+    }
   }
   // The tab bar itself (buttons, not hashes).
   where = "tab bar";

@@ -29,13 +29,22 @@ function startServer(dbFile, { nodeArgs = [], env = {} } = {}) {
     stdio: ["pipe", "pipe", "pipe"],
   });
   const waiting = new Map();
+  const others = []; // answers nobody waits for by id (raw writes: id null, batches)
+  let otherWaiter = null;
   let nextId = 1;
   let stderr = "";
   child.stderr.on("data", (d) => { stderr += d; });
   createInterface({ input: child.stdout }).on("line", (line) => {
     const msg = JSON.parse(line); // anything that is not JSON-RPC on stdout fails the test
-    waiting.get(msg.id)?.(msg);
-    waiting.delete(msg.id);
+    if (!Array.isArray(msg) && waiting.has(msg.id)) { waiting.get(msg.id)(msg); waiting.delete(msg.id); return; }
+    others.push(msg);
+    otherWaiter?.();
+  });
+  /** Write one raw line; resolves the next answer that no request() waits for. */
+  const raw = (line) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no answer to ${line}; stderr:\n${stderr}`)), 10000);
+    otherWaiter = () => { if (others.length) { clearTimeout(timer); otherWaiter = null; resolve(others.shift()); } };
+    child.stdin.write(line + "\n");
   });
   const request = (method, params) => new Promise((resolve, reject) => {
     const id = nextId++;
@@ -53,7 +62,7 @@ function startServer(dbFile, { nodeArgs = [], env = {} } = {}) {
     child.stdin.end();
     setTimeout(() => child.kill("SIGKILL"), 5000).unref();
   });
-  return { request, call, stop };
+  return { request, call, stop, raw };
 }
 
 describe("mcp-collection.js", () => {
@@ -126,6 +135,23 @@ describe("mcp-collection.js", () => {
     assert.match(owned.text, /Delver of Secret_: NOT OWNED/);
     const front = await mcp.call("check_owned", { names: ["Delver of Secrets"] });
     assert.match(front.text, /Insectile Aberration\): 1 owned/);
+  });
+
+  test("JSON-RPC framing: parse error, invalid request, batch, notifications, ping", async () => {
+    assert.deepEqual((await mcp.request("ping")).result, {});
+    let r = await mcp.raw("{not json");
+    assert.deepEqual([r.id, r.error.code], [null, -32700]);
+    r = await mcp.raw(JSON.stringify({ jsonrpc: "1.0", id: 9001, method: "ping" }));
+    assert.deepEqual([r.id, r.error.code], [9001, -32600]);
+    r = await mcp.raw("[]");
+    assert.deepEqual([r.id, r.error.code], [null, -32600], "an empty batch");
+    // A batch answers as an array, without replies to its notifications.
+    r = await mcp.raw(JSON.stringify([{ jsonrpc: "2.0", id: 9002, method: "ping" }, { jsonrpc: "2.0", method: "notifications/initialized" }]));
+    assert.ok(Array.isArray(r));
+    assert.deepEqual(r.map((m) => m.id), [9002]);
+    // A notification alone gets no answer: the next answer is the ping after it.
+    r = await mcp.raw(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n" + JSON.stringify({ jsonrpc: "2.0", id: 9003, method: "ping" }));
+    assert.equal(r.id, 9003);
   });
 
   test("unknown method and unknown tool are JSON-RPC errors", async () => {

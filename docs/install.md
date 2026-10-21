@@ -82,9 +82,13 @@ Open a new terminal and type:
 docker compose version
 ```
 
-**You should now see:** something like `Docker Compose version v2.x.x`.
+**You should now see:** something like `Docker Compose version v2.x.x`, with a number of
+**v2.24 or newer** (the app's compose file needs it).
 
 > **If it doesn't work**
+> - A version below v2.24 (common with Linux distribution packages): update Docker
+>   from docker.com, an older Compose refuses the compose file with
+>   "env_file contains unsupported type".
 > - `command not found` or `not recognized`: close the terminal and open a
 >   new one. Still there? Docker isn't installed.
 > - `Cannot connect to the Docker daemon`: start Docker Desktop and wait for

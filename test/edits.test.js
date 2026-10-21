@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_VERSION, openDb, setAppMeta, transaction, upsertCards } from "../lib/db.js";
 import { tracker, writeLog } from "../lib/editlog.js";
-import { collectionMaster, deleteBinder, listBinders, moveCopies, setCollectionMaster } from "../lib/binders.js";
+import { collectionMaster, deleteBinder, listBinders, moveCopies, renameBinder, setCollectionMaster } from "../lib/binders.js";
 import { deckDetail, saveDeckRows } from "../lib/decks.js";
 import { importManaBoxCsv } from "../lib/manabox.js";
 import { deleteCopies, editCopies, listEdits, undoEdit } from "../lib/edits.js";
@@ -642,6 +642,18 @@ describe("ManaBox imports after edits / deletes", () => {
     const d = deleteCopies(ctx.db, { items: [item(ID.lightning, 1)], confirm: true });
     const ch = JSON.parse(ctx.db.prepare("SELECT changes FROM collection_edits WHERE id = ?").get(d.edit_id).changes);
     assert.equal(ch.moves, undefined);
+  });
+});
+
+describe("undo after a case-only binder rename", () => {
+  test("a full delete comes back under the binder's current spelling, not as a second binder", () => {
+    seed([[ID.sol, 2, { binder: "Trade" }]]);
+    ctx.db.prepare("INSERT INTO binders (name, origin) VALUES ('Trade', 'app')").run();
+    const { edit_id } = deleteCopies(ctx.db, { items: [item(ID.sol, 2, { binder: "Trade", source: "scan" })], confirm: true });
+    renameBinder(ctx.db, "Trade", "trade");
+    undoEdit(ctx.db, edit_id);
+    assert.deepEqual(keys(), [`${ID.sol.slice(-2)}/normal/en/near_mint/trade/scan=2`]);
+    assert.deepEqual(ctx.db.prepare("SELECT name FROM binders").all().map((r) => r.name), ["trade"]);
   });
 });
 

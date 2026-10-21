@@ -67,17 +67,14 @@ jobs:
       - name: Image checks (OCR helper, no Claude Code CLI)
         run: sh scripts/check-image.sh mtg-planner:release
 
+      # Push exactly the image the two steps above tested and checked (a second build could
+      # differ on a cache miss: newer Debian packages that no gate has seen).
       - name: Push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          build-args: |
-            VERSION=${{ steps.version.outputs.build }}
-          tags: |
-            ${{ steps.image.outputs.name }}:latest
-            ${{ steps.image.outputs.name }}:v${{ steps.version.outputs.version }}
-          cache-from: type=gha
+        run: |
+          for tag in latest "v${{ steps.version.outputs.version }}"; do
+            docker tag mtg-planner:release "${{ steps.image.outputs.name }}:${tag}"
+            docker push "${{ steps.image.outputs.name }}:${tag}"
+          done
 
   release:
     needs: docker

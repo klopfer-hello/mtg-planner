@@ -409,7 +409,7 @@ function DeckCardRow({ card, onOpenCard, onActions, selecting = false, selected 
           {card.image_small ? <img src={card.image_small} alt={card.name} loading="lazy" /> : <span />}
           <div className="stack small" style={{ gap: 6, alignContent: "start" }}>
             <span>{card.type_line}</span>
-            <span className="muted">{(card.set_code || "").toUpperCase()} #{card.collector_number} · {freeText || `own ${card.owned}`}</span>
+            <span className="muted">{setNumberOf(card)} · {freeText || `own ${card.owned}`}</span>
             {asList(card.binders).length > 0 && (
               <span>In {asList(card.binders).length === 1 ? "binder" : "binders"}: {asList(card.binders).map((b) => `${b.binder || "Unsorted"} (${b.quantity})`).join(", ")}</span>
             )}

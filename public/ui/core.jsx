@@ -1,5 +1,5 @@
 "use strict";
-const { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useReducer } = React;
+const { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useReducer, useId } = React;
 
 // ===========================================================================
 // Utilities
@@ -158,6 +158,8 @@ function fmtAgo(s) {
 const fmtInt = (n) => (n == null ? "—" : Number(n).toLocaleString());
 const fmtEur = (n) => (n == null ? "—" : `€${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const fmtPrice = (p) => (p && p.value != null ? `${p.currency}${Number(p.value).toFixed(2)}` : "—");
+/** "SET #cn" of a card / collection / deck row (set_code + collector_number), the one printing label. */
+const setNumberOf = (r) => `${String(r?.set_code || "").toUpperCase()} #${r?.collector_number ?? ""}`;
 const plural = (n, one, many = one + "s") => `${fmtInt(n)} ${n === 1 ? one : many}`;
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
 const conditionLabel = (s) => (s || "").split("_").map(cap).join(" ");

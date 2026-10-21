@@ -50,8 +50,10 @@ or basic auth in Caddy/nginx). Don't expose it to the internet as it is.
 
 State-changing API requests that a browser marks as cross-site (via
 `Sec-Fetch-Site` or an `Origin` that doesn't match the `Host`) are refused,
-and the API requires `application/json` / `text/csv` (backup upload:
-`application/gzip`) bodies, so other web pages open in a LAN browser can't
+and the API requires `application/json` bodies (ManaBox import: `text/csv`, or
+`text/plain` only together with the app's `X-Requested-With` header; backup
+upload: `application/gzip` or `application/octet-stream`). A plain HTML form
+can send none of these, so other web pages open in a LAN browser can't
 trigger imports, restores, scans or deck changes. This is not a
 substitute for authentication.
 

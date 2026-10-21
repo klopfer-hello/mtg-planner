@@ -33,14 +33,20 @@ export function createScanner(app) {
   let idx = null;
   let matcher = null;
   const indexJob = { running: null, last: null, controller: null };
+  let pendingVisionCalls = null; // vision cap stamps not written while an index job ran
   try {
     idx = openIndex(INDEX_FILE);
     // Fingerprint loading/hashing/matching run in a worker thread (started after listen).
     matcher = new MatcherWorker(INDEX_FILE, { waitMs: SCAN_MATCHER_WAIT_MS });
     // The hourly Claude vision cap survives restarts (best effort).
     try { visionCap.restore(JSON.parse(getMeta(idx, "vision_calls") || "[]")); } catch { /* fresh window */ }
-    // Skipped while the refresh worker holds the index's write lock (a busy wait would block the event loop).
-    visionCap.persistWith((stamps) => { if (indexJob.running?.kind !== "refresh") setMeta(idx, "vision_calls", JSON.stringify(stamps)); });
+    // Not while any index job runs: the refresh and the fingerprint job hold the index's write lock in long
+    // statements, and busy_timeout would block the event loop for up to 5 s. Saved when the job ends.
+    visionCap.persistWith((stamps) => {
+      if (indexJob.running) { pendingVisionCalls = stamps; return; }
+      pendingVisionCalls = null;
+      setMeta(idx, "vision_calls", JSON.stringify(stamps));
+    });
   } catch (err) {
     console.warn(`[scanner] card index unavailable: ${err.message}`);
   }
@@ -132,6 +138,9 @@ export function createScanner(app) {
       indexJob.controller = null;
       indexReadyCache = false;
       setCodesCache = null;
+      if (pendingVisionCalls) {
+        try { setMeta(idx, "vision_calls", JSON.stringify(pendingVisionCalls)); pendingVisionCalls = null; } catch { /* best effort */ }
+      }
       app.background.scheduleEnglishPrices();
     });
     // [JOB_DONE] settles when this job and its follow-up (`then`) are finished; it rejects when either fails.

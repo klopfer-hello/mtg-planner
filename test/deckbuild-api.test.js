@@ -75,6 +75,9 @@ describe("favourites + binder search API", () => {
     assert.equal((await call("PATCH", `/api/decks/${deckId}`, { favorite: "yes" })).status, 400);
     r = await call("PATCH", `/api/decks/${deckId}`, { favorite: false });
     assert.equal(r.body.favorite, false);
+    // A 400 on another field writes nothing, not even the favourite flag.
+    assert.equal((await call("PATCH", `/api/decks/${deckId}`, { favorite: true, bracket_declared: 9 })).status, 400);
+    assert.equal((await call("GET", "/api/decks")).body.find((d) => d.id === deckId).favorite, false);
   });
 
   test("binder favourite via PATCH; GET /api/binders/search", async () => {

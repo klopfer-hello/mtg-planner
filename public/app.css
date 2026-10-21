@@ -878,7 +878,7 @@ button.pill { border: 0; cursor: pointer; font: inherit; font-size: .82rem; font
 .scan-row.st-auto { border-left-color: var(--ok); }
 .scan-row.st-suggest { border-left-color: var(--warn); }
 .scan-row.st-review, .scan-row.st-failed { border-left-color: var(--bad); }
-.scan-row[aria-selected="true"] { background: var(--accent-soft); }
+.scan-row.selected { background: var(--accent-soft); }
 .scan-row .sel { display: grid; place-items: center; min-height: 44px; cursor: pointer; }
 .scan-row .sel input { width: 20px; height: 20px; accent-color: var(--accent); margin: 0; }
 .scan-row .thb { appearance: none; border: 0; padding: 0; background: none; cursor: pointer; border-radius: 5px; }

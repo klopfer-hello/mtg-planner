@@ -56,7 +56,13 @@ const serveStatic = createStaticHandler(STATIC_DIR);
 async function handleApi(req, res, url) {
   checkSameOrigin(req);
   if (app.restoring && req.method !== "GET" && req.method !== "HEAD") throw new HttpError(503, "A backup is being restored; try again in a moment");
-  if (!(await router.handle(req, res, url))) throw new HttpError(404, "Not found");
+  // Counted while the handler runs: async handlers keep using app.db across awaits, so a restore waits for them.
+  app.inflight++;
+  try {
+    if (!(await router.handle(req, res, url))) throw new HttpError(404, "Not found");
+  } finally {
+    app.inflight--;
+  }
 }
 
 // ---------------------------------------------------------------------------

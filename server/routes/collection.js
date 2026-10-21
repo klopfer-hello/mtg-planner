@@ -20,7 +20,14 @@ import { HttpError, attachment, contentType, optString, parseJsonField, readBody
 const CSV_LIMIT = 25 * 1024 * 1024;
 
 /** ?binder= (exact, case-insensitive; present but empty = Unsorted), null when absent. */
-const binderParam = (query) => (query.has("binder") ? query.get("binder").slice(0, 200) : null);
+const binderParam = (query) => (query.has("binder") ? query.get("binder").slice(0, MAX_BINDER_NAME + 1) : null);
+
+/** A binder name given by a write: trimmed, 400 above MAX_BINDER_NAME (never silently cut). */
+function binderName(v) {
+  const name = String(v ?? "").trim();
+  if (name.length > MAX_BINDER_NAME) throw new HttpError(400, `Binder name is too long (max ${MAX_BINDER_NAME})`);
+  return name;
+}
 
 /** Query syntax errors (lib/query.js) are the user's: 400. */
 function querying(fn) {
@@ -94,7 +101,7 @@ export function collectionRoutes(router, app) {
   router.get("/api/collection/export", ({ res, query }) => {
     const format = query.get("format") || "manabox";
     if (!EXPORT_FORMATS.includes(format)) throw new HttpError(400, `format must be ${EXPORT_FORMATS.join(" or ")}`);
-    const binder = query.has("binder") ? query.get("binder") : null;
+    const binder = binderParam(query);
     const { text } = exportCollection(app.db, { format, binder });
     const base = binder == null ? "mtg-planner collection" : `mtg-planner ${binder || "Unsorted"}`;
     res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Cache-Control": "no-store", "Content-Disposition": attachment(base, "csv", "collection") });
@@ -124,7 +131,6 @@ export function collectionRoutes(router, app) {
     // Once the app is the collection master, a replace would undo nothing the
     // app manages (source app/scan) but still wipes every ManaBox row: ask first.
     if (mode === "replace" && collectionMaster(db) === "app" && query.get("confirm_replace") !== "1") {
-      req.resume();
       throw new HttpError(409, "mtg-planner is the master of your collection: a replace import deletes every card imported from ManaBox " +
         "and loads the file instead (cards you scanned or moved in the app stay, and moved copies are not loaded a second time). Confirm with confirm_replace=1, or import with mode=delta.",
         { code: "confirm_replace" });
@@ -134,11 +140,10 @@ export function collectionRoutes(router, app) {
     // Unsorted. A binder that doesn't exist yet needs create_binder=1 (a typo shouldn't make one).
     let targetBinder = null;
     if (query.has("binder")) {
-      const name = String(query.get("binder")).trim();
-      if (name.length > MAX_BINDER_NAME) throw new HttpError(400, `Binder name is too long (max ${MAX_BINDER_NAME})`);
+      const name = binderName(query.get("binder"));
       targetBinder = name ? findBinder(db, name) : "";
       if (targetBinder == null) {
-        if (query.get("create_binder") !== "1") { req.resume(); throw new HttpError(404, `Binder "${name}" not found (send create_binder=1 to create it)`); }
+        if (query.get("create_binder") !== "1") throw new HttpError(404, `Binder "${name}" not found (send create_binder=1 to create it)`);
         targetBinder = name;
       }
     }
@@ -178,9 +183,10 @@ export function collectionRoutes(router, app) {
     const text = optString(body.text, "text", 200000) || "";
     if (!text.trim()) throw new HttpError(400, "The list is empty");
     const deck = body.deck && typeof body.deck === "object" ? { name: optString(body.deck.name, "deck name", 200), format: optString(body.deck.format, "format", 50) } : null;
-    const resolved = await resolveCardList(app.db, text);
+    const binder = typeof body.binder === "string" ? binderName(body.binder) : "";
+    const resolved = await resolveCardList(app.db, text).catch(throwImportError);
     const out = await app.exclusive(async () => addCardList(app.db, resolved, {
-      binder: typeof body.binder === "string" ? body.binder.slice(0, 100) : "", create: body.create !== false,
+      binder, create: body.create !== false,
       language: body.language || "en", condition: body.condition || "near_mint", deck,
     }));
     if (out.deck_id) app.scheduleSpellbook(out.deck_id);
@@ -190,10 +196,13 @@ export function collectionRoutes(router, app) {
   router.post("/api/collection/delete", async ({ req }) => {
     const body = await readJson(req);
     requireAppActor(body);
-    return app.exclusive(async () => deleteCopies(app.db, {
+    const args = {
       items: body.items, confirm: body.confirm, expected_copies: body.expected_copies ?? null,
-      confirm_master: body.confirm_master === true, actor: "app",
-    }));
+      confirm_master: body.confirm_master === true, actor: "app", dry_run: body.dry_run === true,
+    };
+    // A dry run only reads: no lock, so counting never waits for (or blocks) an import.
+    if (args.dry_run) return deleteCopies(app.db, args);
+    return app.exclusive(async () => deleteCopies(app.db, args));
   });
   router.get("/api/collection/edits", ({ query }) => ({ edits: listEdits(app.db, { limit: query.get("limit") || 50 }) }));
   router.post("/api/collection/edits/:id(\\d+)/undo", ({ params }) => app.exclusive(async () => undoEdit(app.db, Number(params.id))));

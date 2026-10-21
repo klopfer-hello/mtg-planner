@@ -86,6 +86,16 @@ describe("deck history", () => {
     assert.throws(() => restoreDeckVersion(ctx.db, id, 999999), (e) => e.status === 404);
   });
 
+  test("restore of a row whose printing is gone from the cards table keeps its name without a printing", async () => {
+    const { id } = await saveDeck(ctx.db, { name: "Gone", source: "manual", items: items("1 Sol Ring\n1 Lightning Bolt") });
+    const first = versions(ctx.db, id)[0].id;
+    updateDeckCard(ctx.db, id, { name: "Sol Ring", board: "main", quantity: 0 });
+    ctx.db.prepare("DELETE FROM cards WHERE scryfall_id = ?").run(ID.sol);
+    restoreDeckVersion(ctx.db, id, first);
+    const rows = ctx.db.prepare("SELECT name, scryfall_id FROM deck_cards WHERE deck_id = ? ORDER BY name").all(id).map((r) => ({ ...r }));
+    assert.deepEqual(rows, [{ name: "Lightning Bolt", scryfall_id: ID.lightning }, { name: "Sol Ring", scryfall_id: null }]);
+  });
+
   test("keeps the newest DECK_VERSIONS_KEEP versions; deleting the deck deletes its history", async () => {
     const { id } = await saveDeck(ctx.db, { name: "Many", source: "manual", items: items("1 Sol Ring") });
     for (let i = 2; i <= DECK_VERSIONS_KEEP + 5; i++) updateDeckCard(ctx.db, id, { name: "Sol Ring", board: "main", quantity: i });

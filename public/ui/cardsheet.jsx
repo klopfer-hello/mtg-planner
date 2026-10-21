@@ -8,9 +8,9 @@
 function CardUsage({ usage }) {
   if (!usage || typeof usage !== "object" || usage.owned == null) return null;
   const decks = asList(usage.decks);
-  const ids = new Set(decks.map((d) => d.id ?? d.name));
-  const built = new Set(decks.filter((d) => d.status === "built").map((d) => d.id ?? d.name));
-  const available = usage.available ?? (usage.owned - (usage.built_demand ?? 0));
+  const ids = new Set(decks.map((d) => d.id));
+  const built = new Set(decks.filter((d) => d.status === "built").map((d) => d.id));
+  const { available } = usage;
   return (
     <div className="usage-line" aria-label="Copies and decks">
       <span>owned <b>{fmtInt(usage.owned)}</b></span>
@@ -67,8 +67,8 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged, onWishChang
   const card = data?.card;
   const loadingOther = Boolean(data && data.card.scryfall_id !== id && !error);
   const totalOwned = data ? data.owned.reduce((a, r) => a + r.quantity, 0) : 0;
-  // usage.decks carries each deck's status; fall back to the plain list.
-  const inDecks = data ? (asList(data.usage?.decks).length ? asList(data.usage.decks) : asList(data.decks)) : [];
+  // usage.decks: every deck holding the card, with its status.
+  const inDecks = data ? asList(data.usage.decks) : [];
 
   return (
     <Sheet title={card ? card.name : error ? "Card" : "Loading…"} onClose={onClose}
@@ -98,7 +98,7 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged, onWishChang
               <div className="oracle"><OracleText text={card.oracle_text} /></div>
               <dl className="kv">
                 <dt>Printing</dt>
-                <dd>{card.set_name} <span className="muted">({(card.set_code || "").toUpperCase()} #{card.collector_number})</span></dd>
+                <dd>{card.set_name} <span className="muted">({setNumberOf(card)})</span></dd>
                 <dt>Mana value</dt><dd>{card.cmc ?? "—"}</dd>
                 {card.keywords?.length > 0 && (<><dt>Keywords</dt><dd>{card.keywords.join(", ")}</dd></>)}
               </dl>
@@ -146,16 +146,16 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged, onWishChang
                           <tr key={r.id ?? i} aria-current={r.scryfall_id === id || undefined}>
                             <td style={{ paddingRight: 0 }}><div className="row-acts">
                               <button type="button" className="btn sm move-btn" onClick={() => { setMoved(null); setMoveRow(r); }}
-                                aria-label={`Move ${r.quantity > 1 ? "copies" : "copy"} of ${(r.set_code || "").toUpperCase()} #${r.collector_number} in ${r.binder || "Unsorted"} to another binder`}>Move…</button>
+                                aria-label={`Move ${r.quantity > 1 ? "copies" : "copy"} of ${setNumberOf(r)} in ${r.binder || "Unsorted"} to another binder`}>Move…</button>
                               <button type="button" className="btn sm" onClick={() => { setMoved(null); setEditRow(r); }}
-                                aria-label={`Edit ${r.quantity > 1 ? "copies" : "copy"} of ${(r.set_code || "").toUpperCase()} #${r.collector_number} in ${r.binder || "Unsorted"}`}><Icon.edit /> Edit…</button>
+                                aria-label={`Edit ${r.quantity > 1 ? "copies" : "copy"} of ${setNumberOf(r)} in ${r.binder || "Unsorted"}`}><Icon.edit /> Edit…</button>
                               <button type="button" className="btn sm danger" onClick={() => { setMoved(null); setDeleteRow(r); }}
-                                aria-label={`Delete ${r.quantity > 1 ? "copies" : "copy"} of ${(r.set_code || "").toUpperCase()} #${r.collector_number} in ${r.binder || "Unsorted"}`}><Icon.trash /> Delete…</button>
+                                aria-label={`Delete ${r.quantity > 1 ? "copies" : "copy"} of ${setNumberOf(r)} in ${r.binder || "Unsorted"}`}><Icon.trash /> Delete…</button>
                             </div></td>
                             <td>
                               {r.scryfall_id === id
-                                ? <b title={r.set_name}>{(r.set_code || "").toUpperCase()} #{r.collector_number}</b>
-                                : <button type="button" className="linkbtn" title={`Show ${r.set_name}`} onClick={() => onOpenCard(r.scryfall_id)}>{(r.set_code || "").toUpperCase()} #{r.collector_number}</button>}
+                                ? <b title={r.set_name}>{setNumberOf(r)}</b>
+                                : <button type="button" className="linkbtn" title={`Show ${r.set_name}`} onClick={() => onOpenCard(r.scryfall_id)}>{setNumberOf(r)}</button>}
                             </td>
                             <td>{r.finish === "normal" ? "—" : r.finish}</td>
                             <td>{r.language && r.language !== "en" ? <LangTag lang={r.language} /> : <span className="muted">EN</span>}</td>
@@ -197,7 +197,7 @@ function CardSheet({ id, onClose, onOpenCard, onOpenDeck, onChanged, onWishChang
       )}
       {moveRow && card && (
         <MoveSheet title={`Move ${card.name}`} maxQty={moveRow.quantity} exclude={moveRow.binder}
-          intro={<span className="small muted">{(moveRow.set_code || "").toUpperCase()} #{moveRow.collector_number} · {moveRow.finish === "normal" ? "non-foil" : moveRow.finish} · {(moveRow.language || "").toUpperCase()} · {conditionLabel(moveRow.condition)} · from <b>{moveRow.binder || "Unsorted"}</b></span>}
+          intro={<span className="small muted">{setNumberOf(moveRow)} · {moveRow.finish === "normal" ? "non-foil" : moveRow.finish} · {(moveRow.language || "").toUpperCase()} · {conditionLabel(moveRow.condition)} · from <b>{moveRow.binder || "Unsorted"}</b></span>}
           onClose={() => setMoveRow(null)}
           onMove={async ({ quantity, to_binder, create }) => {
             const item = { scryfall_id: moveRow.scryfall_id, finish: moveRow.finish, language: moveRow.language, condition: moveRow.condition, binder: moveRow.binder, source: moveRow.source, quantity };

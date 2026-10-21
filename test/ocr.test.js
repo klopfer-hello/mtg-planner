@@ -428,6 +428,10 @@ process.stdin.on("data", (d) => {
       process.stdout.write(Buffer.concat([h, body]));
     };
     if (MODE === "err") { reply(1, "boom"); continue; }
+    // Protocol violations: a wrong magic, an announced answer over 64 MB, bytes after the answer.
+    if (MODE === "magic") { process.stdout.write(Buffer.from("XXXX\0\0\0\0\0\0\0\0")); continue; }
+    if (MODE === "huge") { const h = Buffer.alloc(12); h.write("MOCR"); h.writeUInt32LE(0, 4); h.writeUInt32LE(65 * 1024 * 1024, 8); process.stdout.write(h); continue; }
+    if (MODE === "extra") { const h = Buffer.alloc(12); h.write("MOCR"); h.writeUInt32LE(0, 4); h.writeUInt32LE(2, 8); process.stdout.write(Buffer.concat([h, Buffer.from("okEXTRA")])); continue; }
     reply(0, "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n" +
       "5\t1\t1\t1\t1\t1\t2\t3\t40\t20\t96.5\t" + [lang, psm, white, il, process.pid].join("|") + "\n");
   }
@@ -508,6 +512,28 @@ describe("persistent OCR helper protocol (fake helper)", { skip: !posix && "need
     assert.equal(st.crashes, 1);
     assert.equal(st.fallbacks, 1);
     assert.match(st.lastError, /exited \(7\)/);
+  });
+
+  test("protocol violations kill the helper and fall back to the CLI for that call", async () => {
+    for (const [mode, why] of [["magic", /desync/], ["huge", /answer too large/], ["extra", /nobody asked for/]]) {
+      const M = await ocrModule(`fake-${mode}`, fake(mode));
+      const p = M.ocrImage(img, { timeoutMs: 10_000 });
+      if (tools.tesseract) await p; else await assert.rejects(p, /tesseract is not installed/);
+      const st = M.ocrHelperStatus();
+      assert.deepEqual([st.crashes, st.fallbacks], [1, 1], mode);
+      assert.match(st.lastError, why, mode);
+      M.closeOcrHelpers();
+    }
+  });
+
+  test("five crashes in a row bench the helper: the CLI answers without starting a new one", async () => {
+    const M = await ocrModule("fake-crash-bench", fake("crash"));
+    const call = () => { const p = M.ocrImage(img, { timeoutMs: 10_000 }); return tools.tesseract ? p : p.catch(() => {}); };
+    for (let i = 0; i < 5; i++) await call();
+    const st = M.ocrHelperStatus();
+    assert.deepEqual([st.crashes, st.benched, st.active], [5, true, false]);
+    await call();
+    assert.equal(M.ocrHelperStatus().spawned, 5, "benched: no sixth helper");
   });
 
   test("a missing helper binary or OCR_HELPER=off means the spawn path", async () => {

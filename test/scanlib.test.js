@@ -6,7 +6,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   CAPTURE_DEFAULTS, DET_BLANK_SHARP, SOUND_DEFAULTS, captureAdvice, chooseScanSound, createDetAnalyzer,
-  createScanSounds, defaultCardQuad, findCardInStill, glareMap, mapToPhoto, photoMapping, quadSize, warpQuad, workSize,
+  createScanSounds, defaultCardQuad, findCardInStill, glareMap, grabStill, mapToPhoto, photoMapping, quadSize, warpQuad, workSize,
 } from "../public/scanlib.js";
 import { ProbeController } from "../public/capture.js";
 import { BoxPrior, PRIOR_STORAGE_KEY } from "../public/det/track.mjs";
@@ -85,6 +85,26 @@ function frame(key, w, h, kind, cardSeed, quad, noiseSeed = 1) {
   }
   return sceneCache.get(k);
 }
+
+describe("grabStill", () => {
+  test("the full-resolution photo bitmap is closed when the re-detect fails or throws", async () => {
+    const saved = { ImageCapture: globalThis.ImageCapture, createImageBitmap: globalThis.createImageBitmap };
+    const bitmaps = [];
+    globalThis.ImageCapture = class { takePhoto() { return Promise.resolve({}); } };
+    try {
+      const video = { videoWidth: 1920, videoHeight: 1080 };
+      const corners = defaultCardQuad(1920, 1080);
+      for (const [w, h, why] of [[3000, 4000, "orientation (no mapping)"], [4000, 2250, "no canvas here: the re-detect throws"]]) {
+        globalThis.createImageBitmap = async () => { const b = { width: w, height: h, closed: false, close() { this.closed = true; } }; bitmaps.push(b); return b; };
+        const r = await grabStill(video, {}, corners);
+        assert.equal(r.kind, "video", why);
+        assert.equal(bitmaps.at(-1).closed, true, why);
+      }
+    } finally {
+      Object.assign(globalThis, saved);
+    }
+  });
+});
 
 describe("chooseScanSound", () => {
   const scan = (match_status, price) => ({ scan: { id: 1, match_status, status: "staged" }, duplicate: false, result: { status: match_status, price_eur: price } });

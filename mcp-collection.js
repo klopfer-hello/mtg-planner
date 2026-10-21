@@ -110,7 +110,12 @@ async function handleLine(line) {
   try {
     if (Array.isArray(msg)) {
       if (!msg.length) { send(fail(null, -32600, "Invalid Request")); return; }
-      const out = (await Promise.all(msg.map(handle))).filter(Boolean);
+      // One failing message answers for itself; the rest of the batch still gets its replies.
+      const one = (m) => handle(m).catch((err) => {
+        log("internal error:", err);
+        return m && typeof m === "object" && m.id != null ? fail(m.id, -32603, `Internal error: ${err.message}`) : null;
+      });
+      const out = (await Promise.all(msg.map(one))).filter(Boolean);
       if (out.length) send(out);
     } else {
       const out = await handle(msg);

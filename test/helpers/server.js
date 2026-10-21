@@ -24,8 +24,13 @@ export const freePort = () => new Promise((resolve, reject) => {
 const preload = (code) => `--import=data:text/javascript,${encodeURIComponent(code)}`;
 /** Node flag: the child's fetch answers /cards/collection from the fixture pool. */
 export const SCRYFALL_STUB = preload(`const { stubScryfall } = await import(${JSON.stringify(FIXTURES)}); stubScryfall();`);
-/** Node flag: every fetch in the child fails (no network). */
-export const OFFLINE = preload('globalThis.fetch = async () => { throw new Error("offline (test)"); };');
+const SCRYFALL = pathToFileURL(path.join(ROOT, "lib/scryfall.js")).href;
+/**
+ * Node flag: every fetch in the child fails like Node's own network error (TypeError "fetch failed" + cause);
+ * Scryfall's retries don't wait (the real spacing between requests stays).
+ */
+export const OFFLINE = preload(`const { setThrottle } = await import(${JSON.stringify(SCRYFALL)}); setThrottle({ retryMs: 0, lockoutMs: 0 });
+globalThis.fetch = async () => { throw new TypeError("fetch failed", { cause: new Error("offline (test)") }); };`);
 
 /**
  * Start server.js. `seed(dbFile, dir)` runs before the start (open the DB, insert rows, close it).

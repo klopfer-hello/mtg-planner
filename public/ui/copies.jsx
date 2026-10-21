@@ -10,7 +10,6 @@ const COPY_FINISH_LABEL = { normal: "Non-foil", foil: "Foil", etched: "Etched" }
 // Index printings say "nonfoil", collection rows "normal".
 const collFinish = (f) => (f === "nonfoil" || !f ? "normal" : f);
 const FINISH_PRICE_KEY = { normal: "eur", foil: "eur_foil", etched: "eur_etched" };
-const copyLabel = (r) => `${(r.set_code || "").toUpperCase()} #${r.collector_number}`;
 
 /** EUR price of one copy of an owned row: the row's own price_eur, else the open card's price when it is that printing. */
 function rowUnitEur(card, r) {
@@ -36,7 +35,7 @@ const selectionNames = (items) => `${items.slice(0, 6).map((i) => i.name).join("
 function CopyLine({ row, extra = null }) {
   return (
     <span className="small muted" style={{ overflowWrap: "anywhere" }}>
-      {copyLabel(row)} {row.language && row.language !== "en" ? <LangTag lang={row.language} /> : "· EN"} · {COPY_FINISH_LABEL[collFinish(row.finish)] || row.finish} · {conditionLabel(row.condition)} · in <b>{row.binder || UNSORTED}</b>
+      {setNumberOf(row)} {row.language && row.language !== "en" ? <LangTag lang={row.language} /> : "· EN"} · {COPY_FINISH_LABEL[collFinish(row.finish)] || row.finish} · {conditionLabel(row.condition)} · in <b>{row.binder || UNSORTED}</b>
       {row.source && <> <SourceBadge source={row.source} /></>}{extra}
     </span>
   );
@@ -235,7 +234,7 @@ function DeleteCopySheet({ card, row, onClose, onDone }) {
       <div className="stack">
         <dl className="kv">
           <dt>Card</dt><dd><b>{card.name}</b></dd>
-          <dt>Printing</dt><dd>{copyLabel(row)} {row.language && row.language !== "en" ? <LangTag lang={row.language} /> : "· EN"} · {COPY_FINISH_LABEL[collFinish(row.finish)] || row.finish} · {conditionLabel(row.condition)}</dd>
+          <dt>Printing</dt><dd>{setNumberOf(row)} {row.language && row.language !== "en" ? <LangTag lang={row.language} /> : "· EN"} · {COPY_FINISH_LABEL[collFinish(row.finish)] || row.finish} · {conditionLabel(row.condition)}</dd>
           <dt>Binder</dt><dd>{row.binder || UNSORTED}{row.source && <> <SourceBadge source={row.source} /></>}</dd>
           <dt>Copies</dt><dd>{step === 1 ? `${qty} of ${row.quantity}` : <b>{what}</b>}</dd>
           <dt>Value</dt><dd>{unit == null ? "no price" : `${fmtEur(unit * qty)}${qty > 1 ? ` (${fmtEur(unit)} each)` : ""}`}</dd>
@@ -269,28 +268,11 @@ function BulkDeleteSheet({ items, group, binder, onClose, onDone }) {
   const itemsKey = items.map((i) => i.key || i.scryfall_id).join("|");
   useEffect(() => {
     let alive = true;
-    (async () => {
-      const queue = [...items];
-      let copies = 0, value = 0, unpriced = 0, manabox = 0;
-      const worker = async () => {
-        while (queue.length && alive) {
-          const it = queue.shift();
-          const d = await api(`/api/cards/${encodeURIComponent(it.scryfall_id)}`);
-          for (const r of asList(d?.owned)) {
-            if (group !== "card" && r.scryfall_id !== it.scryfall_id) continue;
-            if (scoped && !sameName(r.binder || "", binder) && !(binder === "" && !r.binder)) continue;
-            copies += r.quantity;
-            if (r.source === "manabox") manabox += r.quantity;
-            const u = rowUnitEur(d.card, r);
-            if (u == null) unpriced += r.quantity; else value += u * r.quantity;
-          }
-        }
-      };
-      try {
-        await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
-        if (alive) setCount({ copies, value: Math.round(value * 100) / 100, unpriced, manabox });
-      } catch (e) { if (alive) setCountError(`Could not count the copies: ${e.message}`); }
-    })();
+    // One dry run of the same delete counts everything server-side (Select → All can be 1000 cards).
+    api("/api/collection/delete", { method: "POST", json: { items: selectionItems(items, group, binder), dry_run: true } }).then(
+      (d) => { if (alive) setCount({ copies: d.copies, value: d.value_eur, unpriced: d.unpriced_copies, manabox: d.manabox_copies }); },
+      (e) => { if (alive) setCountError(`Could not count the copies: ${e.message}`); },
+    );
     return () => { alive = false; };
     // The parent passes a fresh array each render: count once per selection.
   }, [itemsKey, group, binder, scoped, recount]); // eslint-disable-line react-hooks/exhaustive-deps

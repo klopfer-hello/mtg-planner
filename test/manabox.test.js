@@ -6,7 +6,7 @@ import { importManaBoxCsv, parseCsv, refreshOwnedCards } from "../lib/manabox.js
 import { LIMITED_INTERVAL_MS, fetchCollection, setThrottle } from "../lib/scryfall.js";
 import { deckDetail, listDecks } from "../lib/decks.js";
 import { setCommander, updateDeckCard } from "../lib/deckedit.js";
-import { ID, stubScryfall, tempDb } from "./fixtures.js";
+import { ID, SCRYFALL_CARDS, stubScryfall, tempDb } from "./fixtures.js";
 import { manaboxCsv as csv, manaboxLine } from "./helpers/csv.js";
 
 describe("parseCsv", () => {
@@ -105,6 +105,19 @@ describe("importManaBoxCsv", () => {
     assert.equal(imports.length, 2);
     assert.equal(imports[0].filename, "first.csv");
     assert.equal(JSON.parse(imports[1].summary).total_cards_after, 3);
+  });
+
+  test("replace keeps owned copies of a known printing Scryfall does not return this time", async () => {
+    const file = csv(
+      row("Box", "binder", "Sol Ring", "c21", "263", "normal", "2", ID.sol),
+      row("Box", "binder", "Lightning Bolt", "m10", "146", "normal", "3", ID.lightning),
+    );
+    await importManaBoxCsv(ctx.db, file);
+    stub.restore();
+    stub = stubScryfall(SCRYFALL_CARDS.filter((c) => c.id !== ID.sol)); // Sol Ring now not_found
+    const summary = await importManaBoxCsv(ctx.db, file);
+    assert.deepEqual(summary.unresolved, []);
+    assert.deepEqual(owned(), { [`${ID.sol}/normal`]: 2, [`${ID.lightning}/normal`]: 3 });
   });
 
   test("targetBinder puts every card into one binder; deck binders still become decks", async () => {
@@ -283,6 +296,58 @@ describe("importManaBoxCsv", () => {
     const res = await fetchCollection(ids);
     assert.deepEqual(stub.calls.map((c) => c.length), [75, 75, 10]);
     assert.equal(res.notFound.length, 160);
+  });
+
+  test("scryfall retries a 5xx, a 429 and a network error, then gives up", async () => {
+    const inner = globalThis.fetch;
+    const failures = [new Response("{}", { status: 503 }), new Response("{}", { status: 429 }), new TypeError("fetch failed")];
+    let n = 0;
+    globalThis.fetch = async (url, init) => {
+      n++;
+      const f = failures.shift();
+      if (f instanceof Error) throw f;
+      return f ?? inner(url, init);
+    };
+    try {
+      // 503 → retry → 429 → retry → network error: two retries used, the error goes to the caller.
+      await assert.rejects(fetchCollection([{ id: ID.sol }]), /fetch failed/);
+      assert.equal(n, 3);
+      // Network error once, then the stub answers.
+      failures.length = 0;
+      failures.push(new TypeError("fetch failed"));
+      n = 0;
+      const res = await fetchCollection([{ id: ID.sol }]);
+      assert.deepEqual([n, res.cards.length], [2, 1]);
+    } finally {
+      globalThis.fetch = inner;
+    }
+  });
+
+  test("refreshOwnedCards keeps the batches fetched before a failure", async () => {
+    // 80 owned printings = 2 batches; Sol Ring is in the first one, the second batch fails.
+    await importManaBoxCsv(ctx.db, csv(row("", "", "Sol Ring", "c21", "263", "normal", "1", ID.sol)));
+    const fake = ctx.db.prepare("INSERT INTO cards (scryfall_id, oracle_id, name, prices, fetched_at) VALUES (?, ?, 'Fake', '{}', '')");
+    const own = ctx.db.prepare("INSERT INTO collection (scryfall_id, quantity, source) VALUES (?, 1, 'app')");
+    for (let i = 0; i < 79; i++) {
+      const id = `00000000-0000-0000-0000-${String(3000 + i).padStart(12, "0")}`;
+      fake.run(id, `o-${id}`);
+      own.run(id);
+    }
+    ctx.db.prepare("UPDATE cards SET prices = '{}' WHERE scryfall_id = ?").run(ID.sol);
+    const inner = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async (url, init) => {
+      const ids = JSON.parse(init.body).identifiers.map((x) => x.id);
+      calls++;
+      if (calls === 1 && !ids.includes(ID.sol)) throw new Error("test: Sol Ring must be in the first batch");
+      return calls === 1 ? inner(url, init) : new Response("{}", { status: 400 });
+    };
+    try {
+      await assert.rejects(refreshOwnedCards(ctx.db), (e) => e.status === 400);
+    } finally {
+      globalThis.fetch = inner;
+    }
+    assert.equal(JSON.parse(ctx.db.prepare("SELECT prices FROM cards WHERE scryfall_id = ?").get(ID.sol).prices).eur, "1.50");
   });
 
   test("fetchCollection keeps /cards/collection at 2 req/s", async () => {

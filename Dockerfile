@@ -104,8 +104,9 @@ VOLUME ["/data", "/claude"]
 USER node
 EXPOSE 8080
 
-# start-period covers the one-time CLI install on a fresh /claude volume.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+# start-period covers the one-time CLI install on a fresh /claude volume (entrypoint.sh waits up to
+# CLAUDE_INSTALL_TIMEOUT, 300 s, before the server starts). A healthy check ends it early: normal starts are not slower.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=330s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 8080) + '/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 
 LABEL org.opencontainers.image.title="mtg-planner" \

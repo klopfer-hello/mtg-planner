@@ -1,11 +1,11 @@
-// fphash.js: the card fingerprint hash, shared by the server and the browser
-// (pure ES module, no node: imports, no deps).
+// fphash.js: the card fingerprint hash (pure ES module, no node: imports, no deps).
 //
-// Why it exists: the scanner's capture loop needs the same 88-byte hash in the
-// browser (de-duplicating a card that is still under the camera) that the
-// server matches against the reference index. One implementation keeps both
-// sides bit-identical; lib/fingerprint.js imports this file (lib → public) and
-// wraps the Uint32Array results in Buffers, so its outputs are unchanged.
+// Why it lives in public/: it was written to run in the browser too (the old
+// client-side capture loop de-duplicated cards with it; removed in v0.5.0, see
+// public/capture.js). Today its only user is lib/fingerprint.js, which imports
+// this file (lib → public) and wraps the Uint32Array results in Buffers. It
+// stays a browser-safe module so a future client-side use gets the same,
+// bit-identical hash as the server's reference index.
 //
 // Layout (22 words): 0–7 gray dHash 256 (17×16) of the full card inset 3%,
 // 8–15 gray dHash 256 of the art box x .12–.88 y .13–.52, 16–21 colour dHash
