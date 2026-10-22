@@ -253,7 +253,10 @@ values with spaces go in quotes.
 | --- | --- |
 | `bolt`, `n:"sol ring"` | name contains |
 | `t:creature`, `t:legendary` | type line contains |
-| `o:"draw a card"` | oracle text contains |
+| `o:"draw a card"` | oracle text contains (exact wording) |
+| `ft:"creature dies"` | full-text: all words, any order and word form ("dies", "died") |
+| `role:ramp`, `role:draw`, `role:interaction` | the app's own card roles (ramp incl. fast mana, draw, removal, counter, wipe, tutor, protection, recursion, …; `interaction` = removal, counters and wipes) |
+| `otag:sacrifice-outlet` | [Scryfall Tagger](https://tagger.scryfall.com/) tag (community data, fetched from Scryfall on first use and kept 30 days; not every card is tagged) |
 | `k:flying` | has keyword |
 | `c:wu` | colors include white **and** blue |
 | `c=wu`, `c!=wu` | exactly / not exactly white-blue |

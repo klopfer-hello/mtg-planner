@@ -131,6 +131,32 @@ describe("searchCollection", () => {
 
   const names = (q, opts = {}) => searchCollection(ctx.db, { q, ...opts }).rows.map((r) => r.name).sort();
 
+  test("v1.3.0 function search: ft: (stemmed prefix words), role: (app roles, groups), otag: (cached Tagger tags)", () => {
+    assert.deepEqual(names('ft:"deal damage"'), ["Lightning Bolt"]);
+    assert.deepEqual(names("ft:counter"), ["Counterspell"]);
+    assert.deepEqual(names("-ft:target t:instant"), ["Azorius Charm"]);
+    assert.deepEqual(names("role:ramp"), ["Sol Ring"]);
+    assert.deepEqual(names("role:interaction"), ["Counterspell", "Lightning Bolt"]);
+    assert.deepEqual(names("role:removal or role:counter"), ["Counterspell", "Lightning Bolt"]);
+    assert.throws(() => names("role:bogus"), /Unknown role "bogus"\. Roles: .*interaction/);
+    assert.equal(ctx.db.prepare("SELECT tags FROM card_roles WHERE oracle_id = 'o-bolt'").get().tags, ",removal,");
+    ctx.db.prepare("INSERT INTO card_tag_sets (tag, fetched_at, count) VALUES ('burn', ?, 1)").run(new Date().toISOString());
+    ctx.db.prepare("INSERT INTO card_tags (tag, oracle_id) VALUES ('burn', 'o-bolt')").run();
+    assert.deepEqual(names("otag:burn"), ["Lightning Bolt"]);
+    assert.deepEqual(names("otag:unknown-tag"), []);
+    assert.match(QUERY_HELP, /ft:.*role:.*otag:/);
+  });
+
+  test("cards_fts follows card upserts (trigger) and the role cache re-classifies a re-fetched printing", () => {
+    const fts = (w) => ctx.db.prepare("SELECT c.name FROM cards_fts f JOIN cards c ON c.rowid = f.rowid WHERE cards_fts MATCH ?").all(w).map((r) => r.name);
+    ctx.db.prepare("UPDATE cards SET oracle_text = 'Draw two cards.', fetched_at = 'x' WHERE scryfall_id = ?").run(ID.serra);
+    assert.ok(fts('"draw"*').includes("Serra Angel"));
+    assert.deepEqual(names("role:draw"), ["Serra Angel"]);
+    ctx.db.prepare("UPDATE cards SET oracle_text = 'Flying, vigilance', fetched_at = 'y' WHERE scryfall_id = ?").run(ID.serra);
+    assert.ok(!fts('"draw"*').includes("Serra Angel"));
+    assert.deepEqual(names("role:draw"), []);
+  });
+
   test("everything owned, one row per oracle card", () => {
     const res = searchCollection(ctx.db, {});
     assert.equal(res.total, 7);

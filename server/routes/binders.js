@@ -2,14 +2,16 @@
 // properties (type, cover, deck box link, lock, favourite), delete.
 
 import { binderMatches } from "../../lib/query.js";
+import { ensureOtags, otagsIn } from "../../lib/cardtags.js";
 import { createBinder, deleteBinder, listBinders, renameBinder, setBinderProps } from "../../lib/binders.js";
 import { HttpError, decodeParam, readJson, sendJson } from "../http.js";
 
 export function binderRoutes(router, app) {
   router.get("/api/binders", () => listBinders(app.db));
   // Binders holding cards that match ?q= (collection query syntax): {q, cards, binders[{name, cards, copies}]}.
-  router.get("/api/binders/search", ({ query }) => {
+  router.get("/api/binders/search", async ({ query }) => {
     const q = (query.get("q") || "").slice(0, 500);
+    await ensureOtags(app.db, otagsIn(q));
     try { return { q, ...binderMatches(app.db, { q }) }; } catch (err) { throw new HttpError(400, err.message); }
   });
   router.post("/api/binders", async ({ req, res }) => {

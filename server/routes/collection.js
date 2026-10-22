@@ -14,6 +14,7 @@ import { addCardList, resolveCardList } from "../../lib/listimport.js";
 import { IMPORT_MODES, importManaBoxCsv, refreshOwnedCards } from "../../lib/manabox.js";
 import { QUERY_HELP, SECTION_BYS, collectionSections, searchCollection } from "../../lib/query.js";
 import { listSets, setDetail } from "../../lib/sets.js";
+import { ensureOtags, otagsIn } from "../../lib/cardtags.js";
 import { throwImportError } from "../errors.js";
 import { HttpError, attachment, contentType, optString, parseJsonField, readBody, readJson, sendJson } from "../http.js";
 
@@ -71,7 +72,9 @@ export function collectionRoutes(router, app) {
   router.get("/api/stats", ({ query }) => stats(app.db, { binder: binderParam(query) }));
   router.get("/api/query-help", () => ({ help: QUERY_HELP }));
 
-  router.get("/api/collection", ({ query }) => {
+  router.get("/api/collection", async ({ query }) => {
+    // otag: terms need their Tagger tag cached (fetched from Scryfall on first use; failures just match nothing).
+    await ensureOtags(app.db, otagsIn(query.get("q")));
     const group = query.get("group") === "printing" ? "printing" : "card";
     const limit = Math.min(Math.max(parseInt(query.get("limit"), 10) || 60, 1), 500);
     const offset = Math.max(parseInt(query.get("offset"), 10) || 0, 0);
@@ -90,10 +93,11 @@ export function collectionRoutes(router, app) {
   });
 
   // Section headers (binder detail page): ?by=set|color|rarity|type plus the q/group/binder of /api/collection.
-  router.get("/api/collection/sections", ({ query }) => {
+  router.get("/api/collection/sections", async ({ query }) => {
     const by = query.get("by") || "set";
     if (!SECTION_BYS.includes(by)) throw new HttpError(400, `by must be one of ${SECTION_BYS.join(", ")}`);
     const group = query.get("group") === "printing" ? "printing" : "card";
+    await ensureOtags(app.db, otagsIn(query.get("q")));
     return querying(() => collectionSections(app.db, { q: query.get("q") || "", group, binder: binderParam(query), by }));
   });
 
