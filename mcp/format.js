@@ -4,6 +4,7 @@
 export class ToolError extends Error {}
 
 import { nameMatch } from "../lib/db.js";
+import { CONSTRUCTED_FORMATS, formatLabel } from "../lib/formatlegal.js";
 
 export { likeEsc, nameArgs, nameMatch, parseJson } from "../lib/db.js";
 
@@ -51,4 +52,4 @@ export const deckLine = (k) =>
   `, source ${k.source}, updated ${k.updated_at}` +
   `${k.bracket != null ? ` · B${k.bracket_partial && k.bracket_declared == null ? "≥" : ""}${k.bracket}` : ""}` +
   `${k.score != null ? ` · ${k.score_partial ? "≥" : ""}${k.score.toFixed(1)}/10` : ""}` +
-  `${k.legal === false ? " · not Commander-legal" : ""}`;
+  `${k.legal === false ? ` · not ${formatLabel(CONSTRUCTED_FORMATS.has(k.format) ? k.format : null)}-legal` : ""}`;

@@ -564,17 +564,23 @@ describe("deck power", () => {
     const id = saveDeckRows(ctx.db, { name: "Burn", format: "modern", rows: [{ name: "Lightning Bolt", scryfall_id: ID.lightning, quantity: 4, board: "main" }] });
     const d = deckDetail(ctx.db, id);
     assert.equal(d.stats.total, 4);
-    assert.deepEqual(d.power, { commander: false, bracket: null, score: null, legality: null });
+    // v1.3.0: 60-card formats get their own legality (lib/formatlegal.js), still no bracket or score.
+    assert.deepEqual({ ...d.power, legality: null }, { commander: false, bracket: null, score: null, legality: null });
+    assert.deepEqual(d.power.legality, { ok: false, format: "modern", unchecked: 0, notes: [],
+      problems: [{ rule: "size", text: "4 main deck cards, at least 60", cards: [] }] });
     assert.equal(d.combos, null);
     assert.equal(d.spellbook_request, null);
     assert.equal(deckComboRequest(ctx.db, id), null);
     const text = deckToText(d);
     assert.match(text, /\nStats: 4 cards · lands 0 · avg MV 1 · curve 0:0 1:4 /);
+    assert.match(text, /\nNot Modern-legal: 4 main deck cards, at least 60/);
     assert.doesNotMatch(text, /\nBracket:|\nScore /);
     const row = listDecks(ctx.db)[0];
     assert.equal(row.bracket, null);
     assert.equal(row.score, null);
-    assert.equal(row.legal, null);
+    assert.equal(row.legal, false);
+    const casual = deckDetail(ctx.db, saveDeckRows(ctx.db, { name: "Kitchen", format: "casual", rows: [{ name: "Lightning Bolt", scryfall_id: ID.lightning, quantity: 9, board: "main" }] }));
+    assert.equal(casual.power.legality, null, "formats without rules stay unchecked");
   });
 
   test("a ManaBox deck without format but with a commander board is a commander deck", () => {

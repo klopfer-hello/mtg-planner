@@ -206,6 +206,34 @@ Claude sees the bracket and the score of every deck. Ask for a target
 ("build a bracket 3 deck"): Claude checks the draft with `evaluate_deck`
 before saving it and swaps the cards that push it too high.
 
+## Pauper and other 60-card formats
+
+Decks with the format pauper, standard, pioneer, modern, legacy, vintage or
+premodern are checked against their rules: at least 60 main deck cards, at most
+15 in the sideboard, at most 4 copies (basics and "any number" cards excepted,
+restricted cards once) and every card legal in the format. A deck that breaks
+them shows **✗ Not legal** on its page (tap it for the reasons). They get no
+bracket or score; the planner compares Pauper decks with the current MTGO
+tournament lists instead (`compare_to_meta`).
+
+## Gaps and goldfish
+
+The planner can measure a deck in two ways (also part of `evaluate_deck`):
+
+- **Gaps** (`deck_gaps`): lands, ramp, card draw, removal, board wipes,
+  protection and recursion (from bracket 3), cheap plays, average mana value
+  and colour-fixing lands, compared with the middle half of tuned public decks
+  of the same format and bracket. The numbers come from about 440 decklists
+  (Archidekt by bracket, WotC precons, MTGO Pauper lists), counted with the
+  app's own card roles, so your deck and the reference are measured the same
+  way. Every LOW gap comes with your free cards that fill it.
+- **Goldfish** (`simulate_deck`): 10 000 solo games with London mulligans,
+  one land a turn and the deck's own mana sources. It reports keepable hands,
+  land drops on turns 3 and 4, colour screw on turn 4, flood on turn 6,
+  interaction by turn 3, the turn the commander comes down and, when known,
+  the turn a combo is assembled. Same list, same numbers, so a change can be
+  shown as before → after.
+
 ## Combo check (Commander Spellbook)
 
 Combos come from [Commander Spellbook](https://commanderspellbook.com/)

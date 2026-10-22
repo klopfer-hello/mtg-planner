@@ -32,7 +32,7 @@ const comboUnresolved = (c) => asList(c?.unresolved);
 /** Header badges: "B3 Upgraded", "6.5/10" and a "Not legal" badge; tapping any opens the PowerSheet. */
 function PowerBadges({ deck, onOpen }) {
   const { bracket: b, score: s, legality } = deckPowerOf(deck);
-  if (!b && !s) return null;
+  if (!b && !s) return legality?.format && legality.ok === false ? <FormatLegalChip legality={legality} /> : null;
   // Plan §8: warn for a declared bracket below the rules and for an auto bracket that is
   // only a lower bound (combos / Game Changer flags / cards not checked yet).
   const tone = declaredBelow(b) ? "warn" : b && b.partial && b.declared == null ? "warn" : b && b.value >= 4 ? "accent" : "";
@@ -52,6 +52,21 @@ function PowerBadges({ deck, onOpen }) {
       {legality && legality.ok === false && (
         <button type="button" className="power-chip bad" onClick={onOpen} aria-label="Not Commander-legal. Show details">✗ Not legal</button>
       )}
+    </div>
+  );
+}
+
+/** A 60-card deck (Pauper, ...) that breaks its format's rules: "✗ Not legal", tap for the problems. */
+function FormatLegalChip({ legality }) {
+  const [open, setOpen] = useState(false);
+  const name = legality.format[0].toUpperCase() + legality.format.slice(1);
+  return (
+    <div className="stack">
+      <div className="row power-badges">
+        <button type="button" className="power-chip bad" aria-expanded={open} onClick={() => setOpen(!open)}
+          aria-label={`Not ${name}-legal. ${open ? "Hide" : "Show"} the problems`}>✗ Not legal</button>
+      </div>
+      {open && <ul className="pw-info">{legality.problems.map((p) => <li key={p.rule}>{p.text}</li>)}</ul>}
     </div>
   );
 }

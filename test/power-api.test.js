@@ -130,7 +130,8 @@ describe("deck power API", () => {
     modernId = r.body.id;
     const d = (await call("GET", `/api/decks/${modernId}`)).body;
     assert.equal(d.stats.total, 4);
-    assert.deepEqual(d.power, { commander: false, bracket: null, score: null, legality: null });
+    assert.deepEqual({ ...d.power, legality: null }, { commander: false, bracket: null, score: null, legality: null });
+    assert.equal(d.power.legality.format, "modern", "60-card formats get their own legality (v1.3.0)");
     assert.equal(d.combos, null);
     assert.equal((await call("POST", `/api/decks/${modernId}/combos`)).status, 400);
     await new Promise((res) => setTimeout(res, 1200)); // 6x the write debounce (SPELLBOOK_DELAY_MS 200)
