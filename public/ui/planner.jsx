@@ -37,7 +37,47 @@ function ToolChip({ tool }) {
   );
 }
 
-function Message({ msg }) {
+/**
+ * 👍/👎 under an answer (#085): PUT /api/chats/:id/messages/:mid/feedback. The same thumb again removes the
+ * rating; 👎 offers one optional line "what was wrong". The planner learns from them in the background.
+ */
+function Feedback({ chatId, msg }) {
+  const [rating, setRating] = useState(msg.rating ?? null);
+  const [note, setNote] = useState(msg.feedback_note ?? "");
+  const [asking, setAsking] = useState(false);
+  const [state, setState] = useState(null); // null | "busy" | "sent" | error text
+  const put = async (r, n = "") => {
+    setState("busy");
+    try {
+      const out = await api(`/api/chats/${chatId}/messages/${msg.id}/feedback`, { method: "PUT", json: { rating: r, note: n } });
+      setRating(out.rating); setNote(out.note ?? ""); setState(out.rating ? "sent" : null);
+      return true;
+    } catch (e) { setState(e.message); return false; }
+  };
+  const thumb = (r) => {
+    if (rating === r) { setAsking(false); put(0); return; }
+    put(r).then((ok) => setAsking(ok && r === -1));
+  };
+  const busy = state === "busy";
+  return (
+    <>
+      <span className="feedback" role="group" aria-label="Rate this answer">
+        <button type="button" className="thumb" aria-pressed={rating === 1} disabled={busy} title="Good answer" aria-label="Good answer" onClick={() => thumb(1)}>👍</button>
+        <button type="button" className="thumb" aria-pressed={rating === -1} disabled={busy} title="Bad answer" aria-label="Bad answer" onClick={() => thumb(-1)}>👎</button>
+        {state === "sent" && !asking && <span role="status">Thanks, the planner learns from it.</span>}
+        {state && state !== "busy" && state !== "sent" && <span role="alert">{state}</span>}
+      </span>
+      {asking && (
+        <form className="feedback-note" onSubmit={(e) => { e.preventDefault(); put(-1, note).then((ok) => ok && setAsking(false)); }}>
+          <input type="text" maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What was wrong? (optional)" aria-label="What was wrong" />
+          <button type="submit" className="btn" disabled={busy}>Send</button>
+        </form>
+      )}
+    </>
+  );
+}
+
+function Message({ msg, chatId }) {
   if (msg.role === "user") {
     return <div className="msg user"><div className="bubble">{msg.content}</div></div>;
   }
@@ -53,6 +93,7 @@ function Message({ msg }) {
       <div className="bubble"><Markdown text={msg.content || "_(no answer)_"} /></div>
       <div className="meta">
         {msg.created_at && <span>{fmtDate(msg.created_at)}</span>}
+        {chatId && typeof msg.id === "number" && <Feedback key={msg.id} chatId={chatId} msg={msg} />}
       </div>
     </div>
   );
@@ -483,7 +524,7 @@ function PlannerTab({ active, health, request, onRequestHandled, onChanged }) {
         ) : <p className="muted">No messages yet — say hello.</p>)}
 
         <div className="messages" aria-live="off">
-          {messages.map((m) => <Message key={m.id} msg={m} />)}
+          {messages.map((m) => <Message key={m.id} msg={m} chatId={chatId} />)}
           {stream && (
             <div className="msg assistant" aria-busy="true">
               {stream.tools.length > 0 && <div className="tools">{stream.tools.map((t, i) => <ToolChip key={i} tool={t} />)}</div>}

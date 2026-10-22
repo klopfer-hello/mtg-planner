@@ -28,6 +28,7 @@ export function backupRoutes(router, app) {
     if (app.runs.size) return "the planner is answering a chat (its MCP server has the database open)";
     if (app.scanner.scanSlots.used) return "a scan is being identified";
     if (app.guideJobs.size) return "Claude is writing a deck guide";
+    if (app.lessons.running) return "Claude is updating the planner lessons";
     // The restore request itself is one of them; any other may still use the current DB after an await.
     if (app.inflight > 1) return "another request is still being answered";
     return null;

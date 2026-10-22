@@ -32,6 +32,8 @@ export function createApp({ version }) {
     runs: new Map(),
     /** deck id → {started_at} of a deck guide being written in the background (server/routes/decks.js). */
     guideJobs: new Map(),
+    /** Planner lessons distilled from ratings in the background (server/routes/chats.js). */
+    lessons: { timer: null, running: false, last_error: null },
     scheduler: null, // lib/scheduler.js, set by server.js
 
     /**

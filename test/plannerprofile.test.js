@@ -42,8 +42,8 @@ describe("GET/PATCH /api/settings planner", () => {
   test("round trip, validation, last turn cost", async () => {
     let r = await srv.call("GET", "/api/settings");
     assert.equal(r.status, 200);
-    assert.deepEqual({ ...r.body.planner, formats: undefined, models: undefined }, {
-      model: "", model_env: null, formats: undefined, models: undefined, last_turn: null,
+    assert.deepEqual({ ...r.body.planner, formats: undefined, models: undefined, lessons: undefined }, {
+      model: "", model_env: null, formats: undefined, models: undefined, lessons: undefined, last_turn: null,
       profile: { formats: [], bracket: null, budget_eur: null, dislikes: "", about: "" },
     });
     r = await srv.call("PATCH", "/api/settings", { planner_model: "sonnet", planner_profile: { formats: ["pauper"], budget_eur: 10 } });

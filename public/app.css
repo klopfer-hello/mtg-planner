@@ -641,7 +641,13 @@ table.t td.num, table.t th.num { text-align: right; font-variant-numeric: tabula
 .bubble { max-width: min(100%, 720px); padding: 10px 14px; border-radius: 16px; word-break: break-word; overflow-wrap: anywhere; min-width: 0; }
 .msg.user .bubble { background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 4px; white-space: pre-wrap; }
 .msg.assistant .bubble { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; width: 100%; max-width: 100%; }
-.msg .meta { font-size: .74rem; color: var(--muted); padding: 0 4px; display: flex; gap: 8px; flex-wrap: wrap; }
+.msg .meta { font-size: .74rem; color: var(--muted); padding: 0 4px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.feedback { display: inline-flex; align-items: center; gap: 2px; }
+.thumb { min-width: 44px; min-height: 44px; border: 0; background: none; font-size: 1.05rem; border-radius: 10px; cursor: pointer; filter: grayscale(1); opacity: .55; }
+.thumb[aria-pressed="true"] { filter: none; opacity: 1; background: var(--accent-soft); }
+.thumb:focus-visible { outline: 2px solid var(--accent); }
+.feedback-note { display: flex; gap: 6px; width: 100%; min-width: 0; }
+.feedback-note input { flex: 1; min-width: 0; }
 .tools { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .tool-chip {
   display: inline-flex; align-items: center; gap: 4px; max-width: 100%;

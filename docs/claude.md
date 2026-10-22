@@ -77,6 +77,14 @@ the formats you play, your usual Commander bracket, a budget per upgrade, what
 to avoid and one free line (for example "short, precise answers"). It stays in
 your database. The section also shows what the last answer cost.
 
+**👍 / 👎 under each answer** teach the planner. With 👎 you can add one line on
+what was wrong. About 20 seconds after your last rating (and never while a chat
+is answering) Claude merges the ratings into at most six short rules, one small
+request on your Claude plan. The planner reads these rules before every answer.
+They show under **Settings → Planner → Learned from your ratings**, where you
+can edit or clear them. Ratings keep a copy of the question and answer, so
+deleting a chat does not lose them; they stay in your database.
+
 Claude's `search_collection` tool uses the same
 [search syntax](collection.md#search-syntax) as the collection browser.
 Binder names, each row's source (ManaBox, scan or app) and owned vs. free

@@ -4,10 +4,14 @@
 // browser goes away. A deck chat (chats.deck_id, one per deck) is reopened by
 // "Ask the planner" on that deck; a turn that starts a new CLI session gets the
 // deck's current state (as get_deck shows it) in front of the message.
+// Answers can be rated (PUT …/feedback); a while after the last rating the ratings are merged into the
+// planner's lessons (lib/plannerlessons.js) in the background, never next to a running turn.
 
 import crypto from "node:crypto";
 
-import { claudeConfigured, MAX_CONCURRENT, runTurn } from "../../lib/claude.js";
+import { claudeConfigured, MAX_CONCURRENT, runGuide, runTurn } from "../../lib/claude.js";
+import { distillLessons, feedbackCounts, getLessons, lessonsText, rateMessage } from "../../lib/plannerlessons.js";
+import { nowIso } from "../../lib/db.js";
 import { getProfile, plannerModel, profileText } from "../../lib/plannerprofile.js";
 import { deckDetail } from "../../lib/decks.js";
 import { deckToText } from "../../lib/decktext.js";
@@ -15,13 +19,39 @@ import { HttpError, optString, parseJsonField, readJson, sendEmpty, sendJson } f
 
 const MAX_MESSAGE_CHARS = 20000;
 const UUID = ":id([0-9a-fA-F-]{36})";
+const LESSONS_DELAY_MS = 20000; // after the last rating (several ratings in a row = one Claude call)
+const LESSONS_RETRY_MS = 60000; // while a chat turn or another Claude run is busy
 
 function messageRow(m) {
-  return { id: m.id, role: m.role, content: m.content, tools: parseJsonField(m.tools, []), cost_usd: m.cost_usd, created_at: m.created_at };
+  return { id: m.id, role: m.role, content: m.content, tools: parseJsonField(m.tools, []), cost_usd: m.cost_usd, created_at: m.created_at,
+    rating: m.rating ?? null, feedback_note: m.feedback_note ?? null };
 }
 
 export function chatRoutes(router, app) {
-  const { runs } = app;
+  const { runs, lessons } = app;
+
+  /** Merge pending ratings into the lessons LESSONS_DELAY_MS after the last call (no-op without Claude). */
+  function scheduleLessons(delay = LESSONS_DELAY_MS) {
+    if (!claudeConfigured() || lessons.running) return;
+    clearTimeout(lessons.timer);
+    lessons.timer = setTimeout(runLessons, delay);
+    lessons.timer.unref?.();
+  }
+  async function runLessons() {
+    lessons.timer = null;
+    if (runs.size || app.claudeBusy() || app.restoring) return scheduleLessons(LESSONS_RETRY_MS);
+    if (!feedbackCounts(app.db).pending) return;
+    lessons.running = true;
+    try {
+      const r = await distillLessons(app.db, runGuide);
+      lessons.last_error = r.ok ? null : { at: nowIso(), error: r.error };
+    } catch (err) {
+      lessons.last_error = { at: nowIso(), error: err.message };
+      console.warn(`[lessons] ${err.message}`);
+    } finally {
+      lessons.running = false;
+    }
+  }
 
   function getChatOr404(id) {
     const chat = app.db.prepare("SELECT id, title, deck_id, session_id, created_at, updated_at FROM chats WHERE id = ?").get(id);
@@ -97,7 +127,7 @@ export function chatRoutes(router, app) {
         recap: deck && recap ? `${deck}\n\n${recap}` : recap,
         onEvent: send,
         signal: controller.signal,
-        profile: profileText(getProfile(app.db)),
+        profile: [profileText(getProfile(app.db)), lessonsText(getLessons(app.db))].filter(Boolean).join("\n\n"),
         model: plannerModel(app.db) || null,
       });
     } catch (err) {
@@ -107,6 +137,7 @@ export function chatRoutes(router, app) {
       clearInterval(keepAlive);
       app.background.scheduleEnglishPrices();
       app.scheduleChangedDecks(turnStart);
+      if (feedbackCounts(app.db).pending) scheduleLessons(); // ratings that waited for this turn
     }
 
     try {
@@ -163,8 +194,16 @@ export function chatRoutes(router, app) {
     const id = params.id.toLowerCase();
     const { session_id: _s, ...chat } = getChatOr404(id);
     chat.deck = chat.deck_id ? app.db.prepare("SELECT id, name, format, status FROM decks WHERE id = ?").get(chat.deck_id) ?? null : null;
-    const messages = app.db.prepare("SELECT * FROM messages WHERE chat_id = ? ORDER BY id").all(id).map(messageRow);
+    const messages = app.db.prepare(`SELECT m.*, f.rating, f.note AS feedback_note FROM messages m
+      LEFT JOIN planner_feedback f ON f.message_id = m.id WHERE m.chat_id = ? ORDER BY m.id`).all(id).map(messageRow);
     return { chat, messages, busy: runs.has(id) };
+  });
+  /** PUT /api/chats/:id/messages/:mid/feedback {rating: 1|-1|0, note?} → {rating, note}; 0 removes the rating. */
+  router.put(`/api/chats/${UUID}/messages/:mid(\\d+)/feedback`, async ({ req, params }) => {
+    const body = await readJson(req);
+    const out = rateMessage(app.db, params.id.toLowerCase(), Number(params.mid), { rating: body.rating, note: body.note });
+    if (out.rating) scheduleLessons();
+    return out;
   });
   router.delete(`/api/chats/${UUID}`, ({ res, params }) => {
     const id = params.id.toLowerCase();

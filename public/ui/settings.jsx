@@ -362,7 +362,44 @@ function PlannerSettingsPanel({ dataVersion }) {
         </div>
         <ErrorNotice error={error} onDismiss={() => setError(null)} />
       </form>
+      <PlannerLessonsCard lessons={data.lessons} busy={busy} onSave={(text) => patch({ planner_lessons: text })} />
     </>
+  );
+}
+
+/** Settings → Planner: the lessons Claude learned from 👍/👎 on answers (#085); editable, one per line. */
+function PlannerLessonsCard({ lessons, busy, onSave }) {
+  const [edit, setEdit] = useState(null); // text while editing
+  const fb = lessons.feedback;
+  const save = async () => { await onSave(edit); setEdit(null); };
+  return (
+    <section className="card stack" aria-labelledby="planner-lessons-title">
+      <h2 id="planner-lessons-title">Learned from your ratings</h2>
+      <p className="small muted" style={{ margin: 0 }}>
+        Rate answers with 👍 or 👎 in the Planner. Claude turns the ratings into these rules on its own and reads them before every answer.
+        {` ${fb.up} 👍 · ${fb.down} 👎`}{fb.pending ? ` · ${fb.pending} not learned yet` : ""}{lessons.running ? " · learning now…" : ""}
+      </p>
+      {lessons.last_error && <div className="notice warn" role="status"><div className="grow">Last update failed: {lessons.last_error.error}</div></div>}
+      {edit == null ? (
+        <>
+          {lessons.lessons.length
+            ? <ul style={{ margin: 0, paddingLeft: 20 }}>{lessons.lessons.map((l, i) => <li key={i}>{l}</li>)}</ul>
+            : <p className="small muted" style={{ margin: 0 }}>Nothing learned yet.</p>}
+          <div className="row"><button type="button" className="btn" disabled={busy} onClick={() => setEdit(lessons.lessons.join("\n"))}>Edit</button></div>
+        </>
+      ) : (
+        <>
+          <label className="stack" style={{ gap: 4 }}>
+            <span className="small muted">One rule per line (at most 6). Empty = forget them all.</span>
+            <textarea rows={6} maxLength={1500} value={edit} onChange={(e) => setEdit(e.target.value)} />
+          </label>
+          <div className="row">
+            <button type="button" className="btn primary" disabled={busy} onClick={save}>Save</button>
+            <button type="button" className="btn" disabled={busy} onClick={() => setEdit(null)}>Cancel</button>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

@@ -113,7 +113,7 @@ describe("migrations v10-v14", () => {
     ctx.db.exec(`DROP TABLE deck_build_picks; DROP TABLE deck_versions; DROP TABLE wishlist; DROP TABLE value_history; DROP TABLE value_history_binders; DROP TABLE card_history;
       ALTER TABLE binders DROP COLUMN type; ALTER TABLE binders DROP COLUMN cover_scryfall_id; PRAGMA user_version = 9`);
     ctx.db.close();
-    assert.equal(SCHEMA_VERSION, 20);
+    assert.equal(SCHEMA_VERSION, 21);
     for (let i = 0; i < 2; i++) {
       const db = openDb(ctx.file);
       assert.equal(db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);

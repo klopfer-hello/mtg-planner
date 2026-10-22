@@ -1,9 +1,10 @@
 // Settings (Settings tab): the collection master (ManaBox or the app), the
 // online combo check (Commander Spellbook; env SPELLBOOK_ENABLED=false wins)
-// and the planner (model choice, env CLAUDE_MODEL wins; the user's profile).
+// and the planner (model choice, env CLAUDE_MODEL wins; the user's profile; the lessons learned from ratings).
 
 import { collectionMaster, setCollectionMaster } from "../../lib/binders.js";
 import { checkPlannerModel, getProfile, mergeProfile, plannerModel, PLANNER_MODELS, PROFILE_FORMATS, setPlannerModel, setProfile } from "../../lib/plannerprofile.js";
+import { feedbackCounts, getLessons, LESSONS_MAX_CHARS, setLessons } from "../../lib/plannerlessons.js";
 import { setSpellbookSettings, spellbookSettings } from "../../lib/spellbook.js";
 import { HttpError, readJson } from "../http.js";
 
@@ -17,6 +18,7 @@ export function settingsRoutes(router, app) {
       planner: {
         model: plannerModel(app.db), model_env: process.env.CLAUDE_MODEL || null, models: PLANNER_MODELS, formats: PROFILE_FORMATS,
         profile: getProfile(app.db), last_turn: last ? { cost_usd: last.cost_usd, at: last.created_at } : null,
+        lessons: { ...getLessons(app.db), feedback: feedbackCounts(app.db), running: app.lessons.running, last_error: app.lessons.last_error },
       },
     };
   };
@@ -39,9 +41,13 @@ export function settingsRoutes(router, app) {
       if (!body.planner_profile || typeof body.planner_profile !== "object" || Array.isArray(body.planner_profile)) throw new HttpError(400, "planner_profile must be an object");
       mergeProfile(getProfile(app.db), body.planner_profile);
     }
+    if (body.planner_lessons !== undefined && (typeof body.planner_lessons !== "string" || body.planner_lessons.length > LESSONS_MAX_CHARS)) {
+      throw new HttpError(400, `planner_lessons must be text (at most ${LESSONS_MAX_CHARS} characters)`);
+    }
     if (body.collection_master !== undefined) setCollectionMaster(app.db, body.collection_master); // validates, writes nothing else
     if (body.planner_model !== undefined) setPlannerModel(app.db, body.planner_model);
     if (body.planner_profile !== undefined) setProfile(app.db, body.planner_profile);
+    if (body.planner_lessons !== undefined) setLessons(app.db, body.planner_lessons);
     if (Object.keys(patch).length) setSpellbookSettings(app.db, patch);
     return settingsView();
   });
