@@ -283,9 +283,88 @@ const SETTINGS_SECTIONS = [
   { id: "import", title: "Import", sub: "ManaBox collection CSV, decklists", icon: Icon.import },
   { id: "collection", title: "Collection", sub: "ManaBox or app in charge, export, recent changes", icon: Icon.collection },
   { id: "backups", title: "Backups", sub: "Create, download, restore", icon: Icon.box },
+  { id: "planner", title: "Planner", sub: "Model, your formats, bracket, budget, style", icon: Icon.planner },
   { id: "online", title: "Online services", sub: "Combo check (Commander Spellbook)", icon: Icon.external },
   { id: "data", title: "Scanner & data", sub: "Card index, fingerprints, prices", icon: Icon.scan },
 ];
+
+const PLANNER_MODEL_LABEL = { "": "Default (Claude Code's choice)", sonnet: "Sonnet (faster, cheaper)", opus: "Opus (best for deck building)" };
+const PROFILE_FORMAT_LABEL = { commander: "Commander", pauper: "Pauper", standard: "Standard", pioneer: "Pioneer", modern: "Modern", legacy: "Legacy", vintage: "Vintage" };
+
+/** Settings → Planner: model choice (env CLAUDE_MODEL wins) and the profile every chat turn gets (lib/plannerprofile.js). */
+function PlannerSettingsPanel({ dataVersion }) {
+  const { data, error: loadError, setData } = useApi("/api/settings", [dataVersion], { map: (d) => d.planner, error: (e) => `Could not load settings: ${e.message}` });
+  const [draft, setDraft] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { if (data && !draft) setDraft({ ...data.profile, budget: data.profile.budget_eur == null ? "" : String(data.profile.budget_eur) }); }, [data, draft]);
+  if (!data || !draft) return <section className="card stack"><ErrorNotice error={loadError} />{!loadError && <span className="spinner" aria-label="Loading" />}</section>;
+  const patch = async (json) => {
+    setBusy(true); setError(null); setSaved(false);
+    try { const d = await api("/api/settings", { method: "PATCH", json }); setData(d.planner); setSaved(true); } catch (e) { setError(e.message); } finally { setBusy(false); }
+  };
+  const set = (k, v) => { setDraft({ ...draft, [k]: v }); setSaved(false); };
+  const toggleFormat = (f) => set("formats", draft.formats.includes(f) ? draft.formats.filter((x) => x !== f) : [...draft.formats, f]);
+  const save = (e) => {
+    e.preventDefault();
+    const budget = draft.budget.trim() === "" ? null : Number(draft.budget.replace(",", "."));
+    if (budget !== null && !(budget >= 0)) { setError("Budget must be a number."); return; }
+    patch({ planner_profile: { formats: draft.formats, bracket: draft.bracket, budget_eur: budget, dislikes: draft.dislikes, about: draft.about } });
+  };
+  const last = data.last_turn;
+  return (
+    <>
+      <section className="card stack" aria-labelledby="planner-model-title">
+        <h2 id="planner-model-title">Model</h2>
+        <label className="stack" style={{ gap: 4 }}>
+          <span className="small muted">Which Claude model answers in the Planner tab.</span>
+          <select value={data.model} disabled={busy || Boolean(data.model_env)} onChange={(e) => patch({ planner_model: e.target.value })}>
+            {data.models.map((m) => <option key={m} value={m}>{PLANNER_MODEL_LABEL[m] ?? m}</option>)}
+          </select>
+        </label>
+        {data.model_env && <div className="notice warn" role="status">The server sets the model ({data.model_env}, CLAUDE_MODEL).</div>}
+        <p className="small muted" style={{ margin: 0 }}>{last ? `Last answer: $${last.cost_usd.toFixed(3)} of Claude usage (${fmtAgo(last.at)}; Claude bills in USD).` : "No answer yet."}</p>
+      </section>
+      <form className="card stack" onSubmit={save} aria-labelledby="planner-profile-title">
+        <h2 id="planner-profile-title">About you</h2>
+        <p className="small muted" style={{ margin: 0 }}>The planner reads this before every answer. It stays on this server.</p>
+        <fieldset className="stack" style={{ gap: 4, border: 0, padding: 0, margin: 0 }}>
+          <legend className="small muted">Formats you play</legend>
+          <div className="row">
+            {data.formats.map((f) => (
+              <label key={f} className="switch"><input type="checkbox" checked={draft.formats.includes(f)} onChange={() => toggleFormat(f)} /> {PROFILE_FORMAT_LABEL[f] ?? f}</label>
+            ))}
+          </div>
+        </fieldset>
+        <label className="stack" style={{ gap: 4 }}>
+          <span className="small muted">Usual Commander table</span>
+          <select value={draft.bracket ?? ""} onChange={(e) => set("bracket", e.target.value ? Number(e.target.value) : null)}>
+            <option value="">Not set</option>
+            {[1, 2, 3, 4, 5].map((b) => <option key={b} value={b}>Bracket {b}</option>)}
+          </select>
+        </label>
+        <label className="stack" style={{ gap: 4 }}>
+          <span className="small muted">Budget per upgrade (€)</span>
+          <input type="text" inputMode="decimal" value={draft.budget} onChange={(e) => set("budget", e.target.value)} placeholder="e.g. 25" />
+        </label>
+        <label className="stack" style={{ gap: 4 }}>
+          <span className="small muted">Avoid (strategies or cards)</span>
+          <input type="text" maxLength={200} value={draft.dislikes} onChange={(e) => set("dislikes", e.target.value)} placeholder="e.g. stax, mass land destruction" />
+        </label>
+        <label className="stack" style={{ gap: 4 }}>
+          <span className="small muted">Anything else (how you like answers)</span>
+          <textarea rows={2} maxLength={300} value={draft.about} onChange={(e) => set("about", e.target.value)} placeholder="e.g. I have ADHD: short, precise answers" />
+        </label>
+        <div className="row">
+          <button type="submit" className="btn" disabled={busy}>{busy ? <><span className="spinner" aria-hidden="true" /> Saving…</> : "Save"}</button>
+          {saved && <span className="small" role="status">Saved.</span>}
+        </div>
+        <ErrorNotice error={error} onDismiss={() => setError(null)} />
+      </form>
+    </>
+  );
+}
 
 function PhoneAppPanel({ dataVersion }) {
   const { data: list } = useApi("/api/downloads", [dataVersion], { map: (d) => d.downloads });
@@ -650,6 +729,13 @@ function ImportTab({ dataVersion, health, onImported, onRestored, restored, onDi
         <Sheet title="Backups" onClose={() => { if (!backupBusy) closeSection(); }}>
           <div className="stack settings-sheet">
       <BackupPanel dataVersion={dataVersion} onRestored={onRestored} onBusy={setBackupBusy} />
+          </div>
+        </Sheet>
+      )}
+      {section === "planner" && (
+        <Sheet title="Planner" onClose={closeSection}>
+          <div className="stack settings-sheet">
+      <PlannerSettingsPanel dataVersion={dataVersion} />
           </div>
         </Sheet>
       )}

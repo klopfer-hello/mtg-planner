@@ -4,7 +4,7 @@
 
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -84,6 +84,38 @@ describe("CLI resolution", () => {
   });
 });
 
+describe("planner profile and model reach the CLI", () => {
+  let argsFile;
+  before(() => {
+    const dir = path.join(tmp, "argbin");
+    mkdirSync(dir, { recursive: true });
+    argsFile = path.join(dir, "args.txt");
+    const bin = path.join(dir, "claude");
+    // A fake CLI: records its arguments (one per line) and answers one stream-json result.
+    writeFileSync(bin, `#!/bin/sh\nfor a in "$@"; do printf '%s\\n---\\n' "$a"; done > "${argsFile}"\n` +
+      `echo '{"type":"result","subtype":"success","result":"ok","session_id":"s1","total_cost_usd":0.01}'\n`);
+    chmodSync(bin, 0o755);
+    setEnv({ CLAUDE_BIN: bin, CLAUDE_MODEL: null, CLAUDE_CONFIG_DIR: path.join(tmp, "cfg") });
+  });
+  const argv = () => readFileSync(argsFile, "utf8").split("\n---\n");
+  const after = (list, flag) => list[list.indexOf(flag) + 1];
+
+  test("profile text is appended to the system prompt; the Settings model is passed, CLAUDE_MODEL wins", async () => {
+    await runTurn({ prompt: "hi", profile: "User profile (set by the user in Settings; follow it): plays Pauper.", model: "opus" });
+    let a = argv();
+    assert.equal(after(a, "--append-system-prompt"), `${PLANNER_PROMPT}\n\nUser profile (set by the user in Settings; follow it): plays Pauper.`);
+    assert.equal(after(a, "--model"), "opus");
+    await runTurn({ prompt: "hi" });
+    a = argv();
+    assert.equal(after(a, "--append-system-prompt"), PLANNER_PROMPT);
+    assert.ok(!a.includes("--model"));
+    setEnv({ CLAUDE_MODEL: "sonnet" });
+    await runTurn({ prompt: "hi", model: "opus" });
+    assert.equal(after(argv(), "--model"), "sonnet");
+    setEnv({ CLAUDE_MODEL: null });
+  });
+});
+
 describe("missing CLI", () => {
   before(() => setEnv({ CLAUDE_BIN: path.join(tmp, "gone", "claude") }));
 
@@ -109,6 +141,19 @@ describe("planner prompt", () => {
     }
   });
 
+  test("v1.3.0 workflow: gaps first, numbers from the simulator, rules cited, function search, Pauper meta", () => {
+    for (const s of ["deck_gaps first", "simulate_deck numbers", "Never cut lands below the usual range", "role:/otag:/ft:", "recent_cards",
+      "rules_lookup + get_rulings, cite the rule number", "compare_to_meta"]) {
+      assert.ok(PLANNER_PROMPT.includes(s), `prompt mentions ${s}`);
+    }
+  });
+
+  test("reads cards before recommending them (get_cards, not memory)", () => {
+    for (const s of ["get_cards", "never trust your memory for card text", "newer than your knowledge"]) {
+      assert.ok(PLANNER_PROMPT.includes(s), `prompt mentions ${s}`);
+    }
+  });
+
   test("knows owned vs free copies and deck status", () => {
     for (const s of ["shopping_list", "Owned is not free", "built decks claim", "without breaking my decks", "avail>=1", "status idea"]) {
       assert.ok(PLANNER_PROMPT.includes(s), `prompt mentions ${s}`);
@@ -124,11 +169,15 @@ describe("planner prompt", () => {
   test("asks for short phone-friendly answers", () => {
     assert.match(PLANNER_PROMPT, /1-2 short sentences/);
     assert.match(PLANNER_PROMPT, /3-5 short bullets/);
+    assert.match(PLANNER_PROMPT, /at most 600 characters/);
+    assert.match(PLANNER_PROMPT, /at most 15 words, at most 3 card names/);
+    assert.match(PLANNER_PROMPT, /no drafts or fixes/);
+    assert.match(PLANNER_PROMPT, /save_deck's "Answer summary" lines/);
     assert.match(PLANNER_PROMPT, /No tables/);
     assert.match(PLANNER_PROMPT, /Never list the whole deck/);
     assert.match(PLANNER_PROMPT, /no text before or between tool calls/);
-    // 2891 chars measured with the v0.7.0 bracket rule; cap = that + ~50.
-    assert.ok(PLANNER_PROMPT.length < 3060, `prompt stays short (${PLANNER_PROMPT.length} chars)`);
+    // 4049 chars measured with the v1.3.0 rules (get_cards, 600 characters, answer summary, workflow); cap = that + ~50.
+    assert.ok(PLANNER_PROMPT.length < 4100, `prompt stays short (${PLANNER_PROMPT.length} chars)`);
   });
 
   test("brackets: evaluate_deck before save_deck for a target bracket, tutors and B1/B5 rules", () => {

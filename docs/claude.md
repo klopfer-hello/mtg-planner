@@ -16,7 +16,9 @@ The **Planner** tab is a chat that runs the
 with exactly two MCP servers:
 
 - **collection**, this repo's own MCP server: it reads your collection and
-  decks, saves decks (`save_deck`), writes a deck's notes (`update_deck_notes`,
+  decks, reads up to 40 cards per call with their text, roles and ownership
+  (`get_cards`; the planner is told to read cards before it recommends them
+  instead of trusting its memory), saves decks (`save_deck`), writes a deck's notes (`update_deck_notes`,
   Markdown, only the notes; the old text stays in the deck's History) and can correct owned copies
   (`edit_copies`: language, printing, finish or condition, after stating the
   exact change). It cannot delete anything; every edit is logged and can be
@@ -29,6 +31,20 @@ with exactly two MCP servers:
   wishlist and `add_to_wishlist` adds a card when you ask; removing items is
   only possible in the app ([finance.md](finance.md#wishlist)).
   `get_deck_history` reads a deck's [history](decks.md#deck-history) (read-only).
+  Knowledge tools (v1.3.0), all read-only:
+  - `deck_gaps`: a deck's lands, ramp, draw, removal, wipes, protection, recursion,
+    cheap plays and curve against tuned public decks of its format and bracket,
+    with your free cards that fill each gap ([decks.md](decks.md#gaps-and-goldfish)).
+  - `simulate_deck`: 10 000 solo test games (opening hands, land drops,
+    colour screw, commander on curve, combos).
+  - `commander_staples`: what other players run with a commander (EDHREC).
+  - `owned_combos`: combos your collection already holds (Commander Spellbook).
+  - `recent_cards`: cards from the last months, newer than the model's knowledge.
+  - `rules_lookup` and `get_rulings`: the Comprehensive Rules and card rulings,
+    so rules answers cite a rule number.
+  - `meta_decks` and `compare_to_meta`: the Pauper tournament meta from MTGO.
+  `save_deck` refuses a new Commander or Pauper deck that breaks its format's
+  rules and starts its answer with a short summary the planner repeats.
 - **[bmurdock/scryfall-mcp](https://github.com/bmurdock/scryfall-mcp)** gives
   access to every card ever printed, prices, the comprehensive rules, staple
   and synergy searches, and deck and mana-base analysis.
@@ -54,6 +70,12 @@ the strategy parts as JSON (`CLAUDE_GUIDE_MODEL`, default `sonnet`; budget
 default 180000). It shares the limit of parallel Claude runs with the chat and
 the scanner. `get_deck` tells Claude whether a deck has a guide (and whether the deck
 changed since), so it can point you to it. See [decks.md](decks.md#deck-guide).
+
+**Settings → Planner** chooses the model (Default, Sonnet or Opus; `CLAUDE_MODEL`
+in `.env` wins) and holds a short profile the planner reads before every answer:
+the formats you play, your usual Commander bracket, a budget per upgrade, what
+to avoid and one free line (for example "short, precise answers"). It stays in
+your database. The section also shows what the last answer cost.
 
 Claude's `search_collection` tool uses the same
 [search syntax](collection.md#search-syntax) as the collection browser.

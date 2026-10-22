@@ -132,7 +132,7 @@ More: [docs/decks.md](docs/decks.md)
 The **Planner** tab is a chat with Claude, using your own Claude plan.
 
 - Ask things like *"Build me a budget Atraxa deck from cards I own, max €40 to buy."*
-- Claude checks your collection first and saves new decks as ideas.
+- Claude checks your collection first, finds what a deck is missing (with your free cards), test-plays it, knows the rules and the Pauper meta, and saves new decks as ideas.
 - Claude can write a deck's **notes** (game plan, reminders) when you ask.
 - Claude can fix a card's language, printing, foil or condition. It tells you the change first. It can **never delete** anything.
 

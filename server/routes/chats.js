@@ -8,6 +8,7 @@
 import crypto from "node:crypto";
 
 import { claudeConfigured, MAX_CONCURRENT, runTurn } from "../../lib/claude.js";
+import { getProfile, plannerModel, profileText } from "../../lib/plannerprofile.js";
 import { deckDetail } from "../../lib/decks.js";
 import { deckToText } from "../../lib/decktext.js";
 import { HttpError, optString, parseJsonField, readJson, sendEmpty, sendJson } from "../http.js";
@@ -96,6 +97,8 @@ export function chatRoutes(router, app) {
         recap: deck && recap ? `${deck}\n\n${recap}` : recap,
         onEvent: send,
         signal: controller.signal,
+        profile: profileText(getProfile(app.db)),
+        model: plannerModel(app.db) || null,
       });
     } catch (err) {
       result = { text: "", tools: [], costUsd: null, sessionId: null, isError: true, error: err.message };
