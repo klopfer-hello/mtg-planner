@@ -170,6 +170,28 @@ console errors, failed API requests or horizontal scrolling. It only reads.
 Run it against test data after UI changes; the Docker command is in the
 script header (same Playwright image as the screenshots).
 
+### Deck anchors
+
+`scripts/anchors.mjs` rebuilds `lib/anchors.json`, the structural targets
+behind `deck_gaps`: it downloads public decklists (Archidekt by bracket, WotC
+precons via MTGJSON, MTGO Pauper lists), classifies every card with the app's
+own code and writes medians and 25–75% bands per format and bracket. Run it a
+few times a year (cold run ~7 min, cached re-runs seconds; `CACHE_DIR`,
+`PER_BRACKET`, `CEDH`, `PAUPER`, `OUT` in the script header) and review the
+diff. Classifier changes (lib/cardclass.js) are a reason to re-run it.
+
+### Planner eval
+
+`scripts/planner-eval.mjs` sends a fixed set of planner requests (Commander
+builds and upgrades, Pauper builds, rules and ownership questions) through the
+chat API and scores each answer with plain checks: deck saved, legal, budget,
+bracket, free copies only, cards changed, tools used, answer length. It needs
+a server with the Claude CLI and a token, so it runs against the app image;
+use a copy of a real collection (a backup), because every case writes decks
+and chats. Each run appends a summary line (passes, cost, tool calls, time) to
+`OUT`, so prompt, tool and model changes can be compared. The Docker commands
+are in the script header.
+
 ## Docs screenshots
 
 The pictures in `docs/img/` come from `scripts/screenshots.mjs`: it opens a running
