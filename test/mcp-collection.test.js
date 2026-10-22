@@ -423,6 +423,16 @@ describe("mcp-collection.js edit_copies", () => {
     const id = Number(/deck #(\d+)/.exec(saved.text)[1]);
     const gaps = await mcp.call("deck_gaps", { deck: id });
     assert.match(gaps.text, /^Deck #\d+ "Gap Burn":\nCompared with tuned Pauper decks/);
+    assert.doesNotMatch(gaps.text, /Build around the commander|averages over all commanders/);
+    // A commander deck leads with the commander's text and the build-around rule (#084).
+    const cid = saveDeckRows(ctx.db, { name: "Gap Atraxa", format: "commander", status: "idea", rows: [
+      { name: "Atraxa, Praetors' Voice", scryfall_id: ID.atraxa, quantity: 1, board: "commander" },
+      { name: "Sol Ring", scryfall_id: ID.sol, quantity: 1, board: "main" }] });
+    const cgaps = await mcp.call("deck_gaps", { deck: cid });
+    assert.match(cgaps.text, /^Deck #\d+ "Gap Atraxa":\nCommander: Atraxa, Praetors' Voice: .+\nBuild around the commander: its text and the deck's theme decide every add and cut/);
+    assert.match(cgaps.text, /\nThese are averages over all commanders: .*never cut on-plan cards/);
+    const cdeck = await mcp.call("get_deck", { deck: cid });
+    assert.match(cdeck.text, /^Deck #\d+ "Gap Atraxa".*\nCommander: Atraxa, Praetors' Voice: /);
     const meta = await mcp.call("meta_decks", {});
     assert.match(meta.text, /^No Pauper tournament lists stored \(MTGO not reachable/);
     const rules = await mcp.call("rules_lookup", { query: "split second" });

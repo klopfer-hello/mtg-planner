@@ -148,6 +148,12 @@ describe("planner prompt", () => {
     }
   });
 
+  test("commander decks: mechanic and play style lead every add and cut (#084)", () => {
+    for (const s of ["mechanic and the deck's play style come first", "Read the commander's text", "fit every add and cut to it", "only hints when the commander changes them"]) {
+      assert.ok(PLANNER_PROMPT.includes(s), `prompt mentions ${s}`);
+    }
+  });
+
   test("reads cards before recommending them (get_cards, not memory)", () => {
     for (const s of ["get_cards", "never trust your memory for card text", "newer than your knowledge"]) {
       assert.ok(PLANNER_PROMPT.includes(s), `prompt mentions ${s}`);
@@ -176,8 +182,8 @@ describe("planner prompt", () => {
     assert.match(PLANNER_PROMPT, /No tables/);
     assert.match(PLANNER_PROMPT, /Never list the whole deck/);
     assert.match(PLANNER_PROMPT, /no text before or between tool calls/);
-    // 4049 chars measured with the v1.3.0 rules (get_cards, 600 characters, answer summary, workflow); cap = that + ~50.
-    assert.ok(PLANNER_PROMPT.length < 4100, `prompt stays short (${PLANNER_PROMPT.length} chars)`);
+    // 4049 chars with the v1.3.0 rules (get_cards, 600 characters, answer summary, workflow) + the commander-plan rule (#084).
+    assert.ok(PLANNER_PROMPT.length < 4450, `prompt stays short (${PLANNER_PROMPT.length} chars)`);
   });
 
   test("brackets: evaluate_deck before save_deck for a target bracket, tutors and B1/B5 rules", () => {

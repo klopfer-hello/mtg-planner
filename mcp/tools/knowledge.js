@@ -24,6 +24,7 @@ import { recentCards } from "../../lib/recentcards.js";
 import { cardBlock } from "./collection.js";
 import { draftDeck } from "../../lib/deckpower.js";
 import { deckGaps, gapsText } from "../../lib/deckgaps.js";
+import { commanderPlanText } from "../../lib/decktext.js";
 import { simulateDeck, simulationText } from "../../lib/simulate.js";
 import { getDb } from "../context.js";
 import { eurText, ToolError } from "../format.js";
@@ -92,7 +93,8 @@ export const TOOLS = [
     run: (args) => {
       const d = getDb();
       const deck = deckOf(d, args.deck);
-      return `Deck #${deck.id} "${deck.name}":\n${gapsText(deckGaps(d, deck, { perGap: args.candidates ?? 5 }))}`;
+      const plan = commanderPlanText(deck);
+      return `Deck #${deck.id} "${deck.name}":\n${plan ? `${plan}\n` : ""}${gapsText(deckGaps(d, deck, { perGap: args.candidates ?? 5 }))}`;
     },
   },
   {
