@@ -258,7 +258,7 @@ describe("mcp-collection.js", () => {
 
   test("save_deck starts with a ready-made answer summary; an update counts the changed cards", async () => {
     const cards = [{ name: "Lightning Bolt", quantity: 4 }, { name: "Counterspell", quantity: 4 }, { name: "Delver of Secrets", quantity: 4 }, { name: "Sol Ring", quantity: 1, board: "side" }];
-    const saved = await mcp.call("save_deck", { name: "Summary Test", format: "casual", cards });
+    const saved = await mcp.call("save_deck", { name: "Summary Test", format: "casual", description: "Burn first.", cards });
     const [head, l1, l2, l3, blank] = saved.text.split("\n");
     assert.match(head, /^Answer summary \(your whole answer: .*never add card lists\):$/);
     assert.equal(l1, "**Summary Test** (casual) · saved as idea · Decks tab");
@@ -268,8 +268,9 @@ describe("mcp-collection.js", () => {
     assert.match(saved.text, /\nCreated deck #\d+ "Summary Test"/);
     const id = Number(/deck #(\d+)/.exec(saved.text)[1]);
     cards[2].quantity = 2;
-    const upd = await mcp.call("save_deck", { name: "Summary Test", format: "casual", deck_id: id, cards });
+    const upd = await mcp.call("save_deck", { name: "Summary Test", format: "casual", deck_id: id, description: "Rewritten by Claude.", cards });
     assert.match(upd.text, /^Answer summary.*\n\*\*Summary Test\*\* \(casual\) · updated, old list in History · Decks tab\n.*\n.*\nChanged \*\*2\*\* cards\n/);
+    assert.equal(ctx.db.prepare("SELECT description FROM decks WHERE id = ?").get(id).description, "Burn first.", "an update keeps the user's notes");
   });
 
   test("save_deck strict: an illegal NEW deck is refused with its problems; strict:false and updates save with a warning", async () => {

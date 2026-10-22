@@ -18,8 +18,8 @@ with exactly two MCP servers:
 - **collection**, this repo's own MCP server: it reads your collection and
   decks, reads up to 40 cards per call with their text, roles and ownership
   (`get_cards`; the planner is told to read cards before it recommends them
-  instead of trusting its memory), saves decks (`save_deck`), writes a deck's notes (`update_deck_notes`,
-  Markdown, only the notes; the old text stays in the deck's History) and can correct owned copies
+  instead of trusting its memory), saves decks (`save_deck`), writes a deck's notes only when you ask (`update_deck_notes`,
+  Markdown, only the notes; the old text stays in the deck's History; updating a deck keeps its notes) and can correct owned copies
   (`edit_copies`: language, printing, finish or condition, after stating the
   exact change). It cannot delete anything; every edit is logged and can be
   undone in the app. It has no access to backups. `get_deck` and

@@ -137,7 +137,7 @@ export const TOOLS = [
     name: "save_deck",
     description:
       "Save a deck so the user sees it in the app's Decks tab (this is how you hand over a deck you built). " +
-      "Creates a new deck, or with deck_id replaces that deck's name/format/description and full card list; the previous list is kept as a " +
+      "Creates a new deck, or with deck_id replaces that deck's name/format and full card list (its notes stay as they are); the previous list is kept as a " +
       "version in the deck's History (get_deck_history), so revise/upgrade/\"v2\" an existing deck with its deck_id instead of " +
       "creating a copy, unless the user wants both decks side by side. " +
       "Cards are matched to printings the user owns automatically — just give names; set/collector_number are only " +
@@ -152,7 +152,7 @@ export const TOOLS = [
       properties: {
         name: { type: "string", description: "Deck name." },
         format: { type: "string", description: "Format, e.g. commander, modern, standard, pauper, brawl." },
-        description: { type: "string", description: "Short description / strategy notes shown in the app." },
+        description: { type: "string", description: "Only for a NEW deck: short strategy notes shown in the app. Ignored with deck_id (the user's notes are kept; change them with update_deck_notes only when the user asks)." },
         deck_id: { type: "integer", description: "Overwrite this existing deck (from list_decks) instead of creating a new one." },
         status: {
           type: "string", enum: DECK_STATUSES,
@@ -172,7 +172,7 @@ export const TOOLS = [
     name: "update_deck_notes",
     description:
       "Replace the notes of one deck (shown on the deck page, Markdown: short ## headings, - bullets, **bold**, mana as " +
-      "{G}) without touching its cards. Use it for strategy notes, a game plan or reminders the user asks for. Keep them " +
+      "{G}) without touching its cards. Only when the user asks for notes (strategy, a game plan, reminders); never as a side effect of a deck change. Keep them " +
       "short and scannable on a phone (≤ ~25 lines). Send the COMPLETE new text: it replaces the old notes (get_deck shows " +
       "them); an empty string clears them. Say in one line what you change before calling. The previous notes stay in " +
       "the deck's History, so the user can go back in the app.",
@@ -390,7 +390,7 @@ async function saveDeckTool(args) {
   }
   const before = id ? claimedCopies(d, id) : null;
   const saved = await saveDeck(d, {
-    id, name, format: args.format || null, description: args.description || null, source: "claude", items,
+    id, name, format: args.format || null, description: id ? null : args.description || null, source: "claude", items,
     status: args.status ?? (id ? null : "idea"),
   });
   const lines = [`${id ? "Updated" : "Created"} deck #${saved.id} "${name}". The user can open it in the app's Decks tab.`];
