@@ -169,6 +169,10 @@ describe("deckStats", () => {
     const wu = deckStats([cmd("WU"), flats, wilds]);
     assert.equal(per(wu, "W").sources, 2);
     assert.equal(per(wu, "U").sources, 1);
+    // #081: three-type fetches (Landscapes) list their types with commas.
+    const scape = land("Contaminated Landscape", { oracle_text: "{T}: Add {C}.\n{3}, {T}, Sacrifice Contaminated Landscape: Search your library for a basic Plains, Island, or Swamp card, put it onto the battlefield tapped, then shuffle." });
+    const esper = deckStats([cmd("WUB"), scape]);
+    for (const c of ["W", "U", "B"]) assert.equal(per(esper, c).sources, 1, c);
   });
 
   test("source warning when sources lag pips by more than 10 points", () => {
