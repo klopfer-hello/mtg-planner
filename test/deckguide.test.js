@@ -61,6 +61,7 @@ describe("deck guide", () => {
     assert.match(prompt, /- evasion \(Evasion\):/);
     assert.match(prompt, /4 Serra Angel \|/);
     assert.match(GUIDE_SYSTEM, /ONLY one JSON object/);
+    assert.match(GUIDE_SYSTEM, /overextending: name the cards to hold back against board wipes/, "#080 play tip");
     for (const t of TECHNIQUES) assert.ok(t.what.length > 40 && t.what.length < 260, t.key);
   });
 
