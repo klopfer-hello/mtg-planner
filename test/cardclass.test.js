@@ -134,6 +134,19 @@ test("free interaction: alt-cost text or the curated list, protection on instant
     ["Swords to Plowshares", "Counterspell", "Grizzly Bears"]);
 });
 
+test("v1.3.0: one-target protection, protection equipment and recursion", () => {
+  const c = (name, type_line, oracle_text, cmc = 2) => ({ name, type_line, cmc, oracle_text, keywords: "[]" });
+  const why = (card, tag) => tagOf(classifyCard(card), tag)?.why ?? null;
+  assert.equal(why(c("Tamiyo's Safekeeping", "Instant", "Target permanent you control gains hexproof and indestructible until end of turn. You gain 2 life.", 1), "protection"), "protection_target");
+  assert.equal(why(c("Lightning Greaves", "Artifact — Equipment", "Equipped creature has haste and shroud.\nEquip {0}", 2), "protection"), "protection_equip");
+  assert.equal(why(c("Bonesplitter", "Artifact — Equipment", "Equipped creature gets +2/+0.\nEquip {1}", 1), "protection"), null);
+  assert.equal(why(c("Swiftfoot Boots", "Artifact — Equipment", "Equipped creature has hexproof and haste.\nEquip {1}", 2), "protection"), "protection_equip");
+  assert.equal(why(c("Raise Dead", "Sorcery", "Return target creature card from your graveyard to your hand.", 1), "recursion"), "recursion_graveyard");
+  assert.equal(why(c("Reanimate", "Sorcery", "Put target creature card from a graveyard onto the battlefield under your control. You lose life equal to its mana value.", 1), "recursion"), "recursion_graveyard");
+  assert.equal(why(c("Grizzly Bears", "Creature — Bear", "", 2), "recursion"), null);
+  assert.equal(why(c("Ghostly Flicker", "Instant", "Exile two target artifacts, creatures, and/or lands you control, then return those cards to the battlefield under your control.", 3), "recursion"), null);
+});
+
 test("mass land denial vs single land destruction", () => {
   expectTags("mld",
     ["Armageddon", "Ravages of War", "Catastrophe", "Jokulhaups", "Obliterate", "Decree of Annihilation", "Ruination",

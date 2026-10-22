@@ -29,11 +29,12 @@ import { TOOLS as COLLECTION_TOOLS } from "./mcp/tools/collection.js";
 import { TOOLS as DECK_TOOLS } from "./mcp/tools/decks.js";
 import { TOOLS as EDIT_TOOLS } from "./mcp/tools/edits.js";
 import { TOOLS as WISHLIST_TOOLS } from "./mcp/tools/wishlist.js";
+import { TOOLS as KNOWLEDGE_TOOLS } from "./mcp/tools/knowledge.js";
 
 const DEFAULT_PROTOCOL = "2025-06-18";
 
 // The tools in the order tools/list shows them (mcp/tools/*.js).
-const TOOLS = [...COLLECTION_TOOLS, ...DECK_TOOLS, ...EDIT_TOOLS, ...WISHLIST_TOOLS];
+const TOOLS = [...COLLECTION_TOOLS, ...DECK_TOOLS, ...KNOWLEDGE_TOOLS, ...EDIT_TOOLS, ...WISHLIST_TOOLS];
 const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
 // ---------------------------------------------------------------------------
@@ -80,7 +81,7 @@ async function handle(msg) {
         instructions:
           "Read access to the user's Magic: The Gathering collection (synced from ManaBox) and decks, plus save_deck " +
           "to hand decks over to the app and edit_copies to correct owned copies (state the exact change first, ask when " +
-          "unclear; no deleting, that is app-only). Check ownership with check_owned / search_collection before recommending cards; " +
+          "unclear; no deleting, that is app-only). Check ownership with check_owned / search_collection and read the cards with get_cards before recommending them; " +
           "built decks claim their cards and locked binders (deck boxes, precons, binders the user locked) keep theirs, so 'free' " +
           "copies (avail) are what is left for new decks; claimed or locked copies are still owned (in use in another deck or " +
           "locked binder, can be " +

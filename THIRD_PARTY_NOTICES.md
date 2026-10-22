@@ -122,6 +122,34 @@ Spellbook") and links every combo to its page there, as the API asks.
   data is maintained by the Commander Spellbook community. mtg-planner is not
   produced by or endorsed by Commander Spellbook.
 
+The planner's `owned_combos` tool also calls Spellbook's `find-my-combos`
+with the names of the cards you own in the chosen colours (cached 7 days,
+same switch and settings).
+
+## Planner knowledge sources (called at runtime, cached in your database)
+
+- **EDHREC** (<https://edhrec.com>): `commander_staples` reads the public page
+  data of one commander (`json.edhrec.com`), built from the decks EDHREC's
+  users publish; cached 30 days. Not produced by or endorsed by EDHREC.
+- **Magic Online decklists** (<https://www.mtgo.com/decklists>, © Wizards of the
+  Coast): Pauper Challenge and League lists for `meta_decks` and
+  `compare_to_meta`, re-checked every few days, the last 60 days kept.
+- **Comprehensive Rules** (<https://magic.wizards.com/en/rules>, © Wizards of
+  the Coast): the current text file for `rules_lookup`, re-checked monthly;
+  offline the copy bundled with scryfall-mcp is used.
+- **Scryfall** (see above): Tagger tags (`otag:` search), card rulings and new
+  sets (`recent_cards`) through its public API.
+
+## Deck anchors (`lib/anchors.json`)
+
+The structural targets of `deck_gaps` are statistics (medians and 25–75%
+bands, no decklists) over public decklists read on 2026-10-22: 255 Commander
+decks from [Archidekt](https://archidekt.com) by their authors' bracket (thanks
+to every deck author), 77 Wizards of the Coast Commander precons via
+[MTGJSON](https://mtgjson.com) (MIT-licensed data) and 110 Pauper lists from
+the official Magic Online decklists. `scripts/anchors.mjs` (not in the image)
+rebuilds the file.
+
 The test suite's calibration decklists (`test/fixtures/decks-calibration`,
 not in the image) credit their authors, Scryfall, MTGJSON and Commander
 Spellbook in that folder's `NOTICE.md`. The score bands follow the

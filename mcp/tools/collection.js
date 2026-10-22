@@ -1,14 +1,24 @@
 // Collection tools: overview, search (the app's query syntax), check_owned,
-// get_card and list_binders. Read-only.
+// get_card, get_cards and list_binders. Read-only, except that get_cards caches
+// the cards it had to look up on Scryfall (as save_deck does).
+//
+// get_cards exists so the planner reads card texts before it recommends a card
+// or claims a synergy: one call for a whole candidate list, compact lines.
 
-import { cardPrice, formatPrice, stats } from "../../lib/db.js";
+import { cardPrice, formatPrice, stats, upsertCards } from "../../lib/db.js";
 import { QUERY_HELP, searchCollection } from "../../lib/query.js";
 import { allocation, cardUsage } from "../../lib/allocation.js";
 import { cardKey, isBasicLand } from "../../lib/deckrules.js";
 import { listDecks } from "../../lib/decks.js";
 import { listBinders } from "../../lib/binders.js";
+import { classifyCard } from "../../lib/cardclass.js";
+import { ensureOtags, otagsIn } from "../../lib/cardtags.js";
+import { fetchCollection, normalizeCard } from "../../lib/scryfall.js";
 import { getDb } from "../context.js";
 import { boxText, colorLabel, deckLine, int, likeEsc, mainType, nameArgs, nameMatch, oneLine, OWNED_BY_NAME, parseJson, setNum, ToolError } from "../format.js";
+
+const GET_CARDS_MAX = 40;
+const TEXT_MAX = 420; // characters of oracle text per card (get_cards, check_owned include_text)
 
 const SEARCH_EXAMPLES = [
   't:creature c:g cmc<=3            green creatures with mana value 3 or less',
@@ -18,6 +28,10 @@ const SEARCH_EXAMPLES = [
   'r:mythic eur>10                  mythics worth more than €10 (use sort "price")',
   'c:m t:instant                    multicolored instants',
   'o:"draw a card" mv=2 c<=ub       two-drops that draw, castable in Dimir',
+  'role:ramp id<=bg avail>=1        free ramp cards for a Golgari deck (the app\'s own card roles)',
+  'role:interaction mv<=2           cheap removal, counters and wipes',
+  'otag:death-trigger id<=wb        Scryfall Tagger tag (community data, fetched on first use; partial coverage)',
+  'ft:"creature dies"               full-text: stemmed words in any order ("dies", "died", "die")',
   's:mh3 is:foil                    foils from Modern Horizons 3',
   'qty>=4 t:land                    lands owned in 4+ copies',
   'avail>=1 t:creature              creatures with free copies (not claimed by a built deck, not in a locked binder)',
@@ -82,7 +96,8 @@ export const TOOLS = [
       "Check which of the given card names the user owns. For each name returns the owned copies across all printings " +
       "(with set, collector number, finish), how many are FREE (owned minus copies claimed by built decks) and which built " +
       "decks use it, or NOT OWNED. Case-insensitive; the front-face name of double-faced/split " +
-      "cards also matches. Use it to check a candidate list or decklist against the collection in one call (max 300 names).",
+      "cards also matches. Use it to check a candidate list or decklist against the collection in one call (max 300 names). " +
+      "include_text adds each locally known card's oracle text (more tokens; get_cards is the compact way to read cards).",
     inputSchema: {
       type: "object",
       properties: {
@@ -90,6 +105,7 @@ export const TOOLS = [
           type: "array", items: { type: "string" }, minItems: 1, maxItems: 300,
           description: "Exact English card names, e.g. [\"Sol Ring\", \"Delver of Secrets\"].",
         },
+        include_text: { type: "boolean", default: false, description: "Add each card's oracle text (when known locally)." },
       },
       required: ["names"],
       additionalProperties: false,
@@ -111,6 +127,29 @@ export const TOOLS = [
     },
     annotations: { title: "Card details", readOnlyHint: true, openWorldHint: false },
     run: getCard,
+  },
+  {
+    name: "get_cards",
+    description:
+      `Read up to ${GET_CARDS_MAX} cards in one call, owned or not (cards missing locally are looked up on Scryfall and cached). ` +
+      "Call it before recommending cards or claiming a synergy or rules interaction, and for any card that may be newer than " +
+      "your own knowledge: never rely on memory for card text. Two lines per card: " +
+      "'<name> <mana cost> | <type line> | MV n | <power/toughness> | id <color identity> | commander ✓/✗ pauper ✓/✗ | " +
+      "owned N, free M (or not owned) | roles: ramp, removal, ...', then the oracle text (long texts cut at a sentence, '…'). " +
+      "Roles are the app's own card classification (the tags behind the deck score).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        names: {
+          type: "array", items: { type: "string" }, minItems: 1, maxItems: GET_CARDS_MAX,
+          description: "Exact English card names (the front face of a double-faced card also works).",
+        },
+      },
+      required: ["names"],
+      additionalProperties: false,
+    },
+    annotations: { title: "Read cards", readOnlyHint: true, openWorldHint: true },
+    run: getCards,
   },
   {
     name: "list_binders",
@@ -193,11 +232,12 @@ function collectionOverview() {
   return lines.join("\n");
 }
 
-function searchTool(args) {
+async function searchTool(args) {
   const query = typeof args.query === "string" ? args.query : "";
   const limit = int(args.limit, 50, 1, 200);
   const offset = int(args.offset, 0, 0, Number.MAX_SAFE_INTEGER);
   const group = args.group === "printing" ? "printing" : "card";
+  const tags = await ensureOtags(getDb(), otagsIn(query));
   let result;
   try {
     result = searchCollection(getDb(), { q: query, group, sort: args.sort, dir: args.dir, limit, offset });
@@ -210,6 +250,7 @@ function searchTool(args) {
     ? `${total} matches (showing ${offset + 1}-${offset + rows.length})`
     : `${total} matches${total ? ` (none at offset ${offset})` : ""}`;
   const lines = [header];
+  for (const f of tags.failed) lines.push(`(otag:${f.tag} could not be fetched from Scryfall: ${f.error}; it matches nothing now)`);
   for (const r of rows) {
     const finishes = String(r.finishes || "normal").split(",");
     const price = cardPrice(r, r.finish || "normal"); // most valuable owned printing
@@ -229,6 +270,11 @@ function checkOwned(args) {
   const d = getDb();
   const stmt = d.prepare(OWNED_BY_NAME);
   const alloc = allocation(d);
+  const textStmt = args.include_text ? d.prepare(`SELECT oracle_text FROM cards WHERE ${nameMatch("name")} AND oracle_text IS NOT NULL LIMIT 1`) : null;
+  const withText = (name) => {
+    const text = textStmt?.get(...nameArgs(name))?.oracle_text;
+    if (text) lines.push(`    ${shortText(text)}`);
+  };
   const builtUse = (key) => (alloc.built.get(key)?.decks ?? []).map((k) => `#${k.deck_id} ${k.name} ${k.quantity}x`).join(", ");
   const lines = [];
   let ownedCount = 0;
@@ -237,6 +283,7 @@ function checkOwned(args) {
     if (!rows.length) {
       const use = builtUse(cardKey(d.prepare(`SELECT oracle_id FROM cards WHERE ${nameMatch("name")} LIMIT 1`).get(...nameArgs(name))?.oracle_id ?? null, name));
       lines.push(`${name}: NOT OWNED${use ? ` (needed by built decks: ${use})` : ""}`);
+      withText(name);
       continue;
     }
     ownedCount++;
@@ -260,6 +307,7 @@ function checkOwned(args) {
     const free = basic ? total : total - demand - boxed;
     const use = (demand ? `; used in built decks: ${builtUse(key)} (can be moved)` : "") + (boxed ? `; ${boxText(boxes)}` : "");
     lines.push(`${label}: ${total} owned, ${free} free${free < 0 ? " (SHORT)" : ""} — ${detail.join(", ")}${use}`);
+    withText(name);
   }
   return [`${ownedCount} of ${names.length} owned. "free" = owned minus copies claimed by built decks and copies in locked ` +
     "binders (kept for their own deck); those are still owned (in use in another deck or locked binder, can be moved), only NOT OWNED " +
@@ -331,6 +379,74 @@ function getCard(args) {
   }
   if (card.scryfall_uri) lines.push(`Scryfall: ${card.scryfall_uri}`);
   return lines.join("\n");
+}
+
+/** Oracle text on one line, cut at the last sentence end before TEXT_MAX characters. */
+function shortText(text) {
+  const t = oneLine(text);
+  if (t.length <= TEXT_MAX) return t;
+  const cut = t.slice(0, TEXT_MAX);
+  const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf(" / "));
+  return `${end > TEXT_MAX / 2 ? cut.slice(0, end + 1) : cut.trimEnd()} …`;
+}
+
+// The local printing of a name: an owned one first, then the most recently fetched.
+const PICK_BY_NAME = `
+  SELECT c.*, (SELECT COALESCE(SUM(quantity), 0) FROM collection WHERE scryfall_id = c.scryfall_id) AS own_qty
+    FROM cards c WHERE ${nameMatch()} AND c.oracle_text IS NOT NULL
+   ORDER BY own_qty DESC, c.fetched_at DESC LIMIT 1`;
+
+/**
+ * get_cards' two lines for one cards row: name cost | type | MV | P/T | identity | commander/pauper legality |
+ * owned/free | roles, then the oracle text (shared with recent_cards). `extra` is appended to the first line.
+ */
+export function cardBlock(d, alloc, card, extra = "") {
+  const legal = parseJson(card.legalities, {});
+  const mark = (f) => `${f} ${legal[f] === "legal" ? "✓" : "✗"}`;
+  const owned = d.prepare("SELECT COALESCE(SUM(col.quantity), 0) AS n FROM collection col JOIN cards c ON c.scryfall_id = col.scryfall_id WHERE c.oracle_id = ?").get(card.oracle_id).n;
+  let own = "not owned";
+  if (owned) {
+    const u = cardUsage(d, { oracle_id: card.oracle_id, name: card.name }, alloc);
+    own = `owned ${owned}, free ${u.available}${u.available < 0 ? " (SHORT)" : ""}`;
+  }
+  const roles = classifyCard(card).map((t) => t.tag);
+  const pt = card.power != null && card.toughness != null ? ` | ${card.power}/${card.toughness}` : "";
+  return `${card.name}${card.mana_cost ? ` ${card.mana_cost}` : ""} | ${card.type_line || "?"} | MV ${card.cmc ?? "?"}${pt} | id ${card.color_identity || "C"} | ` +
+    `${mark("commander")} ${mark("pauper")} | ${own}${roles.length ? ` | roles: ${roles.join(", ")}` : ""}${extra}\n` +
+    `    ${shortText(card.oracle_text || "(no rules text)")}`;
+}
+
+async function getCards(args) {
+  if (!Array.isArray(args.names) || args.names.length === 0) throw new ToolError("names must be a non-empty array of card names.");
+  const names = [...new Set(args.names.map((n) => String(n).trim()).filter(Boolean))];
+  if (names.length > GET_CARDS_MAX) throw new ToolError(`At most ${GET_CARDS_MAX} names per call.`);
+  const d = getDb();
+  const pick = d.prepare(PICK_BY_NAME);
+  const found = new Map(names.map((n) => [n, pick.get(...nameArgs(n)) ?? null]));
+  const missing = names.filter((n) => !found.get(n));
+  let lookupError = null;
+  if (missing.length) {
+    try {
+      const { cards } = await fetchCollection(missing.map((name) => ({ name })));
+      upsertCards(d, cards.map(normalizeCard));
+      for (const n of missing) found.set(n, pick.get(...nameArgs(n)) ?? null);
+    } catch (err) {
+      lookupError = err.message;
+    }
+  }
+  const alloc = allocation(d);
+  const blocks = [];
+  const unknown = [];
+  for (const name of names) {
+    const card = found.get(name);
+    if (card) blocks.push(cardBlock(d, alloc, card)); else unknown.push(name);
+  }
+  if (unknown.length) {
+    blocks.push(lookupError
+      ? `Not found locally and the Scryfall lookup failed (${lookupError}): ${unknown.join("; ")}. Try the scryfall tools.`
+      : `Unknown card names (check the spelling): ${unknown.join("; ")}`);
+  }
+  return blocks.join("\n");
 }
 
 function listBindersTool() {

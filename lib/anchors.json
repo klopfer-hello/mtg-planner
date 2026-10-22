@@ -1,0 +1,203 @@
+{
+ "generated_at": "2026-10-22",
+ "version": 1,
+ "sources": [
+  { "name": "Archidekt", "url": "https://archidekt.com", "decks": 255, "note": "public Commander decks, most viewed, authors' own bracket label (2-5), edited since 2025-01-01, exactly 100 cards, no maybe/side, at most 2 per author" },
+  { "name": "MTGJSON (Wizards of the Coast precons)", "url": "https://mtgjson.com", "decks": 77, "note": "Commander precons of the last 3 years; cell commander:precon, also counted in commander:b2" },
+  { "name": "MTGO decklists (Wizards of the Coast)", "url": "https://www.mtgo.com/decklists", "decks": 110, "note": "recent Pauper Challenge top 16 and League 5-0 lists, main + sideboard" }
+ ],
+ "note": "commander = brackets 2-4 + precons (cEDH only in commander:b5); copies counted; ramp includes fast mana; draw = engines + bursts; avg_mv nonland without commander; fixing_lands only for 2+ colours",
+ "cells": {
+  "commander": {
+   "n": 287,
+   "metrics": {
+    "lands": { "p25": 34, "median": 36, "p75": 38 },
+    "mdfc_lands": { "p25": 0, "median": 0, "p75": 1.5 },
+    "ramp": { "p25": 8, "median": 10, "p75": 13 },
+    "draw": { "p25": 4, "median": 7, "p75": 9 },
+    "cantrips": { "p25": 0, "median": 0, "p75": 1 },
+    "removal": { "p25": 5, "median": 7, "p75": 9 },
+    "counters": { "p25": 0, "median": 0, "p75": 2 },
+    "wipes": { "p25": 1, "median": 2, "p75": 3 },
+    "protection": { "p25": 0, "median": 1, "p75": 2 },
+    "recursion": { "p25": 0, "median": 1, "p75": 3 },
+    "tutors": { "p25": 0, "median": 1, "p75": 3 },
+    "cheap_plays": { "p25": 19, "median": 23, "p75": 31 },
+    "avg_mv": { "p25": 2.8, "median": 3.2, "p75": 3.7 },
+    "fixing_lands": { "p25": 13, "median": 17, "p75": 21, "n": 251 },
+    "colors": { "p25": 2, "median": 3, "p75": 3 }
+   },
+   "by_colors": {
+    "0": { "n": 1, "lands": 38, "ramp": 11, "fixing_lands": null },
+    "1": { "n": 35, "lands": 35, "ramp": 10, "fixing_lands": null },
+    "2": { "n": 94, "lands": 36, "ramp": 10, "fixing_lands": 13 },
+    "3": { "n": 133, "lands": 36, "ramp": 10, "fixing_lands": 19 },
+    "4": { "n": 5, "lands": 37, "ramp": 9, "fixing_lands": 20 },
+    "5": { "n": 19, "lands": 37, "ramp": 11, "fixing_lands": 24 }
+   }
+  },
+  "commander:precon": {
+   "n": 77,
+   "metrics": {
+    "lands": { "p25": 37, "median": 38, "p75": 38 },
+    "mdfc_lands": { "p25": 0, "median": 0, "p75": 0 },
+    "ramp": { "p25": 8, "median": 10, "p75": 12 },
+    "draw": { "p25": 5, "median": 7, "p75": 8 },
+    "cantrips": { "p25": 0, "median": 0, "p75": 1 },
+    "removal": { "p25": 6, "median": 8, "p75": 9 },
+    "counters": { "p25": 0, "median": 0, "p75": 1 },
+    "wipes": { "p25": 2, "median": 3, "p75": 4 },
+    "protection": { "p25": 0, "median": 0, "p75": 1 },
+    "recursion": { "p25": 0, "median": 1, "p75": 3 },
+    "tutors": { "p25": 0, "median": 0, "p75": 0 },
+    "cheap_plays": { "p25": 17, "median": 19, "p75": 23 },
+    "avg_mv": { "p25": 3.3, "median": 3.6, "p75": 3.7 },
+    "fixing_lands": { "p25": 16, "median": 19, "p75": 21, "n": 71 },
+    "colors": { "p25": 2, "median": 3, "p75": 3 }
+   },
+   "by_colors": {
+    "1": { "n": 6, "lands": 38.5, "ramp": 8.5, "fixing_lands": null },
+    "2": { "n": 20, "lands": 38, "ramp": 9.5, "fixing_lands": 14.5 },
+    "3": { "n": 42, "lands": 37, "ramp": 10, "fixing_lands": 20 },
+    "4": { "n": 3, "lands": 37, "ramp": 9, "fixing_lands": 20 },
+    "5": { "n": 6, "lands": 38, "ramp": 11.5, "fixing_lands": 23.5 }
+   }
+  },
+  "commander:b2": {
+   "n": 147,
+   "metrics": {
+    "lands": { "p25": 36, "median": 37, "p75": 38 },
+    "mdfc_lands": { "p25": 0, "median": 0, "p75": 0 },
+    "ramp": { "p25": 8, "median": 10, "p75": 12 },
+    "draw": { "p25": 4.5, "median": 6, "p75": 8 },
+    "cantrips": { "p25": 0, "median": 0, "p75": 1 },
+    "removal": { "p25": 5, "median": 7, "p75": 9 },
+    "counters": { "p25": 0, "median": 0, "p75": 1 },
+    "wipes": { "p25": 1, "median": 2, "p75": 3 },
+    "protection": { "p25": 0, "median": 1, "p75": 2 },
+    "recursion": { "p25": 0, "median": 2, "p75": 3 },
+    "tutors": { "p25": 0, "median": 0, "p75": 1 },
+    "cheap_plays": { "p25": 17.5, "median": 21, "p75": 25.5 },
+    "avg_mv": { "p25": 3.1, "median": 3.4, "p75": 3.7 },
+    "fixing_lands": { "p25": 14, "median": 17, "p75": 21, "n": 133 },
+    "colors": { "p25": 2, "median": 3, "p75": 3 }
+   },
+   "by_colors": {
+    "1": { "n": 14, "lands": 38, "ramp": 8.5, "fixing_lands": null },
+    "2": { "n": 48, "lands": 37, "ramp": 10, "fixing_lands": 13 },
+    "3": { "n": 70, "lands": 37, "ramp": 10, "fixing_lands": 19 },
+    "4": { "n": 5, "lands": 37, "ramp": 9, "fixing_lands": 20 },
+    "5": { "n": 10, "lands": 37.5, "ramp": 11.5, "fixing_lands": 23.5 }
+   }
+  },
+  "commander:b3": {
+   "n": 70,
+   "metrics": {
+    "lands": { "p25": 34, "median": 35, "p75": 37 },
+    "mdfc_lands": { "p25": 0, "median": 1, "p75": 2.8 },
+    "ramp": { "p25": 7.3, "median": 10, "p75": 13 },
+    "draw": { "p25": 5, "median": 7, "p75": 9 },
+    "cantrips": { "p25": 0, "median": 0.5, "p75": 1 },
+    "removal": { "p25": 5, "median": 7, "p75": 9 },
+    "counters": { "p25": 0, "median": 1, "p75": 3 },
+    "wipes": { "p25": 1, "median": 2, "p75": 3 },
+    "protection": { "p25": 0, "median": 1, "p75": 3 },
+    "recursion": { "p25": 0, "median": 1.5, "p75": 3 },
+    "tutors": { "p25": 0, "median": 1, "p75": 3 },
+    "cheap_plays": { "p25": 20.3, "median": 25, "p75": 32 },
+    "avg_mv": { "p25": 2.7, "median": 3.1, "p75": 3.5 },
+    "fixing_lands": { "p25": 12.8, "median": 16, "p75": 19, "n": 60 },
+    "colors": { "p25": 2, "median": 2, "p75": 3 }
+   },
+   "by_colors": {
+    "0": { "n": 1, "lands": 38, "ramp": 11, "fixing_lands": null },
+    "1": { "n": 9, "lands": 35, "ramp": 8, "fixing_lands": null },
+    "2": { "n": 31, "lands": 35, "ramp": 9, "fixing_lands": 13 },
+    "3": { "n": 26, "lands": 36, "ramp": 10, "fixing_lands": 19.5 },
+    "5": { "n": 3, "lands": 37, "ramp": 13, "fixing_lands": 17 }
+   }
+  },
+  "commander:b4": {
+   "n": 70,
+   "metrics": {
+    "lands": { "p25": 32, "median": 34, "p75": 35 },
+    "mdfc_lands": { "p25": 0, "median": 0, "p75": 2 },
+    "ramp": { "p25": 8, "median": 10.5, "p75": 13.8 },
+    "draw": { "p25": 4, "median": 6, "p75": 9 },
+    "cantrips": { "p25": 0, "median": 0, "p75": 1 },
+    "removal": { "p25": 5, "median": 7, "p75": 9 },
+    "counters": { "p25": 0, "median": 1, "p75": 3.8 },
+    "wipes": { "p25": 1, "median": 2, "p75": 3 },
+    "protection": { "p25": 0, "median": 1, "p75": 2 },
+    "recursion": { "p25": 0, "median": 1, "p75": 2 },
+    "tutors": { "p25": 2, "median": 4, "p75": 5.8 },
+    "cheap_plays": { "p25": 21, "median": 28.5, "p75": 36.8 },
+    "avg_mv": { "p25": 2.5, "median": 2.9, "p75": 3.4 },
+    "fixing_lands": { "p25": 15, "median": 17, "p75": 21.8, "n": 58 },
+    "colors": { "p25": 2, "median": 3, "p75": 3 }
+   },
+   "by_colors": {
+    "1": { "n": 12, "lands": 32, "ramp": 12, "fixing_lands": null },
+    "2": { "n": 15, "lands": 34, "ramp": 13, "fixing_lands": 13 },
+    "3": { "n": 37, "lands": 34, "ramp": 10, "fixing_lands": 18 },
+    "5": { "n": 6, "lands": 34, "ramp": 10, "fixing_lands": 25 }
+   }
+  },
+  "commander:b5": {
+   "n": 45,
+   "metrics": {
+    "lands": { "p25": 26, "median": 27, "p75": 30 },
+    "mdfc_lands": { "p25": 0, "median": 1, "p75": 3 },
+    "ramp": { "p25": 11, "median": 14, "p75": 18 },
+    "draw": { "p25": 3, "median": 5, "p75": 8 },
+    "cantrips": { "p25": 0, "median": 1, "p75": 2 },
+    "removal": { "p25": 6, "median": 8, "p75": 10 },
+    "counters": { "p25": 1, "median": 7, "p75": 10 },
+    "wipes": { "p25": 0, "median": 1, "p75": 1 },
+    "protection": { "p25": 0, "median": 0, "p75": 1 },
+    "recursion": { "p25": 0, "median": 1, "p75": 2 },
+    "tutors": { "p25": 5, "median": 8, "p75": 10 },
+    "cheap_plays": { "p25": 39, "median": 45, "p75": 51 },
+    "avg_mv": { "p25": 2, "median": 2.2, "p75": 2.5 },
+    "fixing_lands": { "p25": 12, "median": 16, "p75": 19, "n": 33 },
+    "colors": { "p25": 1, "median": 2, "p75": 3 }
+   },
+   "by_colors": {
+    "1": { "n": 12, "lands": 29.5, "ramp": 14.5, "fixing_lands": null },
+    "2": { "n": 13, "lands": 26, "ramp": 14, "fixing_lands": 12 },
+    "3": { "n": 12, "lands": 28, "ramp": 14, "fixing_lands": 16.5 },
+    "4": { "n": 5, "lands": 27, "ramp": 13, "fixing_lands": 21 },
+    "5": { "n": 3, "lands": 26, "ramp": 16, "fixing_lands": 23 }
+   }
+  },
+  "pauper": {
+   "n": 110,
+   "metrics": {
+    "lands": { "p25": 17, "median": 18, "p75": 19 },
+    "mdfc_lands": { "p25": 0, "median": 0, "p75": 0 },
+    "ramp": { "p25": 0, "median": 0, "p75": 4 },
+    "draw": { "p25": 4.3, "median": 9, "p75": 11 },
+    "cantrips": { "p25": 0, "median": 0, "p75": 2.8 },
+    "removal": { "p25": 3, "median": 8, "p75": 9 },
+    "counters": { "p25": 0, "median": 0, "p75": 6.8 },
+    "wipes": { "p25": 0, "median": 0, "p75": 0 },
+    "protection": { "p25": 0, "median": 0, "p75": 0 },
+    "recursion": { "p25": 0, "median": 0, "p75": 2 },
+    "tutors": { "p25": 0, "median": 0, "p75": 0 },
+    "cheap_plays": { "p25": 27, "median": 28, "p75": 32 },
+    "avg_mv": { "p25": 2.1, "median": 2.5, "p75": 2.7 },
+    "fixing_lands": { "p25": 0, "median": 5, "p75": 7, "n": 95 },
+    "colors": { "p25": 2, "median": 2, "p75": 3 },
+    "four_ofs": { "p25": 7, "median": 9, "p75": 9 },
+    "sideboard": { "p25": 15, "median": 15, "p75": 15 }
+   },
+   "by_colors": {
+    "1": { "n": 15, "lands": 16, "ramp": 0, "fixing_lands": null },
+    "2": { "n": 49, "lands": 18, "ramp": 0, "fixing_lands": 5 },
+    "3": { "n": 38, "lands": 18, "ramp": 0, "fixing_lands": 3.5 },
+    "4": { "n": 7, "lands": 19, "ramp": 0, "fixing_lands": 7 },
+    "5": { "n": 1, "lands": 18, "ramp": 10, "fixing_lands": 3 }
+   }
+  }
+ }
+}

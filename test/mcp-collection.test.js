@@ -58,6 +58,8 @@ function startServer(dbFile, { nodeArgs = [], env = {} } = {}) {
     return { text: msg.result.content.map((c) => c.text).join("\n"), isError: Boolean(msg.result.isError) };
   };
   const stop = () => new Promise((resolve) => {
+    // A server that already died (e.g. crashed at start) never emits "exit" again: don't hang the suite.
+    if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
     child.once("exit", resolve);
     child.stdin.end();
     setTimeout(() => child.kill("SIGKILL"), 5000).unref();
@@ -95,7 +97,7 @@ describe("mcp-collection.js", () => {
   test("lists exactly the documented, non-destructive tools", async () => {
     const { result } = await mcp.request("tools/list", {});
     const names = result.tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["add_to_wishlist", "check_owned", "collection_overview", "edit_copies", "evaluate_deck", "get_card", "get_deck", "get_deck_history", "list_binders", "list_decks", "list_wishlist", "save_deck", "search_collection", "shopping_list", "update_deck_notes"]);
+    assert.deepEqual(names, ["add_to_wishlist", "check_owned", "collection_overview", "commander_staples", "compare_to_meta", "deck_gaps", "edit_copies", "evaluate_deck", "get_card", "get_cards", "get_deck", "get_deck_history", "get_rulings", "list_binders", "list_decks", "list_wishlist", "meta_decks", "owned_combos", "recent_cards", "rules_lookup", "save_deck", "search_collection", "shopping_list", "simulate_deck", "update_deck_notes"]);
     for (const t of result.tools) {
       assert.equal(typeof t.description, "string");
       assert.equal(t.inputSchema?.type, "object", `${t.name} needs an object inputSchema`);
@@ -227,7 +229,7 @@ describe("mcp-collection.js", () => {
 
   test("save_deck → list_decks → get_deck", async () => {
     const saved = await mcp.call("save_deck", {
-      name: "Izzet Test", format: "modern",
+      name: "Izzet Test", format: "modern", strict: false,
       cards: [
         { name: "Lightning Bolt", quantity: 4 },
         { name: "Counterspell", quantity: 4 },
@@ -252,6 +254,39 @@ describe("mcp-collection.js", () => {
     assert.match(got.text, /4x Counterspell .*TO BUY 1, owned 3/);
     const byId = await mcp.call("get_deck", { deck: id });
     assert.match(byId.text, /Izzet Test/);
+  });
+
+  test("save_deck starts with a ready-made answer summary; an update counts the changed cards", async () => {
+    const cards = [{ name: "Lightning Bolt", quantity: 4 }, { name: "Counterspell", quantity: 4 }, { name: "Delver of Secrets", quantity: 4 }, { name: "Sol Ring", quantity: 1, board: "side" }];
+    const saved = await mcp.call("save_deck", { name: "Summary Test", format: "casual", cards });
+    const [head, l1, l2, l3, blank] = saved.text.split("\n");
+    assert.match(head, /^Answer summary \(your whole answer: .*never add card lists\):$/);
+    assert.equal(l1, "**Summary Test** (casual) · saved as idea · Decks tab");
+    assert.equal(l2, "Owned **9** · from other decks **0** · to buy **4** (**€" + l2.split("(**€")[1]);
+    assert.match(l3, /^\*\*13\*\* cards · avg MV [\d.]+$/);
+    assert.equal(blank, "");
+    assert.match(saved.text, /\nCreated deck #\d+ "Summary Test"/);
+    const id = Number(/deck #(\d+)/.exec(saved.text)[1]);
+    cards[2].quantity = 2;
+    const upd = await mcp.call("save_deck", { name: "Summary Test", format: "casual", deck_id: id, cards });
+    assert.match(upd.text, /^Answer summary.*\n\*\*Summary Test\*\* \(casual\) · updated, old list in History · Decks tab\n.*\n.*\nChanged \*\*2\*\* cards\n/);
+  });
+
+  test("save_deck strict: an illegal NEW deck is refused with its problems; strict:false and updates save with a warning", async () => {
+    const cards = [{ name: "Lightning Bolt", quantity: 4 }, { name: "Counterspell", quantity: 5 }];
+    const refused = await mcp.call("save_deck", { name: "Pauper Draft", format: "pauper", cards });
+    assert.equal(refused.isError, true);
+    assert.match(refused.text, /^Error: Not saved: the deck breaks the Pauper rules: Too many copies: 5x Counterspell; 9 main deck cards, at least 60\. Fix the list/);
+    assert.equal(ctx.db.prepare("SELECT COUNT(*) AS n FROM decks WHERE name = 'Pauper Draft'").get().n, 0);
+    const draft = await mcp.call("save_deck", { name: "Pauper Draft", format: "pauper", strict: false, cards });
+    assert.equal(draft.isError, false, draft.text);
+    assert.match(draft.text, /^WARNING, saved but not Pauper-legal: Too many copies: 5x Counterspell/);
+    assert.match(draft.text, /\*\*9\*\* cards · avg MV [\d.]+ · \*\*not legal\*\*: copies, size\n/);
+    const id = Number(/deck #(\d+)/.exec(draft.text)[1]);
+    const upd = await mcp.call("save_deck", { name: "Pauper Draft", deck_id: id, cards });
+    assert.equal(upd.isError, false, "updates are never refused");
+    assert.match(upd.text, /^WARNING, saved but not Pauper-legal/, "the stored format is checked when the update omits it");
+    assert.match((await mcp.call("list_decks")).text, /Pauper Draft \[pauper\] .* · not Pauper-legal$/m);
   });
 
   test("built decks: free copies in check_owned/search, shopping_list, status in save/list/get", async () => {
@@ -359,6 +394,49 @@ describe("mcp-collection.js edit_copies", () => {
   after(async () => {
     await mcp?.stop();
     ctx?.cleanup();
+  });
+
+  test("get_cards: compact lines with legality, ownership and roles; unknown names after a failed lookup", async () => {
+    const { text, isError } = await mcp.call("get_cards", { names: ["Sol Ring", "lightning bolt", "Serra Angel", "Nope Card", "Sol Ring"] });
+    assert.equal(isError, false, text);
+    const lines = text.split("\n");
+    assert.match(lines[0], /^Sol Ring \{1\} \| Artifact \| MV 1 \| id C \| commander ✓ pauper ✗ \| owned 2, free 2 \| roles: .*fast_mana/);
+    assert.equal(lines[1], "    {T}: Add {C}{C}.");
+    assert.match(text, /Lightning Bolt \{R\} \| Instant \| MV 1 \| id R \| commander ✓ pauper ✓ \| owned 4, free 4 \| roles: removal\n {4}Lightning Bolt deals 3 damage/);
+    assert.match(text, /Serra Angel \{3\}\{W\}\{W\} \| Creature — Angel \| MV 5 \| id W \| commander ✓ pauper ✗ \| not owned\n {4}Flying, vigilance/);
+    assert.match(lines.at(-1), /^Not found locally and the Scryfall lookup failed .*: Nope Card\. Try the scryfall tools\.$/);
+    assert.equal(lines.filter((l) => l.startsWith("Sol Ring")).length, 1, "duplicates are read once");
+    const tooMany = await mcp.request("tools/call", { name: "get_cards", arguments: { names: Array.from({ length: 41 }, (_, i) => `Card ${i}`) } });
+    assert.equal(tooMany.result.isError, true);
+    assert.match(tooMany.result.content[0].text, /At most 40 names/);
+  });
+
+  test("knowledge tools answer offline: simulate_deck, deck_gaps, evaluate_deck lines; web tools say what is missing", async () => {
+    const sim = await mcp.call("simulate_deck", { cards: [{ name: "Lightning Bolt", quantity: 4 }, { name: "Sol Ring", quantity: 2 }], format: "pauper", games: 500 });
+    assert.equal(sim.isError, false, sim.text);
+    assert.match(sim.text, /^Draft:\nGoldfish \(500 games, seed \d+/);
+    const ev = await mcp.call("evaluate_deck", { cards: [{ name: "Lightning Bolt", quantity: 4 }], format: "pauper" });
+    assert.match(ev.text, /\nGoldfish \(4000 games/);
+    assert.match(ev.text, /\nAnchors vs tuned Pauper decks \(n=\d+\): .*lands 0 \(low/);
+    const saved = await mcp.call("save_deck", { name: "Gap Burn", format: "pauper", strict: false, cards: [{ name: "Lightning Bolt", quantity: 4 }] });
+    const id = Number(/deck #(\d+)/.exec(saved.text)[1]);
+    const gaps = await mcp.call("deck_gaps", { deck: id });
+    assert.match(gaps.text, /^Deck #\d+ "Gap Burn":\nCompared with tuned Pauper decks/);
+    const meta = await mcp.call("meta_decks", {});
+    assert.match(meta.text, /^No Pauper tournament lists stored \(MTGO not reachable/);
+    const rules = await mcp.call("rules_lookup", { query: "split second" });
+    assert.match(rules.text, /Comprehensive Rules are not available|702\.61/);
+    const staples = await mcp.call("commander_staples", { commander: "Atraxa, Praetors' Voice" });
+    assert.equal(staples.isError, true);
+    assert.match(staples.text, /EDHREC not reachable/);
+  });
+
+  test("check_owned include_text adds the oracle text, also for not owned cards known locally", async () => {
+    const { text } = await mcp.call("check_owned", { names: ["Counterspell", "Serra Angel"], include_text: true });
+    assert.match(text, /Counterspell: 3 owned.*\n {4}Counter target spell\./);
+    assert.match(text, /Serra Angel: NOT OWNED\n {4}Flying, vigilance/);
+    const plain = await mcp.call("check_owned", { names: ["Counterspell"] });
+    assert.doesNotMatch(plain.text, /Counter target spell/);
   });
 
   test("full JSON-RPC round trip: tools/call result shape", async () => {
@@ -557,7 +635,7 @@ describe("mcp-collection.js deck power", () => {
   test("save_deck target_bracket → verdict (cache hit); list_decks and get_deck show bracket and score", async () => {
     const before = calls.length;
     const saved = await mcp.call("save_deck", {
-      name: "Atraxa Combo", format: "commander", target_bracket: 3,
+      name: "Atraxa Combo", format: "commander", target_bracket: 3, strict: false,
       cards: [
         { name: "Atraxa, Praetors' Voice", board: "commander" }, { name: "Sol Ring" }, { name: "Counterspell" }, { name: "Serra Angel" },
         { name: "Forest", quantity: 20 }, { name: "Lightning Bolt", companion: true },

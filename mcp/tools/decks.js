@@ -3,10 +3,13 @@
 // update_deck_notes (actor claude, kept in the deck history).
 
 import { BOARDS, DECK_STATUSES, DeckError } from "../../lib/deckrules.js";
-import { bracketVerdict, evaluateDraft, powerLines } from "../../lib/deckpower.js";
+import { bracketVerdict, deckPower, draftDeck, evaluateDraft, powerLines } from "../../lib/deckpower.js";
+import { formatLabel } from "../../lib/formatlegal.js";
+import { simulateDeck, simulationText } from "../../lib/simulate.js";
+import { deckGaps, gapsText } from "../../lib/deckgaps.js";
 import { DECK_NOTES_MAX, setDeckNotes } from "../../lib/deckedit.js";
 import { deckDetail, findDeck, listDecks, saveDeck, shoppingList } from "../../lib/decks.js";
-import { deckToText } from "../../lib/decktext.js";
+import { deckSummary, deckToText } from "../../lib/decktext.js";
 import { wishlistShopping } from "../../lib/wishlist.js";
 import { deckVersion, listDeckVersions } from "../../lib/deckhistory.js";
 import { guideMeta } from "../../lib/deckguide.js";
@@ -15,7 +18,7 @@ import { COMBO_WAIT_MS, combos, getDb } from "../context.js";
 import { deckLine, int, ToolError } from "../format.js";
 
 /** The cards array of save_deck / evaluate_deck. */
-const CARDS_SCHEMA = {
+export const CARDS_SCHEMA = {
   type: "array", minItems: 1, maxItems: 500,
   items: {
     type: "object",
@@ -156,6 +159,7 @@ export const TOOLS = [
           description: "idea (default for new decks: a plan, claims no cards) or built (the user has physically built it; its cards are then claimed). Omit to keep an existing deck's status.",
         },
         target_bracket: { type: "integer", minimum: 1, maximum: 5, description: "Optional Commander bracket the deck is meant for: adds the OK / OVER / UNDER verdict." },
+        strict: { type: "boolean", default: true, description: "A NEW Commander/Pauper/60-card deck that breaks the format's rules is NOT saved; the problems come back to fix. false = save anyway (only for an unfinished draft the user asked for)." },
         cards: CARDS_SCHEMA,
       },
       required: ["name", "cards"],
@@ -306,7 +310,7 @@ function getDeckHistory(args) {
 }
 
 /** save_deck / evaluate_deck cards → deck items (ToolError on bad input). */
-function cardItems(cards) {
+export function cardItems(cards) {
   if (!Array.isArray(cards) || cards.length === 0) throw new ToolError("cards must be a non-empty array.");
   if (cards.length > 500) throw new ToolError("At most 500 cards.");
   return cards.map((c, i) => {
@@ -351,6 +355,10 @@ async function evaluateDeckTool(args) {
   }
   const extras = accessoriesText(acc);
   if (extras) lines.push(extras);
+  // Goldfish consistency (lib/simulate.js), fewer games than simulate_deck: a draft check, not a report.
+  lines.push(simulationText(simulateDeck(draft.rows, { games: 4000, combos: (p.combos?.items ?? []).map((c) => c.cards) })));
+  const gaps = gapsText(deckGaps(d, { format: draft.deck.format, cards: draft.rows, power: p.power }, { perGap: 0 }), { brief: true });
+  if (gaps) lines.push(gaps);
   if (target) lines.push(bracketVerdict(p.power, target));
   return lines.join("\n");
 }
@@ -369,6 +377,18 @@ async function saveDeckTool(args) {
       throw new ToolError(`Deck ${args.deck_id} does not exist. Omit deck_id to create a new deck.`);
     }
   }
+  // Check the draft against its format first: a new deck that breaks the rules is refused (strict), an
+  // update is saved but its problems lead the answer.
+  // An update without format keeps the stored one (saveDeckRows), so the check uses it too.
+  const format = args.format || (id ? d.prepare("SELECT format FROM decks WHERE id = ?").get(id).format : null);
+  const draft = await draftDeck(d, { items, format, name });
+  const legal = deckPower(d, draft.deck, draft.rows).power.legality;
+  const problems = legal && !legal.ok ? legal.problems.map((p) => p.text) : [];
+  if (problems.length && !id && args.strict !== false) {
+    throw new ToolError(`Not saved: the deck breaks the ${formatLabel(legal.format)} rules: ${problems.join("; ")}. Fix the list and call save_deck again ` +
+      "(strict: false saves it anyway, only when the user wants an unfinished draft).");
+  }
+  const before = id ? claimedCopies(d, id) : null;
   const saved = await saveDeck(d, {
     id, name, format: args.format || null, description: args.description || null, source: "claude", items,
     status: args.status ?? (id ? null : "idea"),
@@ -379,9 +399,29 @@ async function saveDeckTool(args) {
   }
   // With a target the verdict needs the combos (usually cached by the evaluate_deck run before).
   const detail = await detailWithCombos(d, saved.id, { withCombos: Boolean(target) });
+  let changed = null;
+  if (before) {
+    const after = claimedCopies(d, saved.id);
+    changed = [...before].reduce((a, [k, n]) => a + Math.max(0, n - (after.get(k) ?? 0)), 0);
+  }
+  lines.unshift(`${SUMMARY_HEAD}\n${deckSummary(detail, { updated: Boolean(id), changed })}\n`);
+  if (problems.length) lines.unshift(`WARNING, saved but not ${formatLabel(legal.format)}-legal: ${problems.join("; ")}. Fix it with another save_deck (same deck_id).\n`);
   lines.push("", deckToText(detail));
   if (target) lines.push("", bracketVerdict(detail.power, target));
   return lines.join("\n");
+}
+
+const SUMMARY_HEAD = "Answer summary (your whole answer: these lines in the user's language, then at most one short line on the " +
+  "theme or the one key point, then one question; never add card lists):";
+
+/** Copies per card (oracle id, else name) on the claim boards of a deck: what "cards changed" compares. */
+function claimedCopies(d, deckId) {
+  const rows = d.prepare(
+    `SELECT COALESCE(c.oracle_id, lower(dc.name)) AS k, SUM(dc.quantity) AS n
+       FROM deck_cards dc LEFT JOIN cards c ON c.scryfall_id = dc.scryfall_id
+      WHERE dc.deck_id = ? AND dc.board <> 'maybe' GROUP BY k`,
+  ).all(deckId);
+  return new Map(rows.map((r) => [r.k, r.n]));
 }
 
 function updateDeckNotesTool(args) {
