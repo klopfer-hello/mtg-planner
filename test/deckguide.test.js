@@ -3,7 +3,8 @@
 import { afterEach, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  GUIDES_KEEP, GUIDE_SYSTEM, TECHNIQUES, cleanStrategy, composeGuide, generateGuide, guideFacts, guidePrompt, latestGuide, saveGuide,
+  GUIDES_KEEP, GUIDE_SYSTEM, TECHNIQUES, TLDR_END, TLDR_START, cleanStrategy, composeGuide, generateGuide, guideFacts, guidePrompt,
+  guideTldr, latestGuide, saveGuide, stripTldr,
 } from "../lib/deckguide.js";
 import { saveDeckRows } from "../lib/decks.js";
 import { setDeckNotes } from "../lib/deckedit.js";
@@ -107,6 +108,29 @@ describe("deck guide", () => {
     assert.equal(plain.error, null);
     assert.equal(plain.row.kind, "facts");
     assert.deepEqual(await generateGuide(ctx.db, 9999), { row: null, error: "Deck not found" });
+  });
+
+  test("updateNotes: TL;DR block on top of the user's notes, replaced next time, not stale, not fed back", async () => {
+    const run = (summary) => async () => ({ json: { ...STRATEGY, summary } });
+    setDeckNotes(ctx.db, deckId, "My own notes.");
+    await generateGuide(ctx.db, deckId, { runGuide: run("First summary.") });
+    assert.equal(ctx.db.prepare("SELECT description FROM decks WHERE id = ?").get(deckId).description, "My own notes.", "off by default");
+    const r = await generateGuide(ctx.db, deckId, { runGuide: run("First summary."), updateNotes: true });
+    assert.equal(r.notesError, null);
+    const notes = () => ctx.db.prepare("SELECT description FROM decks WHERE id = ?").get(deckId).description;
+    assert.equal(notes(), `${TLDR_START}\n**TL;DR:** First summary.\n\n**Wins by:**\n- Attack with fliers\n- Burn the last points\n${TLDR_END}\n\nMy own notes.`);
+    assert.equal(latestGuide(ctx.db, deckId).stale, false, "the TL;DR version does not make the guide stale");
+    let seen = null;
+    await generateGuide(ctx.db, deckId, { runGuide: async (o) => { seen = o; return { json: { ...STRATEGY, summary: "Second." } }; }, updateNotes: true });
+    assert.doesNotMatch(seen.prompt, /TL;DR|First summary/, "the old TL;DR is not the player's notes");
+    assert.match(seen.prompt, /My own notes\./);
+    assert.equal(notes().match(/guide-tldr -->/g).length, 2, "one block (start + end)");
+    assert.match(notes(), /TL;DR:\*\* Second\.[\s\S]*My own notes\.$/);
+    assert.equal(stripTldr(notes()), "My own notes.");
+    const facts = await generateGuide(ctx.db, deckId, { updateNotes: true });
+    assert.equal(facts.row.kind, "facts");
+    assert.match(notes(), /Second\./, "a facts-only guide leaves the notes alone");
+    assert.equal(guideTldr(null), null);
   });
 
   test("storage: newest GUIDES_KEEP per deck, stale after a deck change, deleted with the deck", () => {

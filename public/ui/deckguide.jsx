@@ -9,12 +9,14 @@ const Bullets = ({ items }) => (items?.length ? <ul className="guide-ul">{items.
 
 /**
  * Deck page → Guide: GET /api/decks/:id/guide; Write/Regenerate = POST (Claude in the background, the sheet
- * polls every 4 s while pending; facts only without a Claude token). Shows the whole guide.
+ * polls every 4 s while pending; facts only without a Claude token). Shows the whole guide. Optional: the TL;DR
+ * also goes to the top of the deck notes (update_notes, remembered per device).
  */
 function GuideSheet({ deck, onClose }) {
   const { data: state, error: loadError, reload, setData: setState } = useApi(`/api/decks/${deck.id}/guide`);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [toNotes, setToNotes] = useState(() => store.get("mtg.guide.toNotes", false) === true);
   useEffect(() => {
     if (state?.status !== "pending") return undefined;
     const t = setTimeout(reload, 4000);
@@ -22,7 +24,7 @@ function GuideSheet({ deck, onClose }) {
   }, [state, reload]);
   const write = async (factsOnly = false) => {
     setBusy(true); setError(null);
-    try { setState(await api(`/api/decks/${deck.id}/guide`, { method: "POST", json: factsOnly ? { facts_only: true } : {} })); }
+    try { setState(await api(`/api/decks/${deck.id}/guide`, { method: "POST", json: factsOnly ? { facts_only: true } : toNotes ? { update_notes: true } : {} })); }
     catch (e) { setError(e.message); }
     finally { setBusy(false); }
   };
@@ -30,6 +32,12 @@ function GuideSheet({ deck, onClose }) {
   const g = row?.guide;
   const pending = state?.status === "pending";
   const s = g?.strategy;
+  const notesOpt = state?.claude && (
+    <label className="row small" style={{ minHeight: 44, cursor: "pointer" }}>
+      <input type="checkbox" checked={toNotes} onChange={(e) => { setToNotes(e.target.checked); store.set("mtg.guide.toNotes", e.target.checked); }} style={{ width: 20, height: 20, accentColor: "var(--accent)" }} />
+      Also put the TL;DR into the deck notes
+    </label>
+  );
   return (
     <Sheet title={`Guide: ${deck.name}`} onClose={onClose}>
       <div className="stack guide">
@@ -40,10 +48,12 @@ function GuideSheet({ deck, onClose }) {
           <div className="notice" role="status"><Spinner label="" /><div className="grow">Claude is writing your guide. This takes about half a minute; you can close this and come back.</div></div>
         )}
         {state?.error && !pending && <div className="notice warn" role="status"><div className="grow">The strategy part failed: {state.error}. {g ? "Below is the guide without it." : ""}</div></div>}
+        {state?.notes_error && !pending && <div className="notice warn" role="status"><div className="grow">The TL;DR was not added to the notes: {state.notes_error}</div></div>}
         {state && state.status === "none" && !pending && (
           <div className="stack">
             <p style={{ margin: 0 }}>A short guide to this deck for learning it: what it does, how it wins, what to do each turn, when to mulligan, its key cards and the techniques it uses, with a glossary.</p>
             {!state.claude && <p className="small muted" style={{ margin: 0 }}>Claude is not connected, so the guide has the facts and techniques but no strategy part.</p>}
+            {notesOpt}
             <div className="row"><button type="button" className="btn primary" disabled={busy} onClick={() => write(false)}><Icon.sparkle /> Write the guide</button></div>
           </div>
         )}
@@ -114,6 +124,7 @@ function GuideSheet({ deck, onClose }) {
               </section>
             )}
             <p className="small muted" style={{ margin: 0 }}>Written {fmtAgo(row.created_at)}{row.kind === "facts" ? " · facts only (no Claude)" : ""}.</p>
+            {notesOpt}
             <div className="row">
               <a className="btn primary" href={`/api/decks/${deck.id}/guide.pdf`} download><Icon.download /> Download PDF</a>
               <button type="button" className="btn" disabled={busy || pending} onClick={() => write(false)}><Icon.refresh /> {busy ? "Starting…" : "Write it again"}</button>

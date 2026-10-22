@@ -44,7 +44,7 @@ export function deckRoutes(router, app) {
   // Deck guides (lib/deckguide.js): one generation per deck at a time, in the background (Claude takes
   // 30-90 s). The facts-only guide (no Claude token, or {facts_only: true}) is made at once.
   const { guideJobs } = app; // deck id -> {started_at}; a restore waits while one runs
-  const guideErrors = new Map(); // deck id -> {at, error} of the last failed Claude part
+  const guideErrors = new Map(); // deck id -> {at, error, notes_error} of the last failed Claude part / TL;DR
 
   const requireDeck = (id) => {
     if (!app.db.prepare("SELECT 1 FROM decks WHERE id = ?").get(id)) throw new HttpError(404, "Deck not found");
@@ -185,12 +185,16 @@ export function deckRoutes(router, app) {
       status: guideJobs.has(id) ? "pending" : latest ? "ready" : "none",
       started_at: guideJobs.get(id)?.started_at ?? null,
       error: err && (!latest || err.at > latest.created_at) ? err.error : null,
+      notes_error: err && (!latest || err.at > latest.created_at) ? err.notes_error : null,
       claude: claudeConfigured(),
       guide: latest,
     };
   }
   router.get(`/api/decks/${ID}/guide`, ({ params }) => guideState(Number(params.id)));
-  /** POST /api/decks/:id/guide {facts_only?} → 201 ready (facts only) | 202 pending | 409 already running. */
+  /**
+   * POST /api/decks/:id/guide {facts_only?, update_notes?} → 201 ready (facts only) | 202 pending | 409 already running.
+   * update_notes: the full guide's TL;DR also goes to the top of the deck notes (facts-only guides have none).
+   */
   router.post(`/api/decks/${ID}/guide`, async ({ req, res, params }) => {
     const id = Number(params.id);
     const body = await readJson(req);
@@ -204,8 +208,10 @@ export function deckRoutes(router, app) {
     if (app.claudeBusy()) throw new HttpError(429, "Claude is busy right now; try again in a minute");
     guideJobs.set(id, { started_at: new Date().toISOString() });
     guideErrors.delete(id);
-    generateGuide(app.db, id, { runGuide, model: process.env.CLAUDE_GUIDE_MODEL || "sonnet" })
-      .then(({ error }) => { if (error) guideErrors.set(id, { at: new Date().toISOString(), error }); })
+    generateGuide(app.db, id, { runGuide, model: process.env.CLAUDE_GUIDE_MODEL || "sonnet", updateNotes: body.update_notes === true })
+      .then(({ error, notesError }) => {
+        if (error || notesError) guideErrors.set(id, { at: new Date().toISOString(), error, notes_error: notesError });
+      })
       .catch((err) => { guideErrors.set(id, { at: new Date().toISOString(), error: err.message }); console.warn(`[guide] deck ${id}: ${err.message}`); })
       .finally(() => guideJobs.delete(id));
     sendJson(res, 202, guideState(id));
